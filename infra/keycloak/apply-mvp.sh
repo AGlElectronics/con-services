@@ -5,7 +5,7 @@ set -euo pipefail
 KC=/opt/keycloak/bin/kcadm.sh
 $KC config credentials --server http://localhost:8080 --realm master --user admin --password admin >/dev/null
 
-$KC update realms/conservices -s registrationAllowed=true
+$KC update realms/conservices -s registrationAllowed=true -s loginTheme=conservices
 
 # Onboarding emails (set-password link). Dev: Mailpit; prod: override SMTP.
 $KC update realms/conservices \
