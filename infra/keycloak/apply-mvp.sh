@@ -37,4 +37,7 @@ $KC add-roles -r conservices --uusername service-account-hr-provisioner --cclien
   --rolename manage-users --rolename view-users --rolename query-users \
   --rolename view-realm --rolename query-groups
 
+# Declare the attributes HR mirrors (undeclared attributes are dropped).
+$KC update users/profile -r conservices -f /opt/keycloak/data/profile/user-profile.json
+
 echo "conservices MVP patch applied"

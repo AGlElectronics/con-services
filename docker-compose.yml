@@ -98,6 +98,8 @@ services:
     volumes:
       - ./infra/keycloak/realm-conservices.json:/opt/keycloak/data/import/realm-conservices.json:ro
       - ./infra/keycloak/apply-mvp.sh:/opt/keycloak/data/import/apply-mvp.sh:ro
+      # Outside data/import: every .json there is imported as a realm.
+      - ./infra/keycloak/user-profile.json:/opt/keycloak/data/profile/user-profile.json:ro
       - ./infra/keycloak/themes/conservices:/opt/keycloak/themes/conservices:ro
     depends_on:
       postgres:
@@ -231,6 +233,11 @@ services:
       # After setting their password from the onboarding email, users land in Den.
       KEYCLOAK_SETUP_CLIENT_ID: den-spa
       KEYCLOAK_SETUP_REDIRECT_URI: http://localhost:3001/
+      # HR's own emails (offboarding notices). Dev: Mailpit; prod: real SMTP.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@conservices.local
+      SMTP_FROM_NAME: Con Services
       # Each module serves GET /api/role-catalog; HR aggregates them.
       ROLE_CATALOG_SOURCES: >-
         stash=http://stash-backend:8080/api/role-catalog,
