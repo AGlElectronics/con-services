@@ -30,6 +30,7 @@
   "groups": [
     { "name": "stash-admin", "path": "/stash-admin" },
     { "name": "stash-readonly", "path": "/stash-readonly" },
+    { "name": "stash-dept-lead", "path": "/stash-dept-lead" },
     { "name": "den-admin", "path": "/den-admin" },
     { "name": "events-admin", "path": "/events-admin" },
     { "name": "hr-admin", "path": "/hr-admin" }
