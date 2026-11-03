@@ -138,6 +138,8 @@ services:
       APP_ENV: development
       # Host 8088 — 8080 often taken by other local stacks on this machine.
       APP_BASE_URL: http://localhost:8088
+      # Pasted Den pairing URLs point at the host; reach Den inside the network.
+      DEN_INTERNAL_URL: http://den-backend:8080
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://stash:stash@postgres:5432/stash?sslmode=disable
       S3_ENDPOINT: http://minio:9000
@@ -213,6 +215,8 @@ services:
     environment:
       APP_ENV: development
       APP_BASE_URL: http://localhost:8110
+      # Pasted Den pairing URLs point at the host; reach Den inside the network.
+      DEN_INTERNAL_URL: http://den-backend:8080
       # Container :8080 (ecosystem convention); host 8110 avoids :8080 clashes.
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://hr:hr@postgres:5432/hr?sslmode=disable
@@ -374,6 +378,8 @@ services:
     environment:
       APP_ENV: development
       APP_BASE_URL: http://localhost:8100
+      # Pasted Den pairing URLs point at the host; reach Den inside the network.
+      DEN_INTERNAL_URL: http://den-backend:8080
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://events:events@postgres:5432/events?sslmode=disable
       S3_ENABLED: "true"
@@ -389,7 +395,6 @@ services:
       OIDC_CLIENT_ID: events-spa
       OIDC_AUDIENCE: events-spa
       ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
-      BRAND_SOURCE: standalone
       CORS_ALLOWED_ORIGINS: http://localhost:3002
     volumes:
       - ./Rally/infra/access-config.toml:/etc/rally/access-config.toml:ro
