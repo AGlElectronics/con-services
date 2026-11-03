@@ -1,10 +1,7 @@
-// Applies Den's public brand (name, logo, colours, favicon) to the login page.
-// Any failure leaves the neutral defaults from css/conservices.css.
+// Applies the brand Den pushed into the realm (rendered by footer.ftl as
+// #cs-brand) to the login page: name, tagline, logo, colours, favicon.
+// Without it the neutral defaults from css/conservices.css stay.
 (function () {
-  var meta = document.querySelector('meta[name="den-url"]');
-  var den = meta && meta.content ? meta.content.replace(/\/+$/, '') : '';
-  if (!den || !window.fetch) return;
-
   function hexToHsl(v) {
     if (typeof v !== 'string') return null;
     var h = v.trim().replace(/^#/, '');
@@ -59,14 +56,14 @@
     var header = document.getElementById('kc-header-wrapper');
     if (!header) return;
     var name = (b.organization_name || '').trim();
-    var tagline = b.copy && typeof b.copy.tagline === 'string' ? b.copy.tagline.trim() : '';
+    var tagline = (b.tagline || '').trim();
     if (!name && !b.logo_url) return;
     header.textContent = '';
     if (b.logo_url) {
       var img = document.createElement('img');
       img.className = 'cs-logo';
       img.alt = name;
-      img.src = den + b.logo_url + '?v=' + encodeURIComponent((b.assets && b.assets.logo) || b.revision);
+      img.src = b.logo_url;
       header.appendChild(img);
     }
     if (name) {
@@ -80,31 +77,31 @@
       sub.textContent = tagline;
       header.appendChild(sub);
     }
-    if (name) document.title = document.title.replace(/(Sign in to|Log in to)\s.*$/i, '$1 ' + name) || name;
   }
 
   function applyFavicon(b) {
-    if (!b.assets || !b.assets.favicon) return;
+    if (!b.favicon_url) return;
     var link = document.querySelector('link[rel="icon"]') || document.createElement('link');
     link.rel = 'icon';
-    link.href = den + '/api/v1/public/brand/assets/favicon?v=' + encodeURIComponent(b.assets.favicon);
+    link.href = b.favicon_url;
     document.head.appendChild(link);
   }
 
-  function whenReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+  function apply() {
+    var el = document.getElementById('cs-brand');
+    if (!el) return;
+    var b;
+    try {
+      b = JSON.parse(el.getAttribute('data-brand') || '');
+    } catch (e) {
+      return;
+    }
+    if (!b || typeof b !== 'object') return;
+    applyColours(b.theme || {});
+    applyHeader(b);
+    applyFavicon(b);
   }
 
-  fetch(den + '/api/v1/public/brand', { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (b) {
-      if (!b) return;
-      applyColours(b.theme || {});
-      whenReady(function () {
-        applyHeader(b);
-        applyFavicon(b);
-      });
-    })
-    .catch(function () {});
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+  else apply();
 })();

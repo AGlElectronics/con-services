@@ -93,6 +93,14 @@
           "query-groups"
         ]
       }
+    },
+    {
+      "username": "service-account-den-keycloak",
+      "enabled": true,
+      "serviceAccountClientId": "den-keycloak",
+      "clientRoles": {
+        "realm-management": ["manage-realm", "view-realm"]
+      }
     }
   ],
   "clients": [
@@ -234,6 +242,19 @@
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
       "secret": "hr-provisioner-dev-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "den-keycloak",
+      "name": "Den realm branding",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "den-keycloak-dev-secret",
       "publicClient": false,
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
