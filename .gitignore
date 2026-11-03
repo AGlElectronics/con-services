@@ -1,0 +1,19 @@
+# Each module has its own repository (AGlElectronics/den, hr, Rally, stash).
+/den/
+/hr/
+/Rally/
+/stash/
+
+# Third-party reference material, not ours to publish.
+/agents references/
+
+# Local environment and logs
+.env
+*.log
+.cursor/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

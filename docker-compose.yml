@@ -1,0 +1,416 @@
+# Convention services — local Docker Desktop suite
+# MinIO is DEV ONLY (never production). Keycloak here is DEV ONLY.
+#
+#   docker compose up --build
+#
+# URLs / creds: see README.md
+
+name: conservices
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: conservices-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - conservices-postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/01-init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # LOCAL DEV ONLY — never use MinIO in production.
+  # LOCAL DEV ONLY. Image tags: use local :latest (Hub pulls may be rate-limited).
+  minio:
+    image: minio/minio:latest
+    container_name: conservices-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: conservices
+      MINIO_ROOT_PASSWORD: conservicesdev
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - conservices-minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: conservices-minio-init
+    depends_on:
+      - minio
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until mc alias set local http://minio:9000 conservices conservicesdev >/dev/null 2>&1; do
+          echo waiting-for-minio; sleep 1
+        done
+        for b in stash-data-dev den-data-dev events-data-dev hr-data-dev; do
+          mc mb --ignore-existing "local/$$b"
+          echo "bucket ready: $$b"
+        done
+
+  # DEV mail catcher — Keycloak sends set-password / onboarding emails here.
+  # Inbox UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: conservices-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  # DEV Keycloak — import realm conservices with SPA clients + test users.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: conservices-keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KC_HTTP_ENABLED: "true"
+      # Public URL baked into tokens and email links (set-password emails are
+      # requested by hr-backend via the internal keycloak:8080 address).
+      KC_HOSTNAME: http://localhost:8085
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./infra/keycloak/realm-conservices.json:/opt/keycloak/data/import/realm-conservices.json:ro
+      - ./infra/keycloak/apply-mvp.sh:/opt/keycloak/data/import/apply-mvp.sh:ro
+      - ./infra/keycloak/themes/conservices:/opt/keycloak/themes/conservices:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    # Management interface :9000 (in-container only; host 9000 is MinIO).
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "{ printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/127.0.0.1/9000",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # ── Stash (production clone; OIDC against local Keycloak) ─────────────────
+  stash-backend:
+    build:
+      context: ./stash
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-stash-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      # Host 8088 — 8080 often taken by other local stacks on this machine.
+      APP_BASE_URL: http://localhost:8088
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://stash:stash@postgres:5432/stash?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: stash-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_CLIENT_ID: stash-spa
+      OIDC_AUDIENCE: stash-spa
+      ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
+    volumes:
+      - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
+    ports:
+      - "8088:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  stash-frontend:
+    build:
+      context: ./stash
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_CLIENT_ID: stash-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PUBLIC_CLAIM_ENABLED: "true"
+        STASH_VERSION: dev
+    container_name: conservices-stash-frontend
+    restart: unless-stopped
+    depends_on:
+      - stash-backend
+    ports:
+      - "3000:80"
+
+  # ── HR (OIDC + Keycloak user provisioning against shared realm) ───────────
+  hr-migrate:
+    build:
+      context: ./hr
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-hr-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://hr:hr@postgres:5432/hr?sslmode=disable
+    restart: "no"
+
+  hr-backend:
+    build:
+      context: ./hr
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-hr-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hr-migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: http://localhost:8110
+      # Container :8080 (ecosystem convention); host 8110 avoids :8080 clashes.
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://hr:hr@postgres:5432/hr?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: hr-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_CLIENT_ID: hr-spa
+      OIDC_AUDIENCE: hr-spa
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: conservices
+      KEYCLOAK_CLIENT_ID: hr-provisioner
+      KEYCLOAK_CLIENT_SECRET: hr-provisioner-dev-secret
+      # After setting their password from the onboarding email, users land in Den.
+      KEYCLOAK_SETUP_CLIENT_ID: den-spa
+      KEYCLOAK_SETUP_REDIRECT_URI: http://localhost:3001/
+      # Each module serves GET /api/role-catalog; HR aggregates them.
+      ROLE_CATALOG_SOURCES: >-
+        stash=http://stash-backend:8080/api/role-catalog,
+        den=http://den-backend:8080/api/role-catalog,
+        events=http://events-backend:8080/api/role-catalog
+      CORS_ALLOWED_ORIGINS: http://localhost:3003
+    ports:
+      - "8110:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  hr-frontend:
+    build:
+      context: ./hr
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_CLIENT_ID: hr-spa
+        VITE_OIDC_SCOPE: openid profile email
+        HR_VERSION: dev
+    container_name: conservices-hr-frontend
+    restart: unless-stopped
+    depends_on:
+      - hr-backend
+    ports:
+      - "3003:80"
+
+  # Den — profile: docker compose --profile den --profile events up --build
+  # Unified backend image: /den-server (default) + /den-migrate (entrypoint override).
+  den-migrate:
+    profiles: ["den"]
+    build:
+      context: ./den
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-den-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://den:den@postgres:5432/den?sslmode=disable
+    entrypoint: ["/den-migrate"]
+    restart: "no"
+
+  den-backend:
+    profiles: ["den"]
+    build:
+      context: ./den
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-den-backend
+    restart: unless-stopped
+    depends_on:
+      den-migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: http://localhost:8090
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://den:den@postgres:5432/den?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: den-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_CLIENT_ID: den-spa
+      OIDC_AUDIENCE: den-spa
+      CORS_ALLOWED_ORIGINS: http://localhost:3001
+    ports:
+      - "8090:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  den-frontend:
+    profiles: ["den"]
+    build:
+      context: ./den
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_CLIENT_ID: den-spa
+        VITE_OIDC_SCOPE: openid profile email
+    container_name: conservices-den-frontend
+    restart: unless-stopped
+    depends_on:
+      - den-backend
+    ports:
+      - "3001:80"
+
+  events-migrate:
+    profiles: ["events"]
+    build:
+      context: ./Rally
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-events-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://events:events@postgres:5432/events?sslmode=disable
+    restart: "no"
+
+  events-backend:
+    profiles: ["events"]
+    build:
+      context: ./Rally
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-events-backend
+    restart: unless-stopped
+    depends_on:
+      events-migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: http://localhost:8100
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://events:events@postgres:5432/events?sslmode=disable
+      S3_ENABLED: "true"
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: events-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      S3_PUBLIC_BASE_URL: http://localhost:9000
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_CLIENT_ID: events-spa
+      OIDC_AUDIENCE: events-spa
+      ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
+      BRAND_SOURCE: standalone
+      CORS_ALLOWED_ORIGINS: http://localhost:3002
+    volumes:
+      - ./Rally/infra/access-config.toml:/etc/rally/access-config.toml:ro
+    ports:
+      - "8100:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  events-frontend:
+    profiles: ["events"]
+    build:
+      context: ./Rally
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_CLIENT_ID: events-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Rally
+        RALLY_VERSION: dev
+    container_name: conservices-events-frontend
+    restart: unless-stopped
+    depends_on:
+      - events-backend
+    ports:
+      - "3002:80"
+
+volumes:
+  conservices-postgres-data:
+  conservices-minio-data:

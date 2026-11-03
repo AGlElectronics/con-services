@@ -1,0 +1,239 @@
+{
+  "realm": "conservices",
+  "enabled": true,
+  "displayName": "Con Services (DEV)",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "emailTheme": "conservices",
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@conservices.local",
+    "fromDisplayName": "Con Services",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
+  "editUsernameAllowed": false,
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 36000,
+  "ssoSessionMaxLifespan": 86400,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Org admin" },
+      { "name": "member", "description": "Standard member" }
+    ]
+  },
+  "groups": [
+    { "name": "stash-admin", "path": "/stash-admin" },
+    { "name": "stash-readonly", "path": "/stash-readonly" },
+    { "name": "den-admin", "path": "/den-admin" },
+    { "name": "events-admin", "path": "/events-admin" },
+    { "name": "hr-admin", "path": "/hr-admin" }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "email": "admin@conservices.local",
+      "credentials": [
+        { "type": "password", "value": "adminadmin", "temporary": false }
+      ],
+      "groups": ["/stash-admin", "/den-admin", "/events-admin", "/hr-admin"],
+      "realmRoles": ["admin", "member"]
+    },
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Organizer",
+      "email": "alice@conservices.local",
+      "credentials": [
+        { "type": "password", "value": "alicealice", "temporary": false }
+      ],
+      "groups": ["/stash-admin", "/events-admin", "/den-admin"],
+      "realmRoles": ["member"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Volunteer",
+      "email": "bob@conservices.local",
+      "credentials": [
+        { "type": "password", "value": "bobbob", "temporary": false }
+      ],
+      "groups": ["/stash-readonly"],
+      "realmRoles": ["member"]
+    },
+    {
+      "username": "service-account-hr-provisioner",
+      "enabled": true,
+      "serviceAccountClientId": "hr-provisioner",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "view-realm",
+          "query-groups"
+        ]
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "stash-spa",
+      "name": "Stash SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "http://localhost:3000",
+      "redirectUris": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "den-spa",
+      "name": "Den SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "http://localhost:3001",
+      "baseUrl": "http://localhost:3001",
+      "redirectUris": ["http://localhost:3001/*", "http://127.0.0.1:3001/*"],
+      "webOrigins": ["http://localhost:3001", "http://127.0.0.1:3001"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3001/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "events-spa",
+      "name": "Events / Rally SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "http://localhost:3002",
+      "baseUrl": "http://localhost:3002",
+      "redirectUris": ["http://localhost:3002/*", "http://127.0.0.1:3002/*"],
+      "webOrigins": ["http://localhost:3002", "http://127.0.0.1:3002"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3002/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "hr-spa",
+      "name": "HR SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "http://localhost:3003",
+      "baseUrl": "http://localhost:3003",
+      "redirectUris": ["http://localhost:3003/*", "http://127.0.0.1:3003/*"],
+      "webOrigins": ["http://localhost:3003", "http://127.0.0.1:3003"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3003/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "hr-provisioner",
+      "name": "HR Keycloak provisioner",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "hr-provisioner-dev-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect"
+    }
+  ]
+}
