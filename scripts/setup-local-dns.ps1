@@ -7,14 +7,18 @@ $ErrorActionPreference = 'Stop'
 
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  throw 'Run this from an elevated PowerShell (Run as administrator).'
+  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$PSCommandPath`"")
+  if ($Remove) { $argList += '-Remove' }
+  Start-Process powershell -Verb RunAs -ArgumentList $argList
+  Write-Host 'Continuing in an elevated window (approve the UAC prompt).'
+  return
 }
 
 $names = 'auth', 'den', 'hr', 'stash', 'events', 'mail', 's3' | ForEach-Object { "$_.conservices.test" }
 $hostsFile = "$env:WINDIR\System32\drivers\etc\hosts"
 $begin = '# >>> conservices local DNS'
 $end = '# <<< conservices local DNS'
-$certName = 'Caddy Local Authority'
+$certSubject = 'CN=Con Services Local Root'
 
 # Drop any previous block, then (unless removing) append a fresh one.
 $lines = Get-Content $hostsFile
@@ -35,7 +39,7 @@ ipconfig /flushdns | Out-Null
 Write-Host ($(if ($Remove) { 'Removed hosts entries.' } else { "Hosts entries: $($names -join ', ')" }))
 
 # Trust (or untrust) the proxy's local root CA.
-Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*$certName*" } | ForEach-Object {
+Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -eq $certSubject } | ForEach-Object {
   Remove-Item $_.PSPath
   Write-Host "Removed old trusted CA $($_.Thumbprint)"
 }

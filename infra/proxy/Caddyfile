@@ -5,6 +5,14 @@
 {
 	local_certs
 	skip_install_trust
+	# Own names so it is not confused with other Caddy CAs on the machine.
+	pki {
+		ca local {
+			name "Con Services Local CA"
+			root_cn "Con Services Local Root"
+			intermediate_cn "Con Services Local Intermediate"
+		}
+	}
 }
 
 auth.conservices.test {
