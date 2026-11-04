@@ -14,7 +14,30 @@ Without profiles: **Postgres + MinIO + Keycloak + Stash + HR** only.
 
 First boot can take several minutes (image builds + Keycloak realm import). OIDC backends wait until Keycloak is healthy.
 
-## URLs
+## Local DNS (production-like HTTPS)
+
+A Caddy proxy (`infra/proxy/Caddyfile`, ports 80/443) serves every app on its own hostname with certificates from Caddy's local CA:
+
+| Service | URL |
+| --- | --- |
+| Den (portal + admin) | https://den.conservices.test |
+| HR | https://hr.conservices.test |
+| Stash | https://stash.conservices.test |
+| Events (Rally) | https://events.conservices.test |
+| Keycloak (login + admin console) | https://auth.conservices.test |
+| Mailpit | https://mail.conservices.test |
+| MinIO (presigned files) | https://s3.conservices.test |
+
+One-time setup, from an **elevated** PowerShell with the stack running:
+
+```powershell
+scripts/setup-local-dns.ps1          # hosts entries + trust the proxy CA (restart the browser)
+scripts/setup-local-dns.ps1 -Remove  # undo
+```
+
+Keycloak's public URL (token issuer) is `https://auth.conservices.test`; containers reach it through the proxy's network aliases and trust its CA via `SSL_CERT_DIR=/caddy-ca`. The localhost ports below keep working, but sign-in always goes through `auth.conservices.test`, so the hosts entries are needed either way. The proxy CA lives in the `conservices-caddy-data` volume; deleting it means re-running the setup script.
+
+## URLs (direct ports)
 
 | Service | URL |
 | --- | --- |

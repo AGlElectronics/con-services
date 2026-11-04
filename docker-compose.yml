@@ -62,7 +62,7 @@ services:
         done
 
   # DEV mail catcher — Keycloak sends set-password / onboarding emails here.
-  # Inbox UI: http://localhost:8025
+  # Inbox UI: https://mail.conservices.test (or http://localhost:8025)
   mailpit:
     image: axllent/mailpit:latest
     container_name: conservices-mailpit
@@ -83,10 +83,11 @@ services:
       KC_DB_USERNAME: postgres
       KC_DB_PASSWORD: postgres
       KC_HTTP_ENABLED: "true"
-      # Public URL baked into tokens and email links (set-password emails are
-      # requested by hr-backend via the internal keycloak:8080 address).
-      KC_HOSTNAME: http://localhost:8085
+      # Public URL baked into tokens and email links, served by the proxy
+      # (backends call the internal keycloak:8080 address for admin APIs).
+      KC_HOSTNAME: https://auth.conservices.test
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_PROXY_HEADERS: xforwarded
       KC_HOSTNAME_STRICT: "false"
       KC_HEALTH_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -118,6 +119,49 @@ services:
       retries: 30
       start_period: 40s
 
+  # ── Local HTTPS entry point: https://<app>.conservices.test ──────────────
+  # Hosts file + CA trust on Windows: scripts/setup-local-dns.ps1 (admin).
+  # The aliases let containers reach the same public URLs through the proxy.
+  proxy:
+    image: caddy:2-alpine
+    container_name: conservices-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - conservices-caddy-data:/data
+    networks:
+      default:
+        aliases:
+          - auth.conservices.test
+          - den.conservices.test
+          - hr.conservices.test
+          - stash.conservices.test
+          - events.conservices.test
+          - mail.conservices.test
+          - s3.conservices.test
+
+  # Copies the proxy's root certificate where backends can trust it
+  # (SSL_CERT_DIR=/caddy-ca) without seeing the CA's private key.
+  proxy-ca:
+    image: caddy:2-alpine
+    container_name: conservices-proxy-ca
+    depends_on:
+      - proxy
+    restart: "no"
+    volumes:
+      - conservices-caddy-data:/data:ro
+      - conservices-caddy-ca:/ca
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until [ -f /data/caddy/pki/authorities/local/root.crt ]; do echo waiting-for-proxy-ca; sleep 1; done
+        cp /data/caddy/pki/authorities/local/root.crt /ca/conservices-local-root.crt
+        chmod 644 /ca/conservices-local-root.crt
+
   # ── Stash (production clone; OIDC against local Keycloak) ─────────────────
   stash-backend:
     build:
@@ -134,10 +178,12 @@ services:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
     environment:
       APP_ENV: development
       # Host 8088 — 8080 often taken by other local stacks on this machine.
-      APP_BASE_URL: http://localhost:8088
+      APP_BASE_URL: https://stash.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
       HTTP_ADDR: ":8080"
@@ -149,14 +195,16 @@ services:
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
       AUTH_MODE: oidc
-      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: stash-spa
       OIDC_AUDIENCE: stash-spa
       ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
-      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,https://stash.conservices.test
       PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
     volumes:
       - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
     ports:
       - "8088:8080"
     extra_hosts:
@@ -169,7 +217,7 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
         VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
         VITE_OIDC_CLIENT_ID: stash-spa
         VITE_OIDC_SCOPE: openid profile email
         VITE_PUBLIC_CLAIM_ENABLED: "true"
@@ -212,9 +260,11 @@ services:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
     environment:
       APP_ENV: development
-      APP_BASE_URL: http://localhost:8110
+      APP_BASE_URL: https://hr.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
       # Container :8080 (ecosystem convention); host 8110 avoids :8080 clashes.
@@ -227,7 +277,8 @@ services:
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
       AUTH_MODE: oidc
-      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: hr-spa
       OIDC_AUDIENCE: hr-spa
       KEYCLOAK_BASE_URL: http://keycloak:8080
@@ -236,7 +287,7 @@ services:
       KEYCLOAK_CLIENT_SECRET: hr-provisioner-dev-secret
       # After setting their password from the onboarding email, users land in Den.
       KEYCLOAK_SETUP_CLIENT_ID: den-spa
-      KEYCLOAK_SETUP_REDIRECT_URI: http://localhost:3001/
+      KEYCLOAK_SETUP_REDIRECT_URI: https://den.conservices.test/
       # HR's own emails (offboarding notices). Dev: Mailpit; prod: real SMTP.
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
@@ -247,7 +298,9 @@ services:
         stash=http://stash-backend:8080/api/role-catalog,
         den=http://den-backend:8080/api/role-catalog,
         events=http://events-backend:8080/api/role-catalog
-      CORS_ALLOWED_ORIGINS: http://localhost:3003
+      CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
+    volumes:
+      - conservices-caddy-ca:/caddy-ca:ro
     ports:
       - "8110:8080"
     extra_hosts:
@@ -260,7 +313,7 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
         VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
         VITE_OIDC_CLIENT_ID: hr-spa
         VITE_OIDC_SCOPE: openid profile email
         HR_VERSION: dev
@@ -306,9 +359,11 @@ services:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
     environment:
       APP_ENV: development
-      APP_BASE_URL: http://localhost:8090
+      APP_BASE_URL: https://den.conservices.test
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://den:den@postgres:5432/den?sslmode=disable
       S3_ENDPOINT: http://minio:9000
@@ -318,13 +373,16 @@ services:
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
       AUTH_MODE: oidc
-      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: den-spa
       OIDC_AUDIENCE: den-spa
       # Den pushes the login branding into the realm (service account den-keycloak).
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: den-keycloak-dev-secret
-      CORS_ALLOWED_ORIGINS: http://localhost:3001
+      CORS_ALLOWED_ORIGINS: http://localhost:3001,https://den.conservices.test
+    volumes:
+      - conservices-caddy-ca:/caddy-ca:ro
     ports:
       - "8090:8080"
     extra_hosts:
@@ -338,7 +396,7 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
         VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
         VITE_OIDC_CLIENT_ID: den-spa
         VITE_OIDC_SCOPE: openid profile email
     container_name: conservices-den-frontend
@@ -378,9 +436,11 @@ services:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
     environment:
       APP_ENV: development
-      APP_BASE_URL: http://localhost:8100
+      APP_BASE_URL: https://events.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
       HTTP_ADDR: ":8080"
@@ -392,15 +452,17 @@ services:
       S3_SECRET_ACCESS_KEY: conservicesdev
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
-      S3_PUBLIC_BASE_URL: http://localhost:9000
+      S3_PUBLIC_BASE_URL: https://s3.conservices.test
       AUTH_MODE: oidc
-      OIDC_ISSUER_URL: http://localhost:8085/realms/conservices
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: events-spa
       OIDC_AUDIENCE: events-spa
       ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
-      CORS_ALLOWED_ORIGINS: http://localhost:3002
+      CORS_ALLOWED_ORIGINS: http://localhost:3002,https://events.conservices.test
     volumes:
       - ./Rally/infra/access-config.toml:/etc/rally/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
     ports:
       - "8100:8080"
     extra_hosts:
@@ -414,7 +476,7 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
         VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: http://localhost:8085/realms/conservices
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
         VITE_OIDC_CLIENT_ID: events-spa
         VITE_OIDC_SCOPE: openid profile email
         VITE_PRODUCT_NAME: Rally
@@ -429,3 +491,5 @@ services:
 volumes:
   conservices-postgres-data:
   conservices-minio-data:
+  conservices-caddy-data:
+  conservices-caddy-ca:

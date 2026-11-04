@@ -1,0 +1,39 @@
+# Local "production-like" entry point: https://<app>.conservices.test
+# Certificates come from Caddy's own local CA (trust it once with
+# scripts/setup-local-dns.ps1). Upstreams resolve at request time, so apps in
+# compose profiles that are not running simply return 502.
+{
+	local_certs
+	skip_install_trust
+}
+
+auth.conservices.test {
+	reverse_proxy keycloak:8080
+}
+
+den.conservices.test {
+	reverse_proxy den-frontend:80
+}
+
+hr.conservices.test {
+	reverse_proxy hr-frontend:80
+}
+
+stash.conservices.test {
+	reverse_proxy stash-frontend:80
+}
+
+events.conservices.test {
+	reverse_proxy events-frontend:80
+}
+
+mail.conservices.test {
+	reverse_proxy mailpit:8025
+}
+
+# Presigned URLs are signed for minio:9000; keep that Host so signatures match.
+s3.conservices.test {
+	reverse_proxy minio:9000 {
+		header_up Host {upstream_hostport}
+	}
+}

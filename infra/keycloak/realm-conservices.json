@@ -113,13 +113,13 @@
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "protocol": "openid-connect",
-      "rootUrl": "http://localhost:3000",
-      "baseUrl": "http://localhost:3000",
-      "redirectUris": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
-      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+      "rootUrl": "https://stash.conservices.test",
+      "baseUrl": "https://stash.conservices.test",
+      "redirectUris": ["https://stash.conservices.test/*", "http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "webOrigins": ["https://stash.conservices.test", "http://localhost:3000", "http://127.0.0.1:3000"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3000/*"
+        "post.logout.redirect.uris": "https://stash.conservices.test/*##http://localhost:3000/*"
       },
       "protocolMappers": [
         {
@@ -146,13 +146,13 @@
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "protocol": "openid-connect",
-      "rootUrl": "http://localhost:3001",
-      "baseUrl": "http://localhost:3001",
-      "redirectUris": ["http://localhost:3001/*", "http://127.0.0.1:3001/*"],
-      "webOrigins": ["http://localhost:3001", "http://127.0.0.1:3001"],
+      "rootUrl": "https://den.conservices.test",
+      "baseUrl": "https://den.conservices.test",
+      "redirectUris": ["https://den.conservices.test/*", "http://localhost:3001/*", "http://127.0.0.1:3001/*"],
+      "webOrigins": ["https://den.conservices.test", "http://localhost:3001", "http://127.0.0.1:3001"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3001/*"
+        "post.logout.redirect.uris": "https://den.conservices.test/*##http://localhost:3001/*"
       },
       "protocolMappers": [
         {
@@ -179,13 +179,13 @@
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "protocol": "openid-connect",
-      "rootUrl": "http://localhost:3002",
-      "baseUrl": "http://localhost:3002",
-      "redirectUris": ["http://localhost:3002/*", "http://127.0.0.1:3002/*"],
-      "webOrigins": ["http://localhost:3002", "http://127.0.0.1:3002"],
+      "rootUrl": "https://events.conservices.test",
+      "baseUrl": "https://events.conservices.test",
+      "redirectUris": ["https://events.conservices.test/*", "http://localhost:3002/*", "http://127.0.0.1:3002/*"],
+      "webOrigins": ["https://events.conservices.test", "http://localhost:3002", "http://127.0.0.1:3002"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3002/*"
+        "post.logout.redirect.uris": "https://events.conservices.test/*##http://localhost:3002/*"
       },
       "protocolMappers": [
         {
@@ -212,13 +212,13 @@
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "protocol": "openid-connect",
-      "rootUrl": "http://localhost:3003",
-      "baseUrl": "http://localhost:3003",
-      "redirectUris": ["http://localhost:3003/*", "http://127.0.0.1:3003/*"],
-      "webOrigins": ["http://localhost:3003", "http://127.0.0.1:3003"],
+      "rootUrl": "https://hr.conservices.test",
+      "baseUrl": "https://hr.conservices.test",
+      "redirectUris": ["https://hr.conservices.test/*", "http://localhost:3003/*", "http://127.0.0.1:3003/*"],
+      "webOrigins": ["https://hr.conservices.test", "http://localhost:3003", "http://127.0.0.1:3003"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3003/*"
+        "post.logout.redirect.uris": "https://hr.conservices.test/*##http://localhost:3003/*"
       },
       "protocolMappers": [
         {

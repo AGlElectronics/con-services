@@ -54,6 +54,22 @@ fi
 $KC add-roles -r conservices --uusername service-account-den-keycloak --cclientid realm-management \
   --rolename manage-realm --rolename view-realm
 
+# SPA clients: local DNS (https://<app>.conservices.test) plus the localhost ports.
+spa_urls() {
+  local client=$1 port=$2 host=$3 id
+  id=$($KC get clients -r conservices -q clientId="$client" --fields id --format csv --noquotes | tail -n1 || true)
+  [ -n "$id" ] || return 0
+  $KC update "clients/$id" -r conservices \
+    -s "rootUrl=https://$host" -s "baseUrl=https://$host" \
+    -s "redirectUris=[\"https://$host/*\",\"http://localhost:$port/*\",\"http://127.0.0.1:$port/*\"]" \
+    -s "webOrigins=[\"https://$host\",\"http://localhost:$port\",\"http://127.0.0.1:$port\"]" \
+    -s "attributes.\"post.logout.redirect.uris\"=https://$host/*##http://localhost:$port/*"
+}
+spa_urls stash-spa 3000 stash.conservices.test
+spa_urls den-spa 3001 den.conservices.test
+spa_urls events-spa 3002 events.conservices.test
+spa_urls hr-spa 3003 hr.conservices.test
+
 # Declare the attributes HR mirrors (undeclared attributes are dropped).
 $KC update users/profile -r conservices -f /opt/keycloak/data/profile/user-profile.json
 
