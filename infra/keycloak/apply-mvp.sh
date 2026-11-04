@@ -7,6 +7,11 @@ $KC config credentials --server http://localhost:8080 --realm master --user admi
 
 $KC update realms/conservices -s registrationAllowed=true
 
+# Keycloak's own admin console login (master realm): Con Services look too.
+# Den only pushes the organisation brand into conservices, so this one stays neutral.
+$KC update realms/master -s loginTheme=conservices \
+  -s displayName="Con Services admin" -s displayNameHtml="Con Services admin"
+
 # Onboarding emails (set-password link). Dev: Mailpit; prod: override SMTP.
 $KC update realms/conservices \
   -s emailTheme=conservices \
