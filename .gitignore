@@ -1,8 +1,13 @@
-# Each module has its own repository (AGlElectronics/den, hr, Rally, stash).
+# Each module has its own repository (AGlElectronics/den, hr, Rally, stash, …).
 /den/
 /hr/
 /Rally/
 /stash/
+/finance/
+/wiki/
+/desk/
+/learn/
+/tasks/
 
 # Third-party reference material, not ours to publish.
 /agents references/

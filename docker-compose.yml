@@ -26,6 +26,22 @@ services:
       timeout: 5s
       retries: 20
 
+  # DEV ONLY database browser for the shared Postgres server.
+  # https://db.conservices.test (or http://localhost:8095). Log in as a module
+  # user (hr/hr, stash/stash, den/den, events/events, finance/finance) or
+  # postgres/postgres.
+  adminer:
+    image: adminer:latest
+    container_name: conservices-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8095:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # LOCAL DEV ONLY — never use MinIO in production.
   # LOCAL DEV ONLY. Image tags: use local :latest (Hub pulls may be rate-limited).
   minio:
@@ -56,7 +72,7 @@ services:
         until mc alias set local http://minio:9000 conservices conservicesdev >/dev/null 2>&1; do
           echo waiting-for-minio; sleep 1
         done
-        for b in stash-data-dev den-data-dev events-data-dev hr-data-dev; do
+        for b in stash-data-dev den-data-dev events-data-dev hr-data-dev finance-data-dev learn-data-dev wiki-data-dev tasks-data-dev conservices-backups; do
           mc mb --ignore-existing "local/$$b"
           echo "bucket ready: $$b"
         done
@@ -70,6 +86,30 @@ services:
     ports:
       - "8025:8025"
       - "1025:1025"
+
+  # DEV ONLY mail server for Desk (profile desk). Unlike Mailpit it keeps
+  # real mailboxes Desk can read over IMAP. Mail sent to any address over
+  # SMTP is delivered; the mailboxes below can log in (login = full address,
+  # password = the part before the @). Desk reaches it at greenmail:3143
+  # (IMAP, plain) and greenmail:3025 (SMTP); Desk's replies still go out
+  # through Mailpit so they can be inspected there.
+  greenmail:
+    image: greenmail/standalone:latest
+    container_name: conservices-greenmail
+    restart: unless-stopped
+    profiles: ["desk"]
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=support:support@conservices.test,registration:registration@conservices.test
+        -Dgreenmail.users.login=email
+        -Dgreenmail.verbose
+    ports:
+      - "3025:3025"
+      - "3143:3143"
+      - "3993:3993"
+      - "8096:8080"
 
   # DEV Keycloak — import realm conservices with SPA clients + test users.
   keycloak:
@@ -98,6 +138,8 @@ services:
       - "8085:8080"
     volumes:
       - ./infra/keycloak/realm-conservices.json:/opt/keycloak/data/import/realm-conservices.json:ro
+      # DEV stub of the website's attendee accounts (separate from staff).
+      - ./infra/keycloak/realm-attendees.json:/opt/keycloak/data/import/realm-attendees.json:ro
       - ./infra/keycloak/apply-mvp.sh:/opt/keycloak/data/import/apply-mvp.sh:ro
       # Outside data/import: every .json there is imported as a realm.
       - ./infra/keycloak/user-profile.json:/opt/keycloak/data/profile/user-profile.json:ro
@@ -140,8 +182,15 @@ services:
           - hr.conservices.test
           - stash.conservices.test
           - events.conservices.test
+          - submit.conservices.test
+          - learn.conservices.test
+          - finance.conservices.test
+          - desk.conservices.test
+          - tasks.conservices.test
+          - wiki.conservices.test
           - mail.conservices.test
           - s3.conservices.test
+          - db.conservices.test
 
   # Copies the proxy's root certificate where backends can trust it
   # (SSL_CERT_DIR=/caddy-ca) without seeing the CA's private key.
@@ -297,7 +346,19 @@ services:
       ROLE_CATALOG_SOURCES: >-
         stash=http://stash-backend:8080/api/role-catalog,
         den=http://den-backend:8080/api/role-catalog,
-        events=http://events-backend:8080/api/role-catalog
+        events=http://events-backend:8080/api/role-catalog,
+        learn=http://learn-backend:8080/api/role-catalog,
+        finance=http://finance-backend:8080/api/role-catalog,
+        desk=http://desk-backend:8080/api/role-catalog,
+        tasks=http://tasks-backend:8080/api/role-catalog,
+        wiki=http://wiki-backend:8080/api/role-catalog
+      # Qualifications earned in Learn (catalog + per-person holdings).
+      QUALIFICATION_CATALOG_SOURCES: learn=http://learn-backend:8080/api/qualification-catalog
+      LEARN_HOLDINGS_URL: http://learn-backend:8080/api/internal/holdings
+      LEARN_SERVICE_TOKEN: learn-service-dev-token
+      # Modules told when someone is offboarded ("url|token", comma
+      # separated). The wiki orphans their private space.
+      OFFBOARD_HOOKS: http://wiki-backend:8080/api/internal/offboarded|wiki-service-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
@@ -323,6 +384,77 @@ services:
       - hr-backend
     ports:
       - "3003:80"
+
+  # ── Finance (invoices + money tracking; OIDC against local Keycloak) ──────
+  finance-migrate:
+    build:
+      context: ./finance
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-finance-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://finance:finance@postgres:5432/finance?sslmode=disable
+    restart: "no"
+
+  finance-backend:
+    build:
+      context: ./finance
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-finance-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      finance-migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: https://finance.conservices.test
+      # Pasted Den pairing URLs point at the host; reach Den inside the network.
+      DEN_INTERNAL_URL: http://den-backend:8080
+      # Container :8080 (ecosystem convention); host 8130 (8120 is Learn).
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://finance:finance@postgres:5432/finance?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: finance-spa
+      OIDC_AUDIENCE: finance-spa
+      FINANCE_ACCESS_GROUPS: finance-admin
+      CORS_ALLOWED_ORIGINS: http://localhost:3006,https://finance.conservices.test
+    volumes:
+      - conservices-caddy-ca:/caddy-ca:ro
+    ports:
+      - "8130:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  finance-frontend:
+    build:
+      context: ./finance
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: finance-spa
+        VITE_OIDC_SCOPE: openid profile email
+        FINANCE_VERSION: dev
+    container_name: conservices-finance-frontend
+    restart: unless-stopped
+    depends_on:
+      - finance-backend
+    ports:
+      - "3006:80"
 
   # Den — profile: docker compose --profile den --profile events up --build
   # Unified backend image: /den-server (default) + /den-migrate (entrypoint override).
@@ -380,6 +512,9 @@ services:
       # Den pushes the login branding into the realm (service account den-keycloak).
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: den-keycloak-dev-secret
+      # Module databases + backups (docs/operations.md). Empty URL = off.
+      OPERATOR_URL: http://den-operator:8080
+      OPERATOR_TOKEN: den-operator-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3001,https://den.conservices.test
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
@@ -387,6 +522,42 @@ services:
       - "8090:8080"
     extra_hosts:
       - "localhost:host-gateway"
+
+  # Den operator — the only service with the Postgres admin login. Creates and
+  # drops module databases for Den and backs up the whole suite (all
+  # databases + module buckets), encrypted, to object storage. No published
+  # port: only Den calls it. See docs/operations.md.
+  den-operator:
+    profiles: ["den"]
+    build:
+      context: ./den
+      dockerfile: infra/Dockerfile.operator
+    container_name: conservices-den-operator
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      OPERATOR_TOKEN: den-operator-dev-token
+      PG_ADMIN_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      MANAGED_DATABASES: "true"
+      PROTECTED_DATABASES: den,keycloak
+      BACKUP_ENABLED: "true"
+      BACKUP_TIMEZONE: Europe/Vienna
+      # DEV: same MinIO as the live data. Production: a different provider
+      # or location, or it isn't really a backup.
+      BACKUP_S3_ENDPOINT: http://minio:9000
+      BACKUP_S3_BUCKET: conservices-backups
+      BACKUP_S3_ACCESS_KEY_ID: conservices
+      BACKUP_S3_SECRET_ACCESS_KEY: conservicesdev
+      # DEV key pair: the secret half is infra/operator/dev-backup-identity.txt.
+      BACKUP_AGE_RECIPIENTS: age1777a9j365d2nmjl24nvp45jz8ww9sg4xv9n4h84rl4nay9xww39sc5t73k
+      FILES_S3_ENDPOINT: http://minio:9000
+      FILES_S3_ACCESS_KEY_ID: conservices
+      FILES_S3_SECRET_ACCESS_KEY: conservicesdev
+      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
 
   den-frontend:
     profiles: ["den"]
@@ -458,6 +629,18 @@ services:
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: events-spa
       OIDC_AUDIENCE: events-spa
+      # Public submission site: attendees sign in through their own realm.
+      ATTENDEE_OIDC_ISSUER_URL: https://auth.conservices.test/realms/attendees
+      ATTENDEE_OIDC_CLIENT_ID: rally-submit
+      # Standalone default; Den's "events_public_schedule" setting wins once paired.
+      PUBLIC_SCHEDULE_ENABLED: "true"
+      # The public schedule API requires a key. This is the builtin
+      # "programme-page" one the submission site sends (it must match
+      # events-submit's VITE_PUBLIC_SCHEDULE_KEY); other consumers get
+      # their own keys in the staff UI (Schedule → Setup).
+      PUBLIC_API_BUILTIN_KEY: rsk_programme_dev_key
+      # Empty = announcements are dry runs (recorded, not posted).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3002,https://events.conservices.test
     volumes:
@@ -488,8 +671,482 @@ services:
     ports:
       - "3002:80"
 
+  # Public event submission site (attendee-facing, own host and login realm).
+  events-submit:
+    profiles: ["events"]
+    build:
+      context: ./Rally
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        RALLY_APP: submit
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/attendees
+        VITE_OIDC_CLIENT_ID: rally-submit
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Event submissions
+        # Must match events-backend's PUBLIC_API_BUILTIN_KEY.
+        VITE_PUBLIC_SCHEDULE_KEY: rsk_programme_dev_key
+        RALLY_VERSION: dev
+    container_name: conservices-events-submit
+    restart: unless-stopped
+    depends_on:
+      - events-backend
+    ports:
+      - "3004:80"
+
+  # ── Learn — profile: docker compose --profile learn up --build ────────────
+  # Training module (courses, enrolments, completion, quizzes). Files live in
+  # the learn-data-dev bucket.
+  learn-migrate:
+    profiles: ["learn"]
+    build:
+      context: ./learn
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-learn-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://learn:learn@postgres:5432/learn?sslmode=disable
+    restart: "no"
+
+  learn-backend:
+    profiles: ["learn"]
+    build:
+      context: ./learn
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-learn-backend
+    restart: unless-stopped
+    depends_on:
+      learn-migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: https://learn.conservices.test
+      # Pasted Den pairing URLs point at the host; reach Den inside the network.
+      DEN_INTERNAL_URL: http://den-backend:8080
+      # Container :8080 (ecosystem convention); host 8120 avoids :8080 clashes.
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://learn:learn@postgres:5432/learn?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: learn-spa
+      OIDC_AUDIENCE: learn-spa
+      # Den's SPA calls Learn directly (my-learning widgets).
+      OIDC_EXTRA_AUDIENCES: den-spa
+      ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3005,https://learn.conservices.test,https://den.conservices.test,http://localhost:3001
+      PUBLIC_BASE_URL: https://learn.conservices.test
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: learn-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      S3_PUBLIC_BASE_URL: https://s3.conservices.test
+      # Read-only group/member lookups (quiz assignment by group).
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: conservices
+      KEYCLOAK_CLIENT_ID: learn-provisioner
+      KEYCLOAK_CLIENT_SECRET: learn-provisioner-dev-secret
+      # Learn's own notices. Dev: Mailpit; prod: real SMTP.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@conservices.local
+      SMTP_FROM_NAME: Con Services
+      # Shared secret for HR -> Learn service calls (qualification holdings).
+      LEARN_SERVICE_TOKEN: learn-service-dev-token
+      # Empty = Telegram notifications disabled.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - ./learn/infra/access-config.toml:/etc/learn/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
+    ports:
+      - "8120:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  learn-frontend:
+    profiles: ["learn"]
+    build:
+      context: ./learn
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: learn-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Learn
+        LEARN_VERSION: dev
+    container_name: conservices-learn-frontend
+    restart: unless-stopped
+    depends_on:
+      - learn-backend
+    ports:
+      - "3005:80"
+
+  # ── Desk — profile: docker compose --profile desk up --build ──────────────
+  # Shared support inboxes (FreeScout-style). Dev mail: GreenMail holds the
+  # inboxes (IMAP greenmail:3143), replies go out through Mailpit.
+  desk-migrate:
+    profiles: ["desk"]
+    build:
+      context: ./desk
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-desk-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://desk:desk@postgres:5432/desk?sslmode=disable
+    restart: "no"
+
+  desk-backend:
+    profiles: ["desk"]
+    build:
+      context: ./desk
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-desk-backend
+    restart: unless-stopped
+    depends_on:
+      desk-migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+      greenmail:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: https://desk.conservices.test
+      DEN_INTERNAL_URL: http://den-backend:8080
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://desk:desk@postgres:5432/desk?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: desk-spa
+      OIDC_AUDIENCE: desk-spa
+      ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3008,https://desk.conservices.test
+      # Encrypts stored mailbox passwords. Prod: a long random secret.
+      DESK_SECRET_KEY: desk-dev-secret-change-me
+      FETCH_INTERVAL: 20s
+      # Fallback outbound mail for mailboxes without their own SMTP server.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: none
+    volumes:
+      - ./desk/infra/access-config.toml:/etc/desk/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
+    ports:
+      - "8150:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  desk-frontend:
+    profiles: ["desk"]
+    build:
+      context: ./desk
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: desk-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Desk
+        DESK_VERSION: dev
+    container_name: conservices-desk-frontend
+    restart: unless-stopped
+    depends_on:
+      - desk-backend
+    ports:
+      - "3008:80"
+
+  # ── Tasks — profile: docker compose --profile tasks up --build ────────────
+  # Project and task tracking (ClickUp-style spaces, lists, boards).
+  tasks-migrate:
+    profiles: ["tasks"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-tasks-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks?sslmode=disable
+    restart: "no"
+
+  tasks-backend:
+    profiles: ["tasks"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-tasks-backend
+    restart: unless-stopped
+    depends_on:
+      tasks-migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: https://tasks.conservices.test
+      DEN_INTERNAL_URL: http://den-backend:8080
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: tasks-spa
+      OIDC_AUDIENCE: tasks-spa
+      ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3009,https://tasks.conservices.test
+      # HR department hook (TASK-25). Applied when the container is
+      # recreated at cutover; HR gets the matching DEPARTMENT_HOOKS then.
+      TASKS_SERVICE_TOKEN: tasks-service-dev-token
+      # Attachments (TASK-7)
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: tasks-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+    volumes:
+      - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
+    ports:
+      - "8160:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  tasks-frontend:
+    profiles: ["tasks"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: tasks-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Tasks
+        TASKS_VERSION: dev
+    container_name: conservices-tasks-frontend
+    restart: unless-stopped
+    depends_on:
+      - tasks-backend
+    ports:
+      - "3009:80"
+
+  # ── Tasks dev copy — profile: docker compose --profile tasks-dev up --build ─
+  # Development instance against the tasks_dev database so the live Tasks
+  # (which other agents use) keeps running untouched until cutover.
+  tasks-dev-migrate:
+    profiles: ["tasks-dev"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.migrate
+    image: conservices-tasks-dev-migrate
+    container_name: conservices-tasks-dev-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks_dev?sslmode=disable
+    restart: "no"
+
+  tasks-dev-backend:
+    profiles: ["tasks-dev"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    image: conservices-tasks-dev-backend
+    container_name: conservices-tasks-dev-backend
+    restart: unless-stopped
+    depends_on:
+      tasks-dev-migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: http://localhost:3010
+      DEN_INTERNAL_URL: http://den-backend:8080
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks_dev?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: tasks-spa
+      OIDC_AUDIENCE: tasks-spa
+      ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3010
+      # Lets HR keep one space per department (TASK-25). Dev-only value;
+      # the live pair is wired at cutover.
+      TASKS_SERVICE_TOKEN: tasks-service-dev-token
+      # Attachments (TASK-7)
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: tasks-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+    volumes:
+      - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
+    ports:
+      - "8161:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  tasks-dev-frontend:
+    profiles: ["tasks-dev"]
+    build:
+      context: ./tasks
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.dev-stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: tasks-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Tasks (dev)
+        TASKS_VERSION: dev
+    image: conservices-tasks-dev-frontend
+    container_name: conservices-tasks-dev-frontend
+    restart: unless-stopped
+    depends_on:
+      - tasks-dev-backend
+    ports:
+      - "3010:80"
+
+  # ── Wiki — profile: docker compose --profile wiki up --build ──────────────
+  # Notion-style pages in private and team spaces; content lives in S3.
+  wiki-migrate:
+    profiles: ["wiki"]
+    build:
+      context: ./wiki
+      dockerfile: infra/Dockerfile.migrate
+    container_name: conservices-wiki-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://wiki:wiki@postgres:5432/wiki?sslmode=disable
+    restart: "no"
+
+  wiki-backend:
+    profiles: ["wiki"]
+    build:
+      context: ./wiki
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-wiki-backend
+    restart: unless-stopped
+    # Shutdown closes live connections and ships buffered edits to S3.
+    stop_grace_period: 30s
+    depends_on:
+      wiki-migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      proxy-ca:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: development
+      APP_BASE_URL: https://wiki.conservices.test
+      DEN_INTERNAL_URL: http://den-backend:8080
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://wiki:wiki@postgres:5432/wiki?sslmode=disable
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+      SSL_CERT_DIR: /caddy-ca
+      OIDC_CLIENT_ID: wiki-spa
+      OIDC_AUDIENCE: wiki-spa
+      ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
+      CORS_ALLOWED_ORIGINS: http://localhost:3007,https://wiki.conservices.test
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: wiki-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      # Edits wait here (at most ~5s) before going to S3; one replica only.
+      WIKI_BUFFER_DIR: /var/lib/wiki/buffer
+      # HR's offboarding hook (orphans private spaces); empty turns the
+      # internal API off. Matches OFFBOARD_HOOKS on hr-backend.
+      WIKI_SERVICE_TOKEN: wiki-service-dev-token
+      WIKI_OFFBOARD_GRACE_DAYS: "30"
+    volumes:
+      - ./wiki/infra/access-config.toml:/etc/wiki/access-config.toml:ro
+      - conservices-caddy-ca:/caddy-ca:ro
+      - conservices-wiki-buffer:/var/lib/wiki/buffer
+    ports:
+      - "8140:8080"
+    extra_hosts:
+      - "localhost:host-gateway"
+
+  wiki-frontend:
+    profiles: ["wiki"]
+    build:
+      context: ./wiki
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx.stack.conf
+        VITE_AUTH_MODE: oidc
+        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
+        VITE_OIDC_CLIENT_ID: wiki-spa
+        VITE_OIDC_SCOPE: openid profile email
+        VITE_PRODUCT_NAME: Wiki
+        WIKI_VERSION: dev
+    container_name: conservices-wiki-frontend
+    restart: unless-stopped
+    depends_on:
+      - wiki-backend
+    ports:
+      - "3007:80"
+
 volumes:
   conservices-postgres-data:
   conservices-minio-data:
   conservices-caddy-data:
   conservices-caddy-ca:
+  conservices-wiki-buffer:
