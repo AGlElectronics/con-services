@@ -72,6 +72,16 @@ In the same change:
 - Keep docs true: if behaviour and docs disagree, fixing the docs is part of
   the fix.
 
+## Use of AI tools
+
+AI assistants may be used to speed up routine development and to help draft
+or polish documentation. **They are never used for security-sensitive
+work**: threat models, access control and authentication design, secret
+handling, cryptography, dependency or vulnerability triage, production
+incident response, or reviewing security-critical changes. People who know
+the system own those decisions. Anything an AI proposes is reviewed before
+it is committed.
+
 ## Before the repositories look "open source ready"
 
 Making the suite public is more than flipping visibility. Walk this checklist

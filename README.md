@@ -128,6 +128,10 @@ Module source checkouts (`den/`, `hr/`, `Rally/`, …) are separate git reposito
 
 See [Contributing](https://aglelectronics.github.io/con-services/contributing/) and [Documentation standards](https://aglelectronics.github.io/con-services/contributing/documentation-standards/) (docs, changelogs, secrets, and what “open-source ready” means for these repos).
 
+### Use of AI tools
+
+We may use AI assistants to speed up routine development and to help draft or polish documentation. **AI is never used for security-sensitive work**: threat models, access control and auth design, secret handling, cryptography, dependency or vulnerability triage, production incident response, or reviewing security-critical changes. Those stay with people who understand the system. AI output is always reviewed before it lands in the tree.
+
 ---
 
 ## License
