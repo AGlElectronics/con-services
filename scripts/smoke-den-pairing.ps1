@@ -1,13 +1,18 @@
 # Smoke: pair a module with Den and check brand + org settings flow through.
-# Usage: scripts/smoke-den-pairing.ps1 -Module hr   (hr | stash | events)
-param([ValidateSet('hr', 'stash', 'events')][string]$Module = 'hr')
+# Usage: scripts/smoke-den-pairing.ps1 -Module hr   (hr | stash | events | finance | learn | desk | tasks | wiki)
+param([ValidateSet('hr', 'stash', 'events', 'finance', 'learn', 'desk', 'tasks', 'wiki')][string]$Module = 'hr')
 $ErrorActionPreference = 'Stop'
 $kc = 'http://localhost:8085/realms/conservices/protocol/openid-connect/token'
 $den = 'http://localhost:3001'
 $targets = @{
-  hr     = @{ client = 'hr-spa'; base = 'http://localhost:3003/api' }
-  stash  = @{ client = 'stash-spa'; base = 'http://localhost:3000/api' }
-  events = @{ client = 'events-spa'; base = 'http://localhost:3002/api/v1' }
+  hr      = @{ client = 'hr-spa'; base = 'http://localhost:3003/api' }
+  stash   = @{ client = 'stash-spa'; base = 'http://localhost:3000/api' }
+  events  = @{ client = 'events-spa'; base = 'http://localhost:3002/api/v1' }
+  finance = @{ client = 'finance-spa'; base = 'http://localhost:3006/api' }
+  learn   = @{ client = 'learn-spa'; base = 'http://localhost:3005/api/v1' }
+  desk    = @{ client = 'desk-spa'; base = 'http://localhost:3008/api/v1' }
+  tasks   = @{ client = 'tasks-spa'; base = 'http://localhost:3009/api/v1' }
+  wiki    = @{ client = 'wiki-spa'; base = 'http://localhost:3007/api/v1' }
 }
 $t = $targets[$Module]
 
