@@ -168,5 +168,6 @@ nav:
       - Full stack on Docker: operations/docker-production.md
   - Contributing:
       - contributing/index.md
+      - Documentation standards: contributing/documentation-standards.md
       - Local development with Docker Compose: contributing/local-development.md
       - Changelogs: contributing/changelog.md

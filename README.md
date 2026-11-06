@@ -1,34 +1,81 @@
-# Con services (local suite)
+# Con Services
 
-Docker Desktop stack for **Stash**, **HR**, **Den**, **Events (Rally)**, **Learn**, **Finance**, **Desk**, **Tasks**, **Wiki**, shared **Postgres**, **MinIO (dev only)**, and **Keycloak (dev only)**.
+**Self-hosted tools for running a convention** — volunteers and staff, programme and events, inventory, training, finance, helpdesk, wiki and task boards. One sign-in, your brand on every screen, and the convention owns its data.
+
+This repository holds the **shared suite**: documentation, Kubernetes / Helm deploy pieces, the local Docker Compose stack, and Keycloak / proxy / Postgres helpers. Each product module lives in its own repository under [AGlElectronics](https://github.com/AGlElectronics).
+
+---
 
 ## Documentation
 
-**<https://aglelectronics.github.io/con-services/>**: getting started, concepts, module guides, configuration and API references, and operations. The sources are in [docs/](docs) ([how to contribute](docs/contributing/index.md)). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+**Start here:** [https://aglelectronics.github.io/con-services/](https://aglelectronics.github.io/con-services/)
 
-Installations run on **Kubernetes** with published, versioned images (`ghcr.io/aglelectronics/<module>-<component>:<MAJOR.MINOR.PATCH-BUILD>`), using the manifests in [deploy/kubernetes/](deploy/kubernetes). Pick your path on [Getting started → Choose your path](https://aglelectronics.github.io/con-services/getting-started/#choose-your-path): full platform on Kubernetes, one module on Kubernetes, full stack on Docker for production, or this Docker Compose stack for development.
+| Section | What you’ll find |
+| --- | --- |
+| [Getting started](https://aglelectronics.github.io/con-services/getting-started/) | Choose Kubernetes (full or one module), hardened Docker, or this Compose stack for development |
+| [How the platform starts](https://aglelectronics.github.io/con-services/getting-started/how-the-platform-starts/) | Den first, then connect storage and database, then add modules |
+| [Concepts](https://aglelectronics.github.io/con-services/concepts/) | Architecture, authentication, pairing, API conventions, glossary |
+| [Modules](https://aglelectronics.github.io/con-services/modules/) | Setup, configuration and full API reference for every module |
+| [Operations](https://aglelectronics.github.io/con-services/operations/) | Helm, secrets, network policies, backups, production hardening |
+| [Contributing](https://aglelectronics.github.io/con-services/contributing/) | How we write docs and changelogs |
 
-**This README describes the Docker Compose development stack.** It uses public passwords and builds from source; never use it for real data.
+Sources live in [`docs/`](docs/). Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Quick start
+---
+
+## Modules
+
+| Module | Role | Source |
+| --- | --- | --- |
+| **Den** | Portal, admin console, pairing, branding, backups | [den](https://github.com/AGlElectronics/den) |
+| **HR** | People, onboarding, departments, Keycloak accounts | [hr](https://github.com/AGlElectronics/hr) |
+| **Rally** | Events, CfP, review, schedule, public programme API | [Rally](https://github.com/AGlElectronics/Rally) |
+| **Stash** | Inventory, locations, sign-outs, lost & found | [stash](https://github.com/AGlElectronics/stash) |
+| **Finance** | Customers, invoices, expenses, ledger | [finance](https://github.com/AGlElectronics/finance) |
+| **Learn** | Courses, quizzes, qualifications | [learn](https://github.com/AGlElectronics/learn) |
+| **Wiki** | Spaces, live editing, databases, share links | [wiki](https://github.com/AGlElectronics/wiki) |
+| **Desk** | Shared-mailbox helpdesk | [desk](https://github.com/AGlElectronics/desk) |
+| **Tasks** | Crew task boards | [tasks](https://github.com/AGlElectronics/tasks) |
+
+Modules are isolated (own database, bucket, namespace). They talk over HTTP APIs only — never a shared application database.
+
+---
+
+## Deploy
+
+Production is **Kubernetes-first**: one namespace per service, NetworkPolicies, pinned image tags `MAJOR.MINOR.PATCH-BUILD`, and a secret manager (not plain Secrets) beyond local trials.
+
+```text
+deploy/kubernetes/   reference Kustomize (Den + shared data/identity + Stash example)
+deploy/charts/       one Helm chart per module (stubs → production-ready over time)
+```
+
+Prefer **Cilium** as CNI, a **load balancer** in front of ingress for large installs, and **AWS S3 or Hetzner Object Storage** instead of in-cluster MinIO.
+
+Full procedures: [Operations](https://aglelectronics.github.io/con-services/operations/) · [Production](https://aglelectronics.github.io/con-services/operations/production/).
+
+---
+
+## Local development (Docker Compose)
+
+This Compose file is the **quick local stack**. It uses well-known development passwords and builds from source. **Do not use it for real attendee or volunteer data.**
+
+### Start
 
 ```powershell
-# from this folder — Docker Desktop must be running
-# Full MVP (Stash + HR + Den + Events + Learn + Keycloak + MinIO + Postgres):
+# Docker Desktop must be running
 docker compose --profile den --profile events --profile learn --profile desk --profile tasks --profile wiki up --build -d
 ```
 
-Without profiles: **Postgres + MinIO + Keycloak + Stash + HR + Finance** only.
+Without extra profiles you get Postgres, MinIO, Keycloak, Stash, HR and Finance. First boot can take several minutes (image builds + Keycloak realm import).
 
-First boot can take several minutes (image builds + Keycloak realm import). OIDC backends wait until Keycloak is healthy.
+### HTTPS hostnames (optional)
 
-## Local DNS (production-like HTTPS)
+With the Caddy proxy and [`scripts/setup-local-dns.ps1`](scripts/setup-local-dns.ps1) (elevated PowerShell once):
 
-A Caddy proxy (`infra/proxy/Caddyfile`, ports 80/443) serves every app on its own hostname with certificates from Caddy's local CA:
-
-| Service | URL |
+| App | URL |
 | --- | --- |
-| Den (portal + admin) | https://den.conservices.test |
+| Den | https://den.conservices.test |
 | HR | https://hr.conservices.test |
 | Stash | https://stash.conservices.test |
 | Events (Rally) | https://events.conservices.test |
@@ -37,141 +84,52 @@ A Caddy proxy (`infra/proxy/Caddyfile`, ports 80/443) serves every app on its ow
 | Tasks | https://tasks.conservices.test |
 | Wiki | https://wiki.conservices.test |
 | Finance | https://finance.conservices.test |
-| Keycloak (login + admin console) | https://auth.conservices.test |
-| Mailpit | https://mail.conservices.test |
-| MinIO (presigned files) | https://s3.conservices.test |
-| Adminer (database browser, dev only) | https://db.conservices.test |
+| Keycloak | https://auth.conservices.test |
 
-One-time setup, from an **elevated** PowerShell with the stack running:
+Direct `localhost` ports still work; sign-in always goes through `auth.conservices.test` when you use the proxy.
 
-```powershell
-scripts/setup-local-dns.ps1          # hosts entries + trust the proxy CA (restart the browser)
-scripts/setup-local-dns.ps1 -Remove  # undo
-```
+### Development sign-in
 
-Keycloak's public URL (token issuer) is `https://auth.conservices.test`; containers reach it through the proxy's network aliases and trust its CA via `SSL_CERT_DIR=/caddy-ca`. The localhost ports below keep working, but sign-in always goes through `auth.conservices.test`, so the hosts entries are needed either way. The proxy CA lives in the `conservices-caddy-data` volume; deleting it means re-running the setup script.
-
-## URLs (direct ports)
-
-| Service | URL |
-| --- | --- |
-| Stash UI | http://localhost:3000 |
-| Stash API | http://localhost:8088 (host; avoids common :8080 clashes) |
-| Den UI | http://localhost:3001 |
-| Den API | http://localhost:8090 |
-| Events (Rally) UI | http://localhost:3002 |
-| Events API | http://localhost:8100 |
-| HR UI | http://localhost:3003 |
-| HR API | http://localhost:8110 |
-| Learn UI | http://localhost:3005 |
-| Learn API | http://localhost:8120 |
-| Desk UI | http://localhost:3008 |
-| Desk API | http://localhost:8150 |
-| Tasks UI | http://localhost:3009 |
-| Tasks API | http://localhost:8160 |
-| Wiki UI | http://localhost:3007 |
-| Wiki API | http://localhost:8140 |
-| Finance UI | http://localhost:3006 |
-| Finance API | http://localhost:8130 |
-| Keycloak | http://localhost:8085 |
-| MinIO console | http://localhost:9001 |
-| Mailpit (dev inbox for Keycloak emails) | http://localhost:8025 |
-| GreenMail (dev mail server for Desk, profile `desk`) | SMTP `localhost:3025`, IMAP `localhost:3143`, API http://localhost:8096 |
-| Adminer (Postgres browser; system PostgreSQL, server `postgres`) | http://localhost:8095 |
-
-## DEV credentials (temporary — not for production)
-
-### Keycloak admin console
-
-- URL: http://localhost:8085
-- User: `admin`
-- Password: `admin`
-
-Realm: **`conservices`** (auto-imported).
-
-### App login users (OIDC)
-
-| Username | Password | Groups (approx.) |
+| Who | Password | Notes |
 | --- | --- | --- |
-| `admin` | `adminadmin` | stash-admin, den-admin, events-admin, hr-admin, learn-admin, finance-admin, desk-admin, tasks-admin, wiki-admin |
-| `alice` | `alicealice` | stash-admin, events-admin, den-admin, learn-trainer, desk-agent, tasks-creator, wiki-editor |
-| `bob` | `bobbob` | stash-readonly (plain learner in Learn once enrolled) |
+| Keycloak console `admin` | `admin` | http://localhost:8085 — **dev only** |
+| App user `admin` | `adminadmin` | Broad admin groups across modules |
+| `alice` / `bob` | `alicealice` / `bobbob` | Narrower roles for testing |
 
-Stash SPA client: `stash-spa`  
-Den SPA client: `den-spa`  
-Events SPA client: `events-spa`  
-HR SPA client: `hr-spa` (same Keycloak; provisioner client `hr-provisioner`)  
-Learn SPA client: `learn-spa`; Desk: `desk-spa`; Tasks: `tasks-spa`; Wiki: `wiki-spa`  
-Finance SPA client: `finance-spa`
+Postgres (`postgres` / `postgres`), MinIO (`conservices` / `conservicesdev`) and every `*-dev-*` token in Compose are **local defaults**. Treat them as public examples.
 
-### Shared infra
+More detail (ports, smoke scripts, pairing, backups): [Local development](https://aglelectronics.github.io/con-services/contributing/local-development/).
 
-| Thing | Value |
-| --- | --- |
-| Postgres | `localhost:5432` / user `postgres` / pass `postgres` |
-| App DBs | `stash`/`stash`, `den`/`den`, `events`/`events`, `hr`/`hr`, `learn`/`learn`, `finance`/`finance`, `desk`/`desk`, `tasks`/`tasks`, `wiki`/`wiki` |
-| MinIO API | `localhost:9000` / `conservices` / `conservicesdev` |
-| Buckets | `stash-data-dev`, `den-data-dev`, `events-data-dev`, `hr-data-dev`, `finance-data-dev`, `learn-data-dev`, `wiki-data-dev`, `conservices-backups` (encrypted backups) |
-
-**MinIO and this Keycloak are DEV ONLY. Never use them in production.** Prod uses managed S3 + your real IdP.
-
-## Smoke check
-
-```powershell
-docker compose --profile den --profile events --profile learn ps
-Invoke-WebRequest http://localhost:8088/api/health
-Invoke-WebRequest http://localhost:8090/livez
-Invoke-WebRequest http://localhost:8100/livez
-Invoke-WebRequest http://localhost:8110/livez
-Invoke-WebRequest http://localhost:8120/livez
-Invoke-WebRequest http://localhost:8130/livez
-Invoke-WebRequest http://localhost:8085/realms/conservices
-```
-
-Then open Stash at http://localhost:3000 → Login → Keycloak → `admin` / `adminadmin`.
-
-## Databases and backups
-
-Den's **operator** (`den-operator`, profile `den`) is the only service holding the Postgres admin login. From Den admin → **Modules** it creates a database and login for a new module, and when a module is removed it can drop that database. Removing asks twice and backs the database up first. It also takes a daily **encrypted** backup of every database (Den, Keycloak and all modules), the logins and the module buckets into `conservices-backups`. Status, retention, "Back up now" and downloads are on Den admin → **Backups**.
-
-**Read [Databases, backups and restore](docs/operations/databases-and-backups.md)** before relying on it:
-
-- what is and isn't backed up;
-- the encryption key (lose it and the backups are unreadable);
-- the restore procedure.
-
-**Modules run standalone, or on another database server, are not covered; backing those up is up to their admin.**
-
-Dev: decrypt with `infra/operator/dev-backup-identity.txt` (public on purpose, dev only), e.g. `age -d -i infra/operator/dev-backup-identity.txt -o backup.tar <file>.tar.age`.
-
-## Notes
-
-- One Postgres host, **one database per module**.
-- One MinIO, **one bucket per module** (no cross-bucket access).
-- Stash, Den, Events, HR, Learn, and Finance use **OIDC** against local Keycloak (`conservices` realm).
-- **Learn** (profile `learn`) is the training module: trainers (`learn-trainer`) build courses out of sections and pages and publish them; access to a course is an **enrolment** (by staff or self-enrol), not a group; learners mark pages done and the course tracks progress. Admin group `learn-admin`. No bucket — Learn stores no files yet. Smoke: `scripts/smoke-learn.ps1`. See [learn/README.md](learn/README.md).
-- **Wiki** (profile `wiki`) holds Notion-style pages in spaces. Everyone gets a **private space** (nobody else, admins included, can see it — until its owner is offboarded, when HR's hook hands it to the admins for a grace period). **Team spaces** are closed by default and shared with people, Keycloak groups or everyone signed in, at view / comment / edit / full access; a page can be shared further on its own, or **restricted** so it ignores the space's access. `wiki-admin` gets full access to every team space; `wiki-editor` can create team spaces. Pages are edited live by several people at once (BlockNote, cursors and avatars); the backend relays the edits and stores them in the `wiki-data-dev` bucket, with a few seconds buffered on the `conservices-wiki-buffer` volume ([wiki/docs/plan.md](wiki/docs/plan.md)). On top: file uploads, page history with restore, Ctrl+K search, mentions and backlinks, favourites, inline comment threads (the comment level), public share links (Den setting `wiki_public_links`, off by default), templates with Markdown import/export, and Notion-style databases (table/board/calendar). Smoke: `scripts/smoke-wiki.ps1`. See [wiki/README.md](wiki/README.md).
-- **Role catalogs:** every module serves public `GET /api/role-catalog` (`{module, display_name, roles:[{key,label,description,group,assignable,scope,permissions,note}]}`). HR aggregates them (`ROLE_CATALOG_SOURCES`) into its access picker; assigning a role adds the person to that role's Keycloak `group` (created on first use). Stash and Rally roles/descriptions/bindings live in each module's `infra/access-config.toml`.
-- Den has a member **portal** (`/dashboard`) and a separate **admin console** (`/admin/*`, admins/owners only — enforced on the API too).
-- **HR onboarding** (`/onboarding`): after a department approves an application, HR fills in the volunteer profile (first/last name, nickname, date of birth, private email, phone, address, emergency contact name + phone are required) and picks the department → access page prefilled with the department's default roles → review → **Complete**. Complete creates the Keycloak user (login name from the HR username template, default `{nickname}` slugged, e.g. "Sparky Paws" → `sparky-paws`; Keycloak email = private email; nickname, phone, org and private email stored as user attributes), adds the department group (`dept-<slug>`) and role groups, sets the person active, and Keycloak emails a "set your password" link that lands in Den. Nothing touches Keycloak before Complete.
-- **Departments** (`/departments` in HR) own a Keycloak group, created automatically on save, plus default module roles for new members.
-- **GreenMail** (profile `desk`, dev only) is a real IMAP/SMTP server for the Desk helpdesk ([desk/docs/plan.md](desk/docs/plan.md)): mail sent to `localhost:3025` lands in mailboxes Desk reads over IMAP. Mailboxes `support@conservices.test` and `registration@conservices.test` exist; login is the full address, password is the part before the `@` (`support` / `registration`). Mail is kept in memory and lost when the container restarts.
-- Keycloak sends email through **Mailpit** in dev (realm `smtpServer`, email theme `infra/keycloak/themes/conservices`). For production, set real SMTP on the realm. If the email fails, HR falls back to a one-time temporary password shown on the review page.
-- Existing dev stack: after pulling, run `docker compose up -d keycloak` then `docker exec conservices-keycloak bash /opt/keycloak/data/import/apply-mvp.sh` to apply SMTP, the email theme and the user profile (`infra/keycloak/user-profile.json`; Keycloak drops undeclared attributes) to an already-imported realm.
-- **After onboarding** (HR People → click a person, or their profile): change access per department, pause/reactivate, or **offboard**. Offboarding deletes their Keycloak account and emails their private address that it was deleted (HR sends it via `SMTP_*`, Mailpit in dev); the HR profile is kept, and onboarding them again creates a new account. "Offboard in HR only" is offered when Keycloak is unreachable. Profile edits push name, email and the attributes to Keycloak; the login name never changes. Status only changes through these actions.
-- HR **Keycloak** page: read-only view of realm groups and members, tagged with the department they belong to. HR **Settings**: organization name (used in emails), organization email domain (forms only ask for the part before the `@`), and the templates for org email names and login names (`{first}`, `{last}`, `{nickname}`).
-- Smoke: `scripts/smoke-hr-keycloak.ps1` runs the whole onboarding against the live stack, checks Keycloak groups, login name, attributes and the Mailpit email, then edits the profile and offboards (checks the account is deleted and the notice was emailed).
-- **Access comes from Keycloak groups, checked on every request.** Den admins are members of `DEN_ADMIN_GROUPS` (default `den-admin`); HR requires `HR_ACCESS_GROUPS` (default `hr-admin`); Finance requires `FINANCE_ACCESS_GROUPS` (default `finance-admin`); Stash and Rally map groups to roles in their `infra/access-config.toml` (`stash-*`, `events-*`). Removing someone from a group revokes the access on their next request. Realm self-registration is on for greenfield.
-- **Den is the source of truth when a module is paired.** In Den admin, **Branding** holds colours, logo, favicon and the **sign-in background** (a big picture behind the Keycloak login and every module's sign-in screen, with the form docked in a right-hand panel or centred, plus an optional caption), and **Organisation** holds a JSON settings document (`organization_name`, `org_email_domain`, `username_template`, `org_email_template`; unknown keys are kept for future modules). Den's public brand is at `/api/v1/public/brand`.
-- **Pairing:** in Den admin → Modules, mint a pairing URL; paste it into the module (HR → Settings, Stash → Settings, Rally → Organizations, Learn → Settings) under "Den connection". The module backend redeems it, stores the credential in its own database and resyncs every minute. Paired modules show Den's name, logo and colours (light and dark mode) without a rebuild, and their organisation settings become read-only ("Managed in Den"). Disconnecting returns the module to its local settings. `DEN_INTERNAL_URL` rewrites the host of the pasted URL when the browser and the backend reach Den at different addresses (in compose: `http://den-backend:8080`).
-- Smoke: `scripts/smoke-den-pairing.ps1 -Module hr|stash|events|finance|learn|desk|tasks|wiki` pairs a module and checks it follows Den's brand.
-- **Den also orchestrates the Keycloak login page.** With `KEYCLOAK_ADMIN_URL` and `KEYCLOAK_CLIENT_SECRET` set on the Den backend (service account `den-keycloak`, realm-management `manage-realm`), Den pushes into the realm whenever branding or organisation settings change, and re-asserts every 5 minutes: login theme `conservices`, display name, and a `conservicesBrand` attribute (name, tagline, colours, logo and favicon URLs). The `conservices` theme (`infra/keycloak/themes/conservices/login`, based on `keycloak.v2`) renders that attribute in light and dark mode, and falls back to a neutral look before the first sync. Keycloak needs no Den URL. Status and "Sync now" are on Den admin → Branding. The theme files still have to be installed in Keycloak (mounted in compose).
-- If an OIDC backend crash-loops right after a Keycloak recreate, wait for Keycloak healthy then `docker compose restart <service>`.
-
-## Tear down
+### Stop
 
 ```powershell
 docker compose down
-# wipe volumes (fresh DBs / MinIO):
+# wipe volumes (fresh databases / MinIO):
 docker compose down -v
 ```
+
+---
+
+## Repository layout
+
+```text
+docs/                 MkDocs site (published to GitHub Pages)
+deploy/               Kubernetes manifests and Helm charts
+infra/                Keycloak realm/theme, Caddy, Postgres/MinIO helpers
+scripts/              Smoke tests and local DNS setup
+docker-compose.yml    Development stack
+```
+
+Module source checkouts (`den/`, `hr/`, `Rally/`, …) are separate git repositories and are ignored here so this repo stays the suite umbrella.
+
+---
+
+## Contributing
+
+See [Contributing](https://aglelectronics.github.io/con-services/contributing/) and [Documentation standards](https://aglelectronics.github.io/con-services/contributing/documentation-standards/) (docs, changelogs, secrets, and what “open-source ready” means for these repos).
+
+---
+
+## License
+
+License to be confirmed before a formal public release. Until then, treat the code as source-available for evaluation and contribution under the organisation’s direction.

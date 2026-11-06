@@ -15,10 +15,12 @@
 # Local environment and logs
 .env
 *.log
-.cursor/*
-!.cursor/rules/
 
-# Local database dumps (never publish)
+# Editor / agent local state (never publish)
+.cursor/
+
+# Local scratch (security notes, dumps) — never publish
+/_security-audit/
 /backups/
 
 # Built documentation site

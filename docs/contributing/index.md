@@ -120,10 +120,13 @@ One-time setup: in the repository's **Settings → Pages**, set **Source** to
 1. Create `docs/modules/<module>/` with the same four pages as Den:
    `index.md`, `admin-guide.md`, `configuration.md` and `api.md`.
 2. Add them to `nav` in `mkdocs.yml`, under **Modules**, after Den.
-3. In `docs/index.md` and `docs/modules/index.md`, replace "Coming soon"
-   with a link.
+3. Link the module from `docs/index.md` and `docs/modules/index.md`.
 4. Point the module's `README.md` at its section of the site.
 5. Run `mkdocs build --strict`.
+
+The full standards (API docs, secrets, versioning, and a
+**before it looks open-source ready** checklist) are in
+[Documentation standards](documentation-standards.md).
 
 ## Checklist for every change
 
