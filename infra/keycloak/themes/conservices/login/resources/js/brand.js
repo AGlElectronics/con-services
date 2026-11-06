@@ -1,5 +1,6 @@
 // Applies the brand Den pushed into the realm (rendered by footer.ftl as
-// #cs-brand) to the login page: name, tagline, logo, colours, favicon.
+// #cs-brand) to the login page: name, tagline, logo, colours, favicon and
+// the background picture.
 // Without it the neutral defaults from css/conservices.css stay.
 (function () {
   function hexToHsl(v) {
@@ -36,20 +37,77 @@
     return lum > 0.45 ? '#18181b' : '#ffffff';
   }
 
+  var THEME_KEYS = ['primary', 'primary_hover', 'accent', 'background', 'muted', 'foreground', 'border'];
+
+  // Same as darkTheme in Den (lib/brand.ts) and the modules (lib/moduleBrand.ts):
+  // theme.dark overrides win, the rest is derived from the light palette.
+  function darkTheme(theme) {
+    if (!THEME_KEYS.some(function (k) { return hexToHsl(theme[k]); })) return null;
+    var over = theme.dark && typeof theme.dark === 'object' ? theme.dark : {};
+    var primary = hexToHsl(theme.primary) || [243, 75, 59];
+    var bg = hexToHsl(theme.background);
+    var tint = bg && bg[1] >= 10 ? bg : primary;
+    var th = tint[0], ts = clamp(Math.round(tint[1] * 0.12), 3, 9);
+    var accent = hexToHsl(theme.accent) || primary;
+    var pl = clamp(primary[2], 58, 72);
+    var d = {
+      primary: [primary[0], primary[1], pl],
+      primary_hover: [primary[0], primary[1], pl + 6],
+      accent: [accent[0], Math.min(accent[1], 35), 22],
+      background: [th, ts, 13],
+      page: [th, ts, 10],
+      muted: [th, ts + 1, 18],
+      foreground: [th, 10, 96],
+      border: [th, ts, 22]
+    };
+    THEME_KEYS.forEach(function (k) {
+      var c = hexToHsl(over[k]);
+      if (c) d[k] = c;
+    });
+    var page = hexToHsl(over.page);
+    if (page) d.page = page;
+    else if (hexToHsl(over.background)) d.page = [d.background[0], d.background[1], clamp(d.background[2] - 3, 0, 100)];
+    if (hexToHsl(over.primary) && !hexToHsl(over.primary_hover)) {
+      d.primary_hover = [d.primary[0], d.primary[1], clamp(d.primary[2] + 6, 0, 90)];
+    }
+    return d;
+  }
+
+  function block(sel, vars) {
+    var lines = Object.keys(vars).map(function (k) { return '  ' + k + ': ' + vars[k] + ';'; });
+    return lines.length ? sel + ' {\n' + lines.join('\n') + '\n}\n' : '';
+  }
+
   function applyColours(theme) {
-    var root = document.documentElement.style;
+    var light = {}, dark = {};
     var p = hexToHsl(theme.primary);
     if (p) {
-      root.setProperty('--cs-primary', hsl(p));
-      root.setProperty('--cs-primary-fg', onColor(p));
-      var hover = hexToHsl(theme.primary_hover) || [p[0], p[1], clamp(p[2] - 7, 5, 95)];
-      root.setProperty('--cs-primary-hover', hsl(hover));
-      // Dark mode only takes the hue, lightened so it stays readable.
-      var dark = [p[0], p[1], clamp(p[2], 55, 75)];
-      root.setProperty('--cs-primary-dark', hsl(dark));
-      root.setProperty('--cs-primary-dark-fg', onColor(dark));
-      root.setProperty('--cs-primary-dark-hover', hsl([p[0], p[1], clamp(dark[2] + 6, 0, 85)]));
+      light['--cs-primary'] = hsl(p);
+      light['--cs-primary-fg'] = onColor(p);
+      light['--cs-primary-hover'] = hsl(hexToHsl(theme.primary_hover) || [p[0], p[1], clamp(p[2] - 7, 5, 95)]);
     }
+    // Den's light `muted` is the page behind the cards, `background` the cards.
+    [['muted', '--cs-bg'], ['background', '--cs-surface'], ['foreground', '--cs-fg'], ['border', '--cs-border']].forEach(function (m) {
+      var c = hexToHsl(theme[m[0]]);
+      if (c) light[m[1]] = hsl(c);
+    });
+    var d = darkTheme(theme);
+    if (d) {
+      dark['--cs-bg'] = hsl(d.page);
+      dark['--cs-surface'] = hsl(d.background);
+      dark['--cs-fg'] = hsl(d.foreground);
+      dark['--cs-border'] = hsl(d.border);
+      dark['--cs-primary-dark'] = hsl(d.primary);
+      dark['--cs-primary-dark-hover'] = hsl(d.primary_hover);
+      dark['--cs-primary-dark-fg'] = onColor(d.primary);
+    }
+    var el = document.getElementById('cs-brand-style');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'cs-brand-style';
+      document.head.appendChild(el);
+    }
+    el.textContent = block(':root', light) + block('html.pf-v5-theme-dark', dark);
   }
 
   function applyHeader(b) {
@@ -87,6 +145,23 @@
     document.head.appendChild(link);
   }
 
+  // Picture behind the form: "panel" docks the form on the right (centred
+  // card on narrow screens), "centered" keeps the card over a dimmed picture.
+  function applyBackground(b) {
+    if (typeof b.background_url !== 'string' || !b.background_url) return;
+    var root = document.documentElement;
+    root.style.setProperty('--cs-login-image', 'url(' + JSON.stringify(b.background_url) + ')');
+    root.classList.add('cs-has-bg', b.login_layout === 'centered' ? 'cs-layout-centered' : 'cs-layout-panel');
+    var caption = (b.login_caption || '').trim();
+    var login = document.querySelector('.pf-v5-c-login');
+    if (caption && login) {
+      var el = document.createElement('p');
+      el.className = 'cs-caption';
+      el.textContent = caption;
+      login.appendChild(el);
+    }
+  }
+
   function apply() {
     var el = document.getElementById('cs-brand');
     if (!el) return;
@@ -100,6 +175,7 @@
     applyColours(b.theme || {});
     applyHeader(b);
     applyFavicon(b);
+    applyBackground(b);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);

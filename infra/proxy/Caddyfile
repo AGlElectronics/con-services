@@ -3,7 +3,6 @@
 # scripts/setup-local-dns.ps1). Upstreams resolve at request time, so apps in
 # compose profiles that are not running simply return 502.
 {
-	local_certs
 	skip_install_trust
 	# Own names so it is not confused with other Caddy CAs on the machine.
 	pki {
@@ -11,7 +10,16 @@
 			name "Con Services Local CA"
 			root_cn "Con Services Local Root"
 			intermediate_cn "Con Services Local Intermediate"
+			intermediate_lifetime 90d
 		}
+	}
+	# The 12h default expires overnight when the PC sleeps: Docker's VM is
+	# suspended, renewal doesn't run, and the browser then refuses the login
+	# server ("Failed to fetch"). Leaf certificates must expire before the
+	# intermediate does.
+	cert_issuer internal {
+		ca local
+		lifetime 30d
 	}
 }
 
@@ -35,8 +43,38 @@ events.conservices.test {
 	reverse_proxy events-frontend:80
 }
 
+learn.conservices.test {
+	reverse_proxy learn-frontend:80
+}
+
+finance.conservices.test {
+	reverse_proxy finance-frontend:80
+}
+
+desk.conservices.test {
+	reverse_proxy desk-frontend:80
+}
+
+tasks.conservices.test {
+	reverse_proxy tasks-frontend:80
+}
+
+wiki.conservices.test {
+	reverse_proxy wiki-frontend:80
+}
+
+# Public event submission site (attendees). Production host is configuration,
+# e.g. events.<convention-domain>.
+submit.conservices.test {
+	reverse_proxy events-submit:80
+}
+
 mail.conservices.test {
 	reverse_proxy mailpit:8025
+}
+
+db.conservices.test {
+	reverse_proxy adminer:8080
 }
 
 # Presigned URLs are signed for minio:9000; keep that Host so signatures match.

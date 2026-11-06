@@ -6,7 +6,7 @@ until mc alias set local http://minio:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PA
   sleep 1
 done
 
-for bucket in stash-data-dev den-data-dev events-data-dev hr-data-dev; do
+for bucket in stash-data-dev den-data-dev events-data-dev hr-data-dev finance-data-dev learn-data-dev wiki-data-dev tasks-data-dev conservices-backups; do
   mc mb --ignore-existing "local/${bucket}"
   echo "bucket ready: ${bucket}"
 done

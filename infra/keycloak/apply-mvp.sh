@@ -6,6 +6,9 @@ KC=/opt/keycloak/bin/kcadm.sh
 $KC config credentials --server http://localhost:8080 --realm master --user admin --password admin >/dev/null
 
 $KC update realms/conservices -s registrationAllowed=true
+# HR renames the login when a nickname changes; the user profile keeps
+# username edits admin-only, so people cannot change it themselves.
+$KC update realms/conservices -s editUsernameAllowed=true
 
 # Keycloak's own admin console login (master realm): Con Services look too.
 # Den only pushes the organisation brand into conservices, so this one stays neutral.
@@ -74,6 +77,160 @@ spa_urls stash-spa 3000 stash.conservices.test
 spa_urls den-spa 3001 den.conservices.test
 spa_urls events-spa 3002 events.conservices.test
 spa_urls hr-spa 3003 hr.conservices.test
+
+# Learn module (added after the first realm import): SPA client, groups, and
+# dev group memberships. All idempotent.
+LEARN_SPA=$($KC get clients -r conservices -q clientId=learn-spa --fields id --format csv --noquotes | tail -n1 || true)
+if [ -z "$LEARN_SPA" ]; then
+  $KC create clients -r conservices \
+    -s clientId=learn-spa \
+    -s name="Learn SPA" \
+    -s enabled=true \
+    -s publicClient=true \
+    -s standardFlowEnabled=true \
+    -s directAccessGrantsEnabled=true \
+    -s implicitFlowEnabled=false \
+    -s 'attributes."pkce.code.challenge.method"=S256'
+  LEARN_SPA=$($KC get clients -r conservices -q clientId=learn-spa --fields id --format csv --noquotes | tail -n1)
+  $KC create "clients/$LEARN_SPA/protocol-mappers/models" -r conservices \
+    -s name=groups \
+    -s protocol=openid-connect \
+    -s protocolMapper=oidc-group-membership-mapper \
+    -s 'config."full.path"=false' \
+    -s 'config."id.token.claim"=true' \
+    -s 'config."access.token.claim"=true' \
+    -s 'config."claim.name"=groups' \
+    -s 'config."userinfo.token.claim"=true'
+fi
+spa_urls learn-spa 3005 learn.conservices.test
+
+learn_group() {
+  local name=$1
+  if ! $KC get groups -r conservices -q search="$name" --fields name --format csv --noquotes | grep -qx "$name"; then
+    $KC create groups -r conservices -s name="$name"
+  fi
+  $KC get groups -r conservices -q search="$name" --fields id,name --format csv --noquotes | grep ",$name$" | cut -d, -f1
+}
+LEARN_ADMIN_GID=$(learn_group learn-admin | tail -n1)
+LEARN_TRAINER_GID=$(learn_group learn-trainer | tail -n1)
+learn_group learn-coordinator >/dev/null
+
+# Learn reads groups and members (quiz assignment by group). Read-only.
+LEARN_PROV=$($KC get clients -r conservices -q clientId=learn-provisioner --fields id --format csv --noquotes | tail -n1 || true)
+if [ -z "$LEARN_PROV" ]; then
+  $KC create clients -r conservices \
+    -s clientId=learn-provisioner \
+    -s name="Learn group directory (read-only)" \
+    -s enabled=true \
+    -s publicClient=false \
+    -s clientAuthenticatorType=client-secret \
+    -s secret=learn-provisioner-dev-secret \
+    -s serviceAccountsEnabled=true \
+    -s standardFlowEnabled=false \
+    -s directAccessGrantsEnabled=false
+fi
+$KC add-roles -r conservices --uusername service-account-learn-provisioner --cclientid realm-management \
+  --rolename view-users --rolename query-groups
+
+add_user_to_group() {
+  local username=$1 gid=$2 uid
+  uid=$($KC get users -r conservices -q username="$username" --fields id --format csv --noquotes | tail -n1 || true)
+  [ -n "$uid" ] || return 0
+  $KC update "users/$uid/groups/$gid" -r conservices -s realm=conservices -s userId="$uid" -s groupId="$gid" -n
+}
+# DEV users: admin runs Learn, alice trains, bob stays a plain learner.
+add_user_to_group admin "$LEARN_ADMIN_GID"
+add_user_to_group alice "$LEARN_TRAINER_GID"
+
+# Finance module (added after the first realm import): SPA client, group, and
+# dev group membership. All idempotent.
+FINANCE_SPA=$($KC get clients -r conservices -q clientId=finance-spa --fields id --format csv --noquotes | tail -n1 || true)
+if [ -z "$FINANCE_SPA" ]; then
+  $KC create clients -r conservices \
+    -s clientId=finance-spa \
+    -s name="Finance SPA" \
+    -s enabled=true \
+    -s publicClient=true \
+    -s standardFlowEnabled=true \
+    -s directAccessGrantsEnabled=true \
+    -s implicitFlowEnabled=false \
+    -s 'attributes."pkce.code.challenge.method"=S256'
+  FINANCE_SPA=$($KC get clients -r conservices -q clientId=finance-spa --fields id --format csv --noquotes | tail -n1)
+  $KC create "clients/$FINANCE_SPA/protocol-mappers/models" -r conservices \
+    -s name=groups \
+    -s protocol=openid-connect \
+    -s protocolMapper=oidc-group-membership-mapper \
+    -s 'config."full.path"=false' \
+    -s 'config."id.token.claim"=true' \
+    -s 'config."access.token.claim"=true' \
+    -s 'config."claim.name"=groups' \
+    -s 'config."userinfo.token.claim"=true'
+fi
+spa_urls finance-spa 3006 finance.conservices.test
+
+FINANCE_ADMIN_GID=$(learn_group finance-admin | tail -n1)
+# DEV user: admin keeps the books.
+add_user_to_group admin "$FINANCE_ADMIN_GID"
+
+# Desk and Tasks modules: public PKCE SPA clients with the groups mapper.
+module_spa() {
+  local client=$1 name=$2 id
+  id=$($KC get clients -r conservices -q clientId="$client" --fields id --format csv --noquotes | tail -n1 || true)
+  if [ -z "$id" ]; then
+    $KC create clients -r conservices \
+      -s clientId="$client" \
+      -s name="$name" \
+      -s enabled=true \
+      -s publicClient=true \
+      -s standardFlowEnabled=true \
+      -s directAccessGrantsEnabled=true \
+      -s implicitFlowEnabled=false \
+      -s 'attributes."pkce.code.challenge.method"=S256'
+    id=$($KC get clients -r conservices -q clientId="$client" --fields id --format csv --noquotes | tail -n1)
+    $KC create "clients/$id/protocol-mappers/models" -r conservices \
+      -s name=groups \
+      -s protocol=openid-connect \
+      -s protocolMapper=oidc-group-membership-mapper \
+      -s 'config."full.path"=false' \
+      -s 'config."id.token.claim"=true' \
+      -s 'config."access.token.claim"=true' \
+      -s 'config."claim.name"=groups' \
+      -s 'config."userinfo.token.claim"=true'
+  fi
+}
+module_spa desk-spa "Desk SPA"
+spa_urls desk-spa 3008 desk.conservices.test
+module_spa tasks-spa "Tasks SPA"
+spa_urls tasks-spa 3009 tasks.conservices.test
+
+DESK_ADMIN_GID=$(learn_group desk-admin | tail -n1)
+DESK_AGENT_GID=$(learn_group desk-agent | tail -n1)
+TASKS_ADMIN_GID=$(learn_group tasks-admin | tail -n1)
+TASKS_CREATOR_GID=$(learn_group tasks-creator | tail -n1)
+# DEV users: admin runs both; alice answers tickets and creates spaces.
+add_user_to_group admin "$DESK_ADMIN_GID"
+add_user_to_group admin "$TASKS_ADMIN_GID"
+add_user_to_group alice "$DESK_AGENT_GID"
+add_user_to_group alice "$TASKS_CREATOR_GID"
+
+module_spa wiki-spa "Wiki SPA"
+spa_urls wiki-spa 3007 wiki.conservices.test
+WIKI_ADMIN_GID=$(learn_group wiki-admin | tail -n1)
+WIKI_EDITOR_GID=$(learn_group wiki-editor | tail -n1)
+# DEV users: admin runs the wiki; alice creates team spaces.
+add_user_to_group admin "$WIKI_ADMIN_GID"
+add_user_to_group alice "$WIKI_EDITOR_GID"
+
+# Den portal access is the den-member group (DEN_MEMBER_GROUPS). Create it
+# once and add every existing person account, so nobody loses access when
+# Den starts enforcing it; HR adds new people from then on.
+if ! $KC get groups -r conservices -q search=den-member --fields name --format csv --noquotes | grep -qx den-member; then
+  $KC create groups -r conservices -s name=den-member
+  MEMBER_GID=$($KC get groups -r conservices -q search=den-member --fields id,name --format csv --noquotes | grep ',den-member$' | cut -d, -f1)
+  for uid in $($KC get users -r conservices --fields id,username --format csv --noquotes -q max=10000 | grep -v ',service-account-' | cut -d, -f1); do
+    $KC update "users/$uid/groups/$MEMBER_GID" -r conservices -s realm=conservices -s userId="$uid" -s groupId="$MEMBER_GID" -n
+  done
+fi
 
 # Declare the attributes HR mirrors (undeclared attributes are dropped).
 $KC update users/profile -r conservices -f /opt/keycloak/data/profile/user-profile.json

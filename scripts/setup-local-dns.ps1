@@ -14,7 +14,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   return
 }
 
-$names = 'auth', 'den', 'hr', 'stash', 'events', 'mail', 's3' | ForEach-Object { "$_.conservices.test" }
+$names = 'auth', 'den', 'hr', 'stash', 'events', 'learn', 'finance', 'desk', 'tasks', 'wiki', 'submit', 'mail', 's3', 'db' | ForEach-Object { "$_.conservices.test" }
 $hostsFile = "$env:WINDIR\System32\drivers\etc\hosts"
 $begin = '# >>> conservices local DNS'
 $end = '# <<< conservices local DNS'
@@ -34,7 +34,12 @@ if (-not $Remove) {
   foreach ($n in $names) { $kept.Add("127.0.0.1`t$n") }
   $kept.Add($end)
 }
-Set-Content -Path $hostsFile -Value $kept -Encoding ASCII
+# Set-Content can fail on the hosts file ("Stream was not readable"), so write via .NET,
+# clearing unusual file attributes first and restoring them afterwards.
+$attrs = (Get-Item $hostsFile -Force).Attributes
+(Get-Item $hostsFile -Force).Attributes = 'Normal'
+[System.IO.File]::WriteAllLines($hostsFile, $kept, [System.Text.Encoding]::ASCII)
+(Get-Item $hostsFile -Force).Attributes = $attrs
 ipconfig /flushdns | Out-Null
 Write-Host ($(if ($Remove) { 'Removed hosts entries.' } else { "Hosts entries: $($names -join ', ')" }))
 

@@ -1,0 +1,72 @@
+{
+  "realm": "attendees",
+  "enabled": true,
+  "displayName": "Attendee login (DEV stub)",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "verifyEmail": true,
+  "loginTheme": "conservices",
+  "emailTheme": "conservices",
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 36000,
+  "ssoSessionMaxLifespan": 86400,
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@attendees.local",
+    "fromDisplayName": "Attendee login",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
+  "users": [
+    {
+      "username": "ada@attendee.test",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Attendee",
+      "email": "ada@attendee.test",
+      "credentials": [{ "type": "password", "value": "attendee", "temporary": false }]
+    },
+    {
+      "username": "ben@attendee.test",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Ben",
+      "lastName": "Attendee",
+      "email": "ben@attendee.test",
+      "credentials": [{ "type": "password", "value": "attendee", "temporary": false }]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "rally-submit",
+      "name": "Event submissions (public site)",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://submit.conservices.test",
+      "baseUrl": "https://submit.conservices.test",
+      "redirectUris": [
+        "https://submit.conservices.test/*",
+        "http://localhost:3004/*"
+      ],
+      "webOrigins": [
+        "https://submit.conservices.test",
+        "http://localhost:3004"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://submit.conservices.test/*##http://localhost:3004/*"
+      }
+    }
+  ]
+}

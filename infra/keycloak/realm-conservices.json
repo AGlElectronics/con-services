@@ -8,7 +8,7 @@
   "resetPasswordAllowed": true,
   "loginTheme": "conservices",
   "emailTheme": "conservices",
-  "components": {"org.keycloak.userprofile.UserProfileProvider":[{"providerId":"declarative-user-profile","subComponents":{},"config":{"kc.user.profile.config":["{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"nickname\",\"displayName\":\"Nickname\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"phone\",\"displayName\":\"Phone\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":64}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"orgEmail\",\"displayName\":\"Organisation email\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"privateEmail\",\"displayName\":\"Private email\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"hrPersonId\",\"displayName\":\"HR person id\",\"group\":\"hr\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"},{\"name\":\"hr\",\"displayHeader\":\"Managed by HR\",\"displayDescription\":\"Kept in sync by the HR module; edit these in HR.\"}]}"]}}]},
+  "components": {"org.keycloak.userprofile.UserProfileProvider":[{"providerId":"declarative-user-profile","subComponents":{},"config":{"kc.user.profile.config":["{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"nickname\",\"displayName\":\"Nickname\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"phone\",\"displayName\":\"Phone\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":64}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"orgEmail\",\"displayName\":\"Organisation email\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"privateEmail\",\"displayName\":\"Private email\",\"group\":\"hr\",\"validations\":{\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"hrPersonId\",\"displayName\":\"HR person id\",\"group\":\"hr\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"},{\"name\":\"hr\",\"displayHeader\":\"Managed by HR\",\"displayDescription\":\"Kept in sync by the HR module; edit these in HR.\"}]}"]}}]},
   "smtpServer": {
     "host": "mailpit",
     "port": "1025",
@@ -18,7 +18,7 @@
     "ssl": "false",
     "starttls": "false"
   },
-  "editUsernameAllowed": false,
+  "editUsernameAllowed": true,
   "sslRequired": "none",
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 36000,
@@ -37,8 +37,19 @@
     { "name": "events-programme", "path": "/events-programme" },
     { "name": "events-reviewer", "path": "/events-reviewer" },
     { "name": "den-admin", "path": "/den-admin" },
+    { "name": "den-member", "path": "/den-member" },
     { "name": "events-admin", "path": "/events-admin" },
-    { "name": "hr-admin", "path": "/hr-admin" }
+    { "name": "hr-admin", "path": "/hr-admin" },
+    { "name": "learn-admin", "path": "/learn-admin" },
+    { "name": "learn-trainer", "path": "/learn-trainer" },
+    { "name": "learn-coordinator", "path": "/learn-coordinator" },
+    { "name": "finance-admin", "path": "/finance-admin" },
+    { "name": "desk-admin", "path": "/desk-admin" },
+    { "name": "desk-agent", "path": "/desk-agent" },
+    { "name": "tasks-admin", "path": "/tasks-admin" },
+    { "name": "tasks-creator", "path": "/tasks-creator" },
+    { "name": "wiki-admin", "path": "/wiki-admin" },
+    { "name": "wiki-editor", "path": "/wiki-editor" }
   ],
   "users": [
     {
@@ -51,7 +62,7 @@
       "credentials": [
         { "type": "password", "value": "adminadmin", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/den-admin", "/events-admin", "/hr-admin"],
+      "groups": ["/stash-admin", "/den-admin", "/den-member", "/events-admin", "/hr-admin", "/learn-admin", "/finance-admin", "/desk-admin", "/tasks-admin", "/wiki-admin"],
       "realmRoles": ["admin", "member"]
     },
     {
@@ -64,7 +75,7 @@
       "credentials": [
         { "type": "password", "value": "alicealice", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/events-admin", "/den-admin"],
+      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-agent", "/tasks-creator", "/wiki-editor"],
       "realmRoles": ["member"]
     },
     {
@@ -77,7 +88,7 @@
       "credentials": [
         { "type": "password", "value": "bobbob", "temporary": false }
       ],
-      "groups": ["/stash-readonly"],
+      "groups": ["/stash-readonly", "/den-member"],
       "realmRoles": ["member"]
     },
     {
@@ -100,6 +111,14 @@
       "serviceAccountClientId": "den-keycloak",
       "clientRoles": {
         "realm-management": ["manage-realm", "view-realm"]
+      }
+    },
+    {
+      "username": "service-account-learn-provisioner",
+      "enabled": true,
+      "serviceAccountClientId": "learn-provisioner",
+      "clientRoles": {
+        "realm-management": ["view-users", "query-groups"]
       }
     }
   ],
@@ -204,6 +223,39 @@
       ]
     },
     {
+      "clientId": "finance-spa",
+      "name": "Finance SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://finance.conservices.test",
+      "baseUrl": "https://finance.conservices.test",
+      "redirectUris": ["https://finance.conservices.test/*", "http://localhost:3006/*", "http://127.0.0.1:3006/*"],
+      "webOrigins": ["https://finance.conservices.test", "http://localhost:3006", "http://127.0.0.1:3006"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://finance.conservices.test/*##http://localhost:3006/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "hr-spa",
       "name": "HR SPA",
       "enabled": true,
@@ -237,6 +289,136 @@
       ]
     },
     {
+      "clientId": "learn-spa",
+      "name": "Learn SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://learn.conservices.test",
+      "baseUrl": "https://learn.conservices.test",
+      "redirectUris": ["https://learn.conservices.test/*", "http://localhost:3005/*", "http://127.0.0.1:3005/*"],
+      "webOrigins": ["https://learn.conservices.test", "http://localhost:3005", "http://127.0.0.1:3005"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://learn.conservices.test/*##http://localhost:3005/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "desk-spa",
+      "name": "Desk SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://desk.conservices.test",
+      "baseUrl": "https://desk.conservices.test",
+      "redirectUris": ["https://desk.conservices.test/*", "http://localhost:3008/*", "http://127.0.0.1:3008/*"],
+      "webOrigins": ["https://desk.conservices.test", "http://localhost:3008", "http://127.0.0.1:3008"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://desk.conservices.test/*##http://localhost:3008/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },    {
+      "clientId": "tasks-spa",
+      "name": "Tasks SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://tasks.conservices.test",
+      "baseUrl": "https://tasks.conservices.test",
+      "redirectUris": ["https://tasks.conservices.test/*", "http://localhost:3009/*", "http://127.0.0.1:3009/*", "http://localhost:3010/*", "http://127.0.0.1:3010/*"],
+      "webOrigins": ["https://tasks.conservices.test", "http://localhost:3009", "http://127.0.0.1:3009", "http://localhost:3010", "http://127.0.0.1:3010"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://tasks.conservices.test/*##http://localhost:3009/*##http://localhost:3010/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "wiki-spa",
+      "name": "Wiki SPA",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "https://wiki.conservices.test",
+      "baseUrl": "https://wiki.conservices.test",
+      "redirectUris": ["https://wiki.conservices.test/*", "http://localhost:3007/*", "http://127.0.0.1:3007/*"],
+      "webOrigins": ["https://wiki.conservices.test", "http://localhost:3007", "http://127.0.0.1:3007"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://wiki.conservices.test/*##http://localhost:3007/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },    {
       "clientId": "hr-provisioner",
       "name": "HR Keycloak provisioner",
       "enabled": true,
@@ -255,6 +437,19 @@
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
       "secret": "den-keycloak-dev-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "learn-provisioner",
+      "name": "Learn group directory (read-only)",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "learn-provisioner-dev-secret",
       "publicClient": false,
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,

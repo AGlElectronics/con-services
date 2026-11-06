@@ -8,7 +8,7 @@
         "username-prohibited-characters": {},
         "up-username-not-idn-homograph": {}
       },
-      "permissions": { "view": ["admin", "user"], "edit": ["admin", "user"] },
+      "permissions": { "view": ["admin", "user"], "edit": ["admin"] },
       "multivalued": false
     },
     {
