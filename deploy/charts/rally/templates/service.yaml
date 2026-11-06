@@ -1,0 +1,101 @@
+{{- $ns := .Values.namespace -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: rally-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    app.kubernetes.io/name: rally
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: {{ .Values.backend.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rally-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  selector:
+    app.kubernetes.io/name: rally
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if .Values.submit.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rally-submit
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+    app.kubernetes.io/component: submit
+spec:
+  selector:
+    app.kubernetes.io/name: rally
+    app.kubernetes.io/component: submit
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rally
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tlsSecretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+        {{- if .Values.submit.enabled }}
+        - {{ .Values.submit.host }}
+        {{- end }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rally-frontend
+                port:
+                  name: http
+    {{- if .Values.submit.enabled }}
+    - host: {{ .Values.submit.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rally-submit
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

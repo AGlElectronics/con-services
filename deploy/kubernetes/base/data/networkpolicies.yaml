@@ -1,0 +1,104 @@
+# conservices-data: deny everything, then allow
+#   keycloak                      -> postgres:5432
+#   den-backend, den-operator     -> postgres:5432, minio:9000
+#   module backends (any namespace labelled conservices.io/tier=module)
+#                                 -> postgres:5432, minio:9000
+# Which database or bucket a client may use is enforced by PostgreSQL
+# logins (CONNECT is revoked from everyone but the owner) and S3
+# credentials; NetworkPolicy works on addresses and ports only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: conservices-data
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: conservices-data
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: conservices-data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-identity
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-den
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: ["backend", "operator"]
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minio
+  namespace: conservices-data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-den
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: ["backend", "operator"]
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 9000

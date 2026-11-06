@@ -1,12 +1,28 @@
-# Operations: databases, backups and restore
+# Databases, backups and restore
 
 This is the guide for whoever runs a Con Services deployment. It covers how
 the modules share a PostgreSQL server, how Den creates and removes module
 databases, what the automatic backups contain (and what they don't), and how
 to restore.
 
+**Goal:** connect Den to the database server and backup storage, add and
+remove module databases safely, get a successful backup every night, and
+restore one.
+
 **Read [What is not backed up](#what-is-not-backed-up) and
 [The encryption key](#the-encryption-key) before you rely on any of this.**
+Procedures for larger failures (lost server, lost cluster, lost key) are on
+[Disaster recovery](disaster-recovery.md).
+
+!!! info "What Den's admin console can do today"
+    The database server and the S3 storage are **configured in the
+    manifests** (`PG_ADMIN_URL`, `DATABASE_URL`, `S3_*`, `BACKUP_S3_*`,
+    `FILES_S3_*`), not in Den. Den's **Backups** page *shows* the server, its
+    databases and the backup target, and its **Modules** page creates and
+    drops module databases. Entering and testing a database or storage
+    connection in Den, and creating per-module buckets and keys, are
+    planned but not built. See
+    [What works today](../getting-started/how-the-platform-starts.md#what-works-today-and-what-is-still-planned).
 
 ## Contents
 
@@ -21,6 +37,7 @@ to restore.
 - [Standalone modules](#standalone-modules)
 - [Configuration reference](#configuration-reference)
 - [Production checklist](#production-checklist)
+- [Troubleshooting](#troubleshooting)
 
 ## The pieces
 
@@ -29,23 +46,24 @@ to restore.
 | PostgreSQL | One server holding a separate database per module, plus Den's and Keycloak's. |
 | Den backend | The portal and admin console. It never holds the PostgreSQL admin login. |
 | Den operator (`den-operator`) | An internal service, built from `den/backend/cmd/operator`. It is the **only** component with the PostgreSQL admin (superuser) login. It creates and drops module databases when Den asks, and takes the backups. |
-| Backup storage | An S3-compatible bucket the operator writes encrypted backups to (dev: MinIO bucket `conservices-backups`). |
+| Backup storage | An S3-compatible bucket the operator writes encrypted backups to (example installation: MinIO bucket `conservices-backups`). |
 
-The operator has no published port and no user interface. Only the Den
-backend calls it, over the internal network, with a shared token
+The operator has no Ingress and no user interface. Only the Den backend
+calls it, inside the namespace `conservices-den`, with a shared token
 (`OPERATOR_TOKEN`, set on both). Admins use it through Den admin →
 **Modules** and **Backups**.
 
 Because the operator holds the superuser login, treat it like the database
 itself:
 
-- Never publish its port.
-- Use a long random `OPERATOR_TOKEN`.
-- On Kubernetes, add a network policy so only the Den backend can reach it.
+- Never expose it through an Ingress or a `LoadBalancer` Service.
+- Use a long random `OPERATOR_TOKEN`, from your [secret manager](secrets.md).
+- Keep the `den-operator` network policy, which admits only the Den backend
+  (see [Network policies](network-policies.md)).
 
 ## One server, separate databases
 
-ADR [0005](../den/docs/adr/0005-no-shared-postgres.md) says modules must not
+ADR [0005](https://github.com/AGlElectronics/den/blob/main/docs/adr/0005-no-shared-postgres.md) says modules must not
 share a database. That still holds: every module has **its own database and
 its own login**, and modules talk to each other only through their APIs, never
 through SQL.
@@ -62,7 +80,7 @@ it. The separation then comes from the database permissions:
   that module to its own server (see [Managed databases](#managed-databases)).
 
 The same idea applies to file storage: one S3-compatible service, one bucket
-per module (ADR [0004](../den/docs/adr/0004-one-bucket-per-module.md)).
+per module (ADR [0004](https://github.com/AGlElectronics/den/blob/main/docs/adr/0004-one-bucket-per-module.md)).
 
 ## Managed databases
 
@@ -86,7 +104,8 @@ operator's server.
 **Adding.** In Den admin → Modules → New module, tick **Create a database for
 it**. The operator creates the database and its login. Den shows the
 connection URL (with the password) **once**: copy it into the module's
-`DATABASE_URL`. Den remembers which database belongs to the module.
+`DATABASE_URL` secret (see
+[How the platform starts](../getting-started/how-the-platform-starts.md#4b-put-the-connection-into-stashs-overlay)). Den remembers which database belongs to the module.
 
 **Removing.** Remove asks twice:
 
@@ -157,7 +176,10 @@ happens when:
 - Pruning runs after every successful backup.
 
 **Where to keep them.** In production, point `BACKUP_S3_*` at a **different
-provider or account** from the one holding the live data. A backup that
+provider or account** from the one holding the live data, for example live
+files in Hetzner Object Storage and backups in AWS S3, or the other way
+round. Both are S3-compatible and the recommended storage for real
+installations; the in-cluster MinIO is for local trials only. A backup that
 disappears together with the server it protects is not a backup.
 
 ## What is not backed up
@@ -168,11 +190,11 @@ It does **not** back up:
 - **Modules running standalone or on another database server.** See
   [Standalone modules](#standalone-modules).
 - Buckets not listed in `FILES_S3_BUCKETS`. Add new modules' buckets there.
-- Configuration and secrets: compose files, `.env` files, Kubernetes secrets,
+- Configuration and secrets: your overlays or Helm values, Kubernetes Secrets,
   `OPERATOR_TOKEN`, the age secret key, Keycloak client secrets kept outside
   the database. Keep those in your secrets manager.
-- Keycloak themes and other files mounted into containers (they live in this
-  repository).
+- Keycloak themes and the realm file mounted into Keycloak (they live in this
+  repository and your overlay or chart values).
 - The backup bucket itself, and the S3 service as a whole.
 - Mail, DNS, TLS certificates and anything else outside the suite.
 
@@ -211,10 +233,23 @@ box. Everyone can read it. Never use it anywhere else.
 There is deliberately no restore button. A restore overwrites live data, so it
 is a command-line job. You need `age`, PostgreSQL 16 client tools (`psql`,
 `pg_restore`) and the [MinIO client](https://min.io/docs/minio/linux/reference/minio-mc.html)
-`mc` (or any S3 tool) for files. The `den-operator` image has `age` and the
-PostgreSQL tools, so in the compose stack you can do everything except the
-file step inside it: `docker compose exec den-operator sh`, working in `/tmp`.
-Use `docker cp` to move files in and out.
+`mc` (or any S3 tool) for files.
+
+The `den-operator` pod already has `age` and the PostgreSQL tools, and the
+network policies let it reach PostgreSQL, so the easiest place to work is
+inside it, in its temporary folder `/tmp`:
+
+```sh
+kubectl cp conservices-backup.key conservices-den/<den-operator-pod>:/tmp/
+kubectl cp 20261104T030000Z-scheduled.tar.age conservices-den/<den-operator-pod>:/tmp/
+kubectl exec -it -n conservices-den deploy/den-operator -- sh
+cd /tmp
+```
+
+Find the pod name with `kubectl get pods -n conservices-den -l app.kubernetes.io/component=operator`.
+`/tmp` is limited to 5 GiB and is emptied when the pod restarts; **delete
+the secret key from it when you are done** (`rm /tmp/conservices-backup.key`).
+Run the file step (6) from your own computer.
 
 ### 1. Get the backup file
 
@@ -239,16 +274,25 @@ Stop the backends of the modules you are restoring, and Keycloak if you
 restore `keycloak`. A database cannot be replaced while something is connected
 to it.
 
+Scale them to zero replicas (run this from your computer, not inside the
+operator pod):
+
 ```sh
-docker compose stop hr-backend        # compose example
+kubectl scale -n conservices-stash deploy/stash-backend --replicas=0
+kubectl scale -n conservices-identity deploy/keycloak --replicas=0   # only when restoring keycloak
 ```
+
+To restore `den` itself, scale `den-backend` to zero the same way.
 
 ### 4. Restore the logins
 
 Needed on a new, empty server; harmless on an existing one.
 
+Inside the operator pod, the superuser connection is already in the
+environment as `PG_ADMIN_URL`:
+
 ```sh
-psql "postgres://postgres:<password>@<host>:5432/postgres" -f restore/globals.sql
+psql "$PG_ADMIN_URL" -f restore/globals.sql
 ```
 
 On an existing server you get `role "…" already exists` errors. That is
@@ -259,8 +303,7 @@ expected: the existing logins are kept.
 One command per database you want back:
 
 ```sh
-pg_restore -d "postgres://postgres:<password>@<host>:5432/postgres" \
-  --clean --if-exists --create restore/databases/hr.dump
+pg_restore -d "$PG_ADMIN_URL" --clean --if-exists --create restore/databases/stash.dump
 ```
 
 - `--clean --create` **drops the existing database** and recreates it from the
@@ -272,14 +315,20 @@ pg_restore -d "postgres://postgres:<password>@<host>:5432/postgres" \
   scratch database instead:
 
   ```sh
-  createdb -h <host> -U postgres hr_check
-  pg_restore -h <host> -U postgres -d hr_check --no-owner restore/databases/hr.dump
+  psql "$PG_ADMIN_URL" -c 'CREATE DATABASE stash_check'
+  pg_restore -d "${PG_ADMIN_URL%/postgres*}/stash_check?sslmode=disable" --no-owner restore/databases/stash.dump
   ```
+
+  The `${PG_ADMIN_URL%/postgres*}` part is the server address without the
+  database name. Drop `stash_check` when you are done.
 
 ### 6. Restore files
 
+Copy the files out of the operator pod to your computer, then upload them:
+
 ```sh
-mc mirror --overwrite restore/files/hr-data-dev/ live/hr-data-dev
+kubectl cp conservices-den/<den-operator-pod>:/tmp/restore/files/stash-data ./stash-data
+mc mirror --overwrite ./stash-data/ live/stash-data
 ```
 
 Here `live` is an `mc` alias for the live S3 service. Skip buckets you are not
@@ -288,8 +337,11 @@ restoring.
 ### 7. Start everything again
 
 ```sh
-docker compose start hr-backend
+kubectl scale -n conservices-stash deploy/stash-backend --replicas=1
 ```
+
+Use the replica count from [Running on Kubernetes](running.md#what-runs-where)
+(one for every backend).
 
 Check the module works, and log in once through Keycloak if you restored it.
 
@@ -319,7 +371,7 @@ Operator (`den-operator`):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPERATOR_TOKEN` | required | Shared secret with the Den backend. |
-| `PG_ADMIN_URL` | required | Superuser connection to the shared server, e.g. `postgres://postgres:…@postgres:5432/postgres`. |
+| `PG_ADMIN_URL` | required | Superuser connection to the shared server, e.g. `postgres://postgres:…@postgres.conservices-data.svc.cluster.local:5432/postgres`. |
 | `MODULE_DB_HOST` | host of `PG_ADMIN_URL` | `host:port` written into connection URLs handed out for new databases. |
 | `MANAGED_DATABASES` | `true` | Let Den create and drop module databases. |
 | `PROTECTED_DATABASES` | `keycloak,den` | Databases that can never be dropped (in addition to `postgres` and the templates). |
@@ -335,7 +387,7 @@ Operator (`den-operator`):
 | `FILES_S3_BUCKETS` | none | Comma-separated buckets to include in every backup. |
 | `OPERATOR_ADDR` | `:8080` | Listen address. |
 
-Den backend: `OPERATOR_URL` (e.g. `http://den-operator:8080`) and
+Den backend: `OPERATOR_URL` (e.g. `http://den-operator.conservices-den.svc.cluster.local:8080`) and
 `OPERATOR_TOKEN`. Without `OPERATOR_URL`, Den runs without the operator: the
 Backups page says "Not set up", and modules are added and removed without
 touching databases.
@@ -347,9 +399,73 @@ environment. They are stored in the backup bucket under `state/`.
 
 - [ ] Your own age key pair; secret key stored offline, ideally in two places.
 - [ ] Backup bucket at a different provider or account than the live data.
-- [ ] Long random `OPERATOR_TOKEN`; operator port not published; network
-      policy if on Kubernetes.
+- [ ] Long random `OPERATOR_TOKEN` from the secret manager; the `den-operator`
+      network policy is in place and enforced by your CNI.
 - [ ] `FILES_S3_BUCKETS` lists every module bucket.
 - [ ] Den admin → Backups shows a successful backup the next morning.
 - [ ] A test restore into a scratch database has been done once.
 - [ ] Standalone modules or modules on other servers have their own backups.
+
+## Troubleshooting
+
+The operator logs every backup and database change as JSON lines with
+`"service":"den-operator"`. Start there:
+
+```sh
+kubectl logs -n conservices-den deploy/den-operator --since=24h | grep -i -E 'error|fail'
+```
+
+**Backups page: *Not set up***
+: Den's backend has no `OPERATOR_URL`. Set it in `den-config` and restart
+  `den-backend`.
+
+**Backups page: *Can't reach the operator* or `unauthorized`**
+: The operator is down, a NetworkPolicy blocks it, or `OPERATOR_TOKEN`
+  differs between `den-secrets` and `den-operator-secrets`. See
+  [Troubleshooting](../getting-started/troubleshooting.md#den-shows-cant-reach-the-operator).
+
+**A backup fails with `pg_dump: error: aborting because of server version mismatch`**
+: The operator image is built on `postgres:16-alpine`, so its `pg_dump`
+  cannot dump a newer server. Keep the server on PostgreSQL 16 until the
+  operator image supports newer versions.
+
+**A backup fails with `AccessDenied` or `SignatureDoesNotMatch`**
+: The `BACKUP_S3_*` or `FILES_S3_*` keys are wrong or lack permissions
+  (write on the backup bucket, read on every bucket in
+  `FILES_S3_BUCKETS`), or the region is wrong. With AWS S3 try
+  `BACKUP_S3_USE_PATH_STYLE=false`.
+
+**A backup fails with `dial tcp …:443: i/o timeout`**
+: No egress rule to the S3 provider. Add one; see
+  [External services](network-policies.md#external-services).
+
+**A backup fails with `no space left on device`**
+: The dumps do not fit into the operator's `/tmp` (5 GiB). Raise its
+  `sizeLimit` with a patch in your overlay.
+
+**The warning banner stays after a successful backup**
+: Reload the page. The banner shows when the newest *successful* backup is
+  older than 26 hours; a manual backup counts.
+
+**New module: *Create a database for it* is missing**
+: `MANAGED_DATABASES=false` on the operator, or Den has no `OPERATOR_URL`.
+
+**Creating a module database fails with `permission denied to create role`**
+: The login in `PG_ADMIN_URL` is not a superuser and lacks `CREATEROLE`
+  and `CREATEDB`. Managed providers often need you to grant these
+  explicitly.
+
+**Removing a module fails with *backup before removal failed, nothing was deleted***
+: This is the safety catch working. Fix the backup problem (above), then
+  remove the module again.
+
+**`a backup or database removal is already running`**
+: The operator does one backup or removal at a time. Wait for the running
+  one to finish (the operator log shows it), then try again.
+
+## Related pages
+
+- [Disaster recovery](disaster-recovery.md): full rebuilds, lost keys, leaked secrets.
+- [Secrets](secrets.md): `PG_ADMIN_URL`, `OPERATOR_TOKEN` and S3 keys.
+- [Logs, health and monitoring](observability.md#backup-freshness): noticing a missing backup.
+- [Den admin guide: Backups](../modules/den/admin-guide.md#backups): the screens.

@@ -1,0 +1,75 @@
+# Den: backend (+ migrations as an initContainer), frontend, operator.
+# Every variable is documented in docs/modules/den/configuration.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - backend.yaml
+  - frontend.yaml
+  - operator.yaml
+  - ingress.yaml
+  - networkpolicies.yaml
+
+images:
+  - name: ghcr.io/aglelectronics/den-backend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-frontend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-operator
+    newTag: 1.0.0-1
+
+configMapGenerator:
+  - name: den-config
+    namespace: conservices-den
+    literals:
+      - APP_ENV=production
+      - APP_BASE_URL=https://den.conservices.test
+      - HTTP_ADDR=:8080
+      - AUTH_MODE=oidc
+      - OIDC_ISSUER_URL=https://auth.conservices.test/realms/conservices
+      - OIDC_CLIENT_ID=den-spa
+      - OIDC_AUDIENCE=den-spa
+      - DEN_ADMIN_GROUPS=den-admin
+      - DEN_MEMBER_GROUPS=den-member
+      - CORS_ALLOWED_ORIGINS=https://den.conservices.test
+      - S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - S3_BUCKET=den-data
+      - S3_REGION=us-east-1
+      - S3_USE_PATH_STYLE=true
+      - KEYCLOAK_ADMIN_URL=http://keycloak.conservices-identity.svc.cluster.local:8080
+      - KEYCLOAK_REALM=conservices
+      - KEYCLOAK_CLIENT_ID=den-keycloak
+      - OPERATOR_URL=http://den-operator.conservices-den.svc.cluster.local:8080
+      - SHUTDOWN_TIMEOUT=15s
+  - name: den-operator-config
+    namespace: conservices-den
+    literals:
+      - OPERATOR_ADDR=:8080
+      - MODULE_DB_HOST=postgres.conservices-data.svc.cluster.local:5432
+      - MANAGED_DATABASES=true
+      - PROTECTED_DATABASES=den,keycloak
+      - BACKUP_ENABLED=true
+      - BACKUP_TIMEZONE=UTC
+      - BACKUP_S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - BACKUP_S3_BUCKET=conservices-backups
+      - BACKUP_S3_REGION=us-east-1
+      - BACKUP_S3_USE_PATH_STYLE=true
+      # Your age PUBLIC key(s), comma-separated. Generate with age-keygen.
+      - BACKUP_AGE_RECIPIENTS=change-me
+      - FILES_S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - FILES_S3_REGION=us-east-1
+      - FILES_S3_USE_PATH_STYLE=true
+      # Every module bucket that should be in the backups.
+      - FILES_S3_BUCKETS=den-data
+  - name: den-frontend-nginx
+    namespace: conservices-den
+    files:
+      - default.conf=nginx.conf
+
+# Secrets come from the overlay (plain Secrets in overlays/example, External
+# Secrets in overlays/production-external-secrets):
+#   den-secrets:          DATABASE_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
+#                         KEYCLOAK_CLIENT_SECRET, OPERATOR_TOKEN
+#   den-operator-secrets: OPERATOR_TOKEN, PG_ADMIN_URL,
+#                         BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY,
+#                         FILES_S3_ACCESS_KEY_ID, FILES_S3_SECRET_ACCESS_KEY

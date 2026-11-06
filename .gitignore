@@ -15,7 +15,14 @@
 # Local environment and logs
 .env
 *.log
-.cursor/
+.cursor/*
+!.cursor/rules/
+
+# Local database dumps (never publish)
+/backups/
+
+# Built documentation site
+/site/
 
 # OS / editor
 .DS_Store

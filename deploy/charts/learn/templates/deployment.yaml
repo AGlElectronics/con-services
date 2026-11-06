@@ -1,0 +1,215 @@
+{{- $ns := .Values.namespace -}}
+{{- if and .Values.backend.singleReplica (ne (int .Values.backend.replicas) 1) }}
+{{- fail (printf "backend.replicas must be 1 for this module (got %v): %s" .Values.backend.replicas .Values.backend.singleReplicaReason) }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: learn-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "learn.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: learn-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "learn.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# The server never migrates; the migrate initContainer applies pending
+# migrations and exits before the server starts. Recreate: old and new pods
+# never run (or migrate) side by side.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: learn-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "learn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learn
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "learn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: learn-backend
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "learn.podSecurity" . | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      {{- with .Values.backend.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: migrate
+          image: {{ include "learn.image" (dict "root" . "name" "migrate") | quote }}
+          imagePullPolicy: {{ .Values.image.migrate.pullPolicy }}
+          env:
+            - name: APP_ENV
+              value: {{ .Values.config.APP_ENV | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret is required" .Values.existingSecret }}
+                  key: DATABASE_URL
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "learn.containerSecurity" . | nindent 12 }}
+      containers:
+        - name: backend
+          image: {{ include "learn.image" (dict "root" . "name" "backend") | quote }}
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          {{- with .Values.backend.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "learn.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.accessConfig.enabled }}
+            - name: access-config
+              mountPath: {{ .Values.accessConfig.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.backend.buffer }}
+            {{- if .enabled }}
+            - name: buffer
+              mountPath: {{ .mountPath }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.accessConfig.enabled }}
+        - name: access-config
+          configMap:
+            name: {{ .Values.accessConfig.existingConfigMap }}
+        {{- end }}
+        {{- with .Values.backend.buffer }}
+        {{- if .enabled }}
+        - name: buffer
+          {{- if .persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $.Release.Name }}-buffer
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: learn-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "learn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learn
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "learn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: learn-frontend
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "learn.podSecurity" . | nindent 8 }}
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: frontend
+          image: {{ include "learn.image" (dict "root" . "name" "frontend") | quote }}
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- include "learn.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /run
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ .Release.Name }}-frontend-nginx
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

@@ -1,0 +1,85 @@
+# Den
+
+**Den** is the portal and admin console of Con Services. Its goal is to
+make a set of separate modules feel like **one product**: one place to
+start, one brand, one set of organisation-wide settings, and one admin
+console that knows which modules exist and keeps their data backed up.
+Everyone in the organisation lands on Den after signing in; administrators
+use it to register and **pair** modules, set the brand and settings that
+every paired module follows, and run backups. Den is installed first and
+every other module is configured relative to it, but it holds no accounts
+or business data of its own: people live in Keycloak, and each module owns
+its own data. Integrators and scripts use the same
+[HTTP API](api.md) as Den's web app.
+
+Source: [AGlElectronics/den](https://github.com/AGlElectronics/den)
+
+## What Den does
+
+- **Portal home** for everyone in the organisation: the services they can
+  open, plus to-dos collected from those services.
+- **Module registry**: which modules the organisation runs and where they
+  live.
+- **Pairing**: connects modules to Den with one-time pairing URLs, so they
+  follow Den's brand and settings. See [Pairing](../../concepts/pairing.md).
+- **Branding**: colours, fonts, wording, logo, favicon and a sign-in
+  background, with a live preview. Paired modules and the Keycloak sign-in
+  page pick it up automatically.
+- **Organisation settings**: a JSON document of organisation-wide settings,
+  such as the organisation's name and email domain, read by paired modules.
+- **Keycloak sync**: pushes the brand into the Keycloak realm so the sign-in
+  page matches.
+- **User preferences**: each person's light or dark theme, shared by every
+  app.
+- **Databases and backups** through Den's operator: creates a database for a
+  new module, deletes it when the module is removed (after a backup), and
+  makes a nightly encrypted backup of the whole suite.
+
+Den does **not** hold accounts or passwords. Sign-in happens at the
+identity provider (Keycloak); Den only checks the tokens. See
+[Authentication](../../concepts/authentication.md).
+
+## How Den is built
+
+| Part | Technology | Runs as |
+| --- | --- | --- |
+| Backend | Go 1.25, chi router, pgx, go-oidc, zerolog | Deployment `den-backend` (binary `/den-server`) |
+| Migrations | Goose, SQL files embedded in the binary | initContainer `migrate` in `den-backend` (binary `/den-migrate`) |
+| Operator | Go, `pg_dump`/`pg_dumpall`, age encryption | Deployment `den-operator` |
+| Frontend | React 19, Rsbuild, TanStack Router and Query, Tailwind | Deployment `den-frontend` (nginx) |
+| Database | PostgreSQL 16, database `den` | shared server |
+| File storage | S3-compatible bucket (`den-data` on Kubernetes, `den-data-dev` in Compose) | shared server |
+
+All three Deployments live in the namespace `conservices-den`.
+
+## Images
+
+Den is published as three images, all with the same tag for a release (see
+[Versions and upgrades](../../operations/versioning.md)):
+
+| Image | Built from | Contains |
+| --- | --- | --- |
+| `ghcr.io/aglelectronics/den-backend:<tag>` | `infra/Dockerfile.backend` | `/den-server` and `/den-migrate`. The migrate step uses the same image with `command: ["/den-migrate"]`. |
+| `ghcr.io/aglelectronics/den-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx. |
+| `ghcr.io/aglelectronics/den-operator:<tag>` | `infra/Dockerfile.operator` | The operator, based on the PostgreSQL 16 image so its backup tools match the server. |
+
+!!! note "The web app's sign-in address is built in"
+    The web app reads its sign-in settings (`VITE_OIDC_AUTHORITY`,
+    `VITE_OIDC_CLIENT_ID`) when the image is **built**, not when it starts.
+    The published `den-frontend` image is built for the example installation
+    (`https://auth.conservices.test/realms/conservices`, client `den-spa`).
+    For your own domain, build the image with your values; see
+    [Configuration](configuration.md#frontend-build-settings).
+
+## In this section
+
+- [Admin guide](admin-guide.md): every page of the admin console, from an
+  administrator's point of view.
+- [Configuration](configuration.md): every environment variable Den reads.
+- [API reference](api.md): every HTTP endpoint, with examples.
+
+New to Den? Start with [Run Den on Kubernetes](../../getting-started/den-quickstart.md).
+
+Design decisions are recorded in Den's
+[ADRs](https://github.com/AGlElectronics/den/tree/main/docs/adr) and its
+[domain model](https://github.com/AGlElectronics/den/blob/main/docs/domain-model.md).

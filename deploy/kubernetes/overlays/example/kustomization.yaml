@@ -1,0 +1,72 @@
+# Example overlay: the platform (Keycloak, PostgreSQL, MinIO, Den) on a
+# local cluster at https://*.conservices.test.
+#
+# DEV / QUICKSTART ONLY. secrets.yaml holds PUBLIC dev values as plain
+# Kubernetes Secrets. For anything else, swap that one file for External
+# Secrets (overlays/production-external-secrets) and keep secrets out of git.
+#
+# Before the first `kubectl apply -k`, fill the local/ folder (gitignored);
+# see docs: getting-started/den-quickstart.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - secrets.yaml
+
+# Pin exact versions. All images of one module share one tag.
+images:
+  - name: ghcr.io/aglelectronics/den-backend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-frontend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-operator
+    newTag: 1.0.0-1
+
+patches:
+  - path: den-backend-local.yaml
+
+configMapGenerator:
+  - name: den-operator-config
+    namespace: conservices-den
+    behavior: merge
+    literals:
+      # DEV ONLY key pair: the secret half is infra/operator/dev-backup-identity.txt.
+      - BACKUP_AGE_RECIPIENTS=age1777a9j365d2nmjl24nvp45jz8ww9sg4xv9n4h84rl4nay9xww39sc5t73k
+      - FILES_S3_BUCKETS=den-data,stash-data
+  # Copied from infra/keycloak/ into local/ (kustomize only reads files
+  # inside this folder).
+  - name: keycloak-realm
+    namespace: conservices-identity
+    files:
+      - realm-conservices.json=local/realm-conservices.json
+  - name: keycloak-theme
+    namespace: conservices-identity
+    files:
+      - login-theme.properties=local/theme/login/theme.properties
+      - login-footer.ftl=local/theme/login/footer.ftl
+      - login-conservices.css=local/theme/login/resources/css/conservices.css
+      - login-brand.js=local/theme/login/resources/js/brand.js
+      - email-theme.properties=local/theme/email/theme.properties
+      - email-messages_en.properties=local/theme/email/messages/messages_en.properties
+
+secretGenerator:
+  # Local certificate made with mkcert (local/tls.crt, local/tls.key).
+  # An Ingress can only use a TLS secret from its own namespace.
+  - name: conservices-tls
+    namespace: conservices-identity
+    type: kubernetes.io/tls
+    files:
+      - tls.crt=local/tls.crt
+      - tls.key=local/tls.key
+  - name: conservices-tls
+    namespace: conservices-den
+    type: kubernetes.io/tls
+    files:
+      - tls.crt=local/tls.crt
+      - tls.key=local/tls.key
+  # mkcert's root certificate (public), so Den trusts https://auth.conservices.test.
+  - name: local-ca
+    namespace: conservices-den
+    files:
+      - conservices-local-ca.pem=local/rootCA.pem

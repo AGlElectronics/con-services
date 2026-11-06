@@ -1,0 +1,22 @@
+Finance {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namespace }}.
+
+1. Watch the pods start. The backend pod shows Init:0/1 while the migrate
+   initContainer applies database migrations:
+
+     kubectl get pods -n {{ .Values.namespace }} -w
+
+2. Check the backend's readiness:
+
+     kubectl exec -n {{ .Values.namespace }} deploy/finance-frontend -- wget -qO- http://finance-backend:{{ .Values.backend.port }}/readyz
+
+   Expect: {"status":"ok","database":"ok"}
+{{- if .Values.ingress.enabled }}
+
+3. Open https://{{ .Values.ingress.host }} and sign in with an account in
+   one of the groups in FINANCE_ACCESS_GROUPS ({{ .Values.config.FINANCE_ACCESS_GROUPS }}).
+{{- end }}
+
+4. Pair with Den: Den -> Admin console -> Modules -> Pair, then in Finance
+   Settings -> Den connection, paste the pairing URL.
+
+Docs: https://aglelectronics.github.io/con-services/modules/finance/setup/

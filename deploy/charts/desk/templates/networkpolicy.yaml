@@ -1,0 +1,150 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $ns := .Values.namespace -}}
+{{- $np := .Values.networkPolicy -}}
+# Deny everything in the namespace, then allow only what the module needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: desk-frontend
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: desk
+      app.kubernetes.io/component: frontend
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.frontend.port }} }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: desk
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: desk-backend
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: desk
+      app.kubernetes.io/component: backend
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: desk
+              app.kubernetes.io/component: frontend
+        {{- range $np.allowFromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+  egress:
+    {{- if $np.data.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.data.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - { protocol: TCP, port: {{ $np.data.postgresPort }} }
+    {{- if $np.data.s3 }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.data.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - { protocol: TCP, port: {{ $np.data.s3Port }} }
+    {{- end }}
+    {{- end }}
+    {{- if $np.den.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.den.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: den
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: {{ $np.den.port }} }
+    {{- end }}
+    {{- if $np.oidcViaIngressController }}
+    # OIDC discovery and signing keys through the public issuer (Keycloak).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+      ports:
+        - { protocol: TCP, port: 443 }
+    {{- end }}
+    {{- with $np.keycloakAdmin }}
+    {{- if .enabled }}
+    # Keycloak admin API, in-cluster. Keycloak's namespace also needs an
+    # ingress rule admitting this backend.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
+      ports:
+        - { protocol: TCP, port: {{ .port }} }
+    {{- end }}
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

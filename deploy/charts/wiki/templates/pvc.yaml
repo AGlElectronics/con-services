@@ -1,0 +1,20 @@
+{{- with .Values.backend.buffer }}
+{{- if and .enabled .persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name }}-buffer
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "wiki.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .persistence.size }}
+{{- end }}
+{{- end }}

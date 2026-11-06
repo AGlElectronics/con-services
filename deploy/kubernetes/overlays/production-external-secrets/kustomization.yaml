@@ -1,0 +1,72 @@
+# Production-shaped overlay: same base, secrets from a secret manager through
+# the External Secrets Operator. Compared with overlays/example, the only
+# secrets change is "secrets.yaml" -> "external-secrets.yaml".
+#
+# Also shown: your own host names (con.example.org) and your own build of
+# den-frontend, because the web app's sign-in address is compiled into the
+# image (docs: modules/den/configuration). TLS certificates ("conservices-tls"
+# in each namespace) come from cert-manager or your platform.
+#
+# Requires: External Secrets Operator installed in the cluster, and the
+# Vault (or other) roles described in external-secrets.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - external-secrets.yaml
+
+images:
+  - name: ghcr.io/aglelectronics/den-backend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-frontend
+    newName: registry.example.org/conservices/den-frontend
+    newTag: 1.0.0-1
+  - name: ghcr.io/aglelectronics/den-operator
+    newTag: 1.0.0-1
+
+configMapGenerator:
+  - name: keycloak-config
+    namespace: conservices-identity
+    behavior: merge
+    literals:
+      - KC_HOSTNAME=https://auth.con.example.org
+  - name: den-config
+    namespace: conservices-den
+    behavior: merge
+    literals:
+      - APP_BASE_URL=https://den.con.example.org
+      - OIDC_ISSUER_URL=https://auth.con.example.org/realms/conservices
+      - CORS_ALLOWED_ORIGINS=https://den.con.example.org
+  - name: den-operator-config
+    namespace: conservices-den
+    behavior: merge
+    literals:
+      # Your own age public key(s); the secret half stays offline.
+      - BACKUP_AGE_RECIPIENTS=age1change-me
+      - BACKUP_TIMEZONE=Europe/Vienna
+      # A different provider or account than the live data.
+      - BACKUP_S3_ENDPOINT=https://s3.backup-provider.example
+      - FILES_S3_BUCKETS=den-data
+
+patches:
+  - target:
+      kind: Ingress
+      name: keycloak
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: auth.con.example.org
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: auth.con.example.org
+  - target:
+      kind: Ingress
+      name: den
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: den.con.example.org
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: den.con.example.org

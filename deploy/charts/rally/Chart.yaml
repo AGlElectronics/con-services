@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rally
+description: >-
+  Rally, the Con Services events module (calls for papers, review, schedule,
+  public schedule API, live-day announcements). STUB: first scaffold, not
+  yet tested on a cluster.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
+home: https://aglelectronics.github.io/con-services/modules/rally/
+sources:
+  - https://github.com/AGlElectronics/Rally
+  - https://github.com/AGlElectronics/con-services

@@ -1,0 +1,32 @@
+# LOCAL CLUSTER ONLY. Den checks sign-in tokens against the public issuer
+# URL https://auth.conservices.test, which pods cannot resolve on a laptop.
+#   - hostAliases points that name at the ingress controller inside the
+#     cluster. Replace the IP with yours:
+#       kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath="{.spec.clusterIP}"
+#   - SSL_CERT_DIR adds mkcert's root certificate to the trusted ones.
+# With a real DNS name and a public certificate, delete this patch.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: den-backend
+  namespace: conservices-den
+spec:
+  template:
+    spec:
+      hostAliases:
+        - ip: "10.96.0.100" # CHANGE ME: ingress controller ClusterIP
+          hostnames:
+            - auth.conservices.test
+      containers:
+        - name: backend
+          env:
+            - name: SSL_CERT_DIR
+              value: /etc/conservices-ca
+          volumeMounts:
+            - name: local-ca
+              mountPath: /etc/conservices-ca
+              readOnly: true
+      volumes:
+        - name: local-ca
+          secret:
+            secretName: local-ca

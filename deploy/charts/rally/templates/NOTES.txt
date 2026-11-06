@@ -1,0 +1,24 @@
+Rally {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namespace }}.
+
+1. Watch the pods start. The backend pod shows Init:0/1 while the migrate
+   initContainer applies database migrations:
+
+     kubectl get pods -n {{ .Values.namespace }} -w
+
+2. Check readiness (database reachable):
+
+     kubectl exec -n {{ .Values.namespace }} deploy/rally-frontend -- wget -qO- http://rally-backend:{{ .Values.backend.port }}/readyz
+
+   Expect: {"status":"ok","database":"ok"}
+{{- if .Values.ingress.enabled }}
+
+3. Open https://{{ .Values.ingress.host }} and sign in.
+{{- if .Values.submit.enabled }}
+   The submission site is at https://{{ .Values.submit.host }}.
+{{- end }}
+{{- end }}
+
+4. Pair with Den: Den -> Admin console -> Modules -> Pair (module "events"),
+   then in Rally Organizations -> Den connection, paste the pairing URL.
+
+Docs: https://aglelectronics.github.io/con-services/modules/rally/setup/

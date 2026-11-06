@@ -1,0 +1,12 @@
+# conservices.io/tier=module lets the platform's NetworkPolicies admit this
+# namespace's backend to Den, PostgreSQL and MinIO.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conservices-stash
+  labels:
+    app.kubernetes.io/part-of: conservices
+    conservices.io/tier: module
+    conservices.io/module: stash
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted

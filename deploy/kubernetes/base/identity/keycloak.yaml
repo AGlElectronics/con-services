@@ -1,0 +1,129 @@
+# Simple in-cluster Keycloak for small installations and local clusters.
+# Production: prefer the Keycloak Operator (or a managed IdP) and a custom
+# image with the conservices theme built in. See docs: operations/production.
+#
+# The realm is imported on first start from the keycloak-realm ConfigMap,
+# which the overlay generates from infra/keycloak/realm-conservices.json.
+# Import skips realms that already exist.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak
+  namespace: conservices-identity
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: conservices-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: identity
+spec:
+  # start-dev keeps caches local; more replicas need a production setup.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+        app.kubernetes.io/component: identity
+    spec:
+      serviceAccountName: keycloak
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.0.7
+          args: ["start-dev", "--import-realm"]
+          envFrom:
+            - configMapRef:
+                name: keycloak-config
+            - secretRef:
+                name: keycloak-secrets
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: management
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: theme
+              mountPath: /opt/keycloak/themes/conservices
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm
+            optional: true
+        - name: theme
+          configMap:
+            name: keycloak-theme
+            optional: true
+            items:
+              - key: login-theme.properties
+                path: login/theme.properties
+              - key: login-footer.ftl
+                path: login/footer.ftl
+              - key: login-conservices.css
+                path: login/resources/css/conservices.css
+              - key: login-brand.js
+                path: login/resources/js/brand.js
+              - key: email-theme.properties
+                path: email/theme.properties
+              - key: email-messages_en.properties
+                path: email/messages/messages_en.properties
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: conservices-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

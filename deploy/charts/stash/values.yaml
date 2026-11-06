@@ -1,0 +1,117 @@
+# Stash Helm chart values. STUB (chart version 0.1.0).
+# Docs: https://aglelectronics.github.io/con-services/getting-started/standalone-kubernetes/
+#
+# The namespace is NOT created by this chart. Create it first with the
+# labels the platform NetworkPolicies expect (see the setup page):
+#   conservices.io/tier: module
+#   pod-security.kubernetes.io/enforce: restricted
+
+# Namespace the release is installed into (use `helm install -n <namespace>`
+# with the same value).
+namespace: conservices-stash
+
+image:
+  backend:
+    repository: ghcr.io/aglelectronics/stash-backend
+    # MAJOR.MINOR.PATCH-BUILD. Never "latest".
+    tag: "1.0.0-1"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ghcr.io/aglelectronics/stash-frontend
+    tag: "1.0.0-1"
+    pullPolicy: IfNotPresent
+
+# Name of an existing Secret (created by your secret manager, for example an
+# ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
+# S3_SECRET_ACCESS_KEY. This chart never creates Secrets.
+existingSecret: stash-secrets
+
+# Stash's access config (roles, permissions, OIDC group bindings).
+# Create the ConfigMap from stash/infra/access-config.toml:
+#   kubectl create configmap stash-access-config -n conservices-stash \
+#     --from-file=access-config.toml=stash/infra/access-config.toml
+accessConfig:
+  existingConfigMap: stash-access-config
+  mountPath: /etc/stash
+  fileName: access-config.toml
+
+# Non-secret settings, rendered into the ConfigMap "<release>-config".
+# Every key is documented on the Stash configuration page.
+# ACCESS_CONFIG_PATH is set from accessConfig above.
+config:
+  APP_ENV: production
+  APP_BASE_URL: https://stash.conservices.test
+  HTTP_ADDR: ":8080"
+  AUTH_MODE: oidc
+  OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  OIDC_CLIENT_ID: stash-spa
+  OIDC_AUDIENCE: stash-spa
+  CORS_ALLOWED_ORIGINS: https://stash.conservices.test
+  S3_ENDPOINT: http://minio.conservices-data.svc.cluster.local:9000
+  S3_BUCKET: stash-data
+  S3_REGION: us-east-1
+  S3_USE_PATH_STYLE: "true"
+  PUBLIC_LOSTFOUND_CLAIM_ENABLED: "false"
+  # Pairing URLs carry Den's public address; Stash swaps in this one.
+  # Empty for a standalone install without Den.
+  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+
+backend:
+  # Keep 1: Stash runs its database migrations when it starts, so two
+  # starting replicas would migrate at the same time. The Deployment uses
+  # the Recreate strategy for the same reason.
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  # Extra env entries (for example SSL_CERT_DIR for a private CA).
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  hostAliases: []
+
+frontend:
+  replicas: 2
+  # nginx listens on 8080 (non-root); the image's built-in config uses 80,
+  # so the chart mounts its own nginx config from a ConfigMap.
+  port: 8080
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: stash.conservices.test
+  # TLS certificate Secret in this namespace (cert-manager or by hand).
+  tlsSecretName: conservices-tls
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+
+networkPolicy:
+  enabled: true
+  # Namespace of the ingress controller (ingress-nginx; kube-system for k3s Traefik).
+  ingressControllerNamespace: ingress-nginx
+  # The backend reaches the OIDC issuer through the ingress controller on 443
+  # (public issuer URL). Turn off and use extraEgress for an external IdP.
+  oidcViaIngressController: true
+  den:
+    enabled: true
+    namespace: conservices-den
+    port: 8080
+  # In-cluster PostgreSQL and MinIO (conservices-data). For managed services
+  # set enabled: false and add ipBlock rules to extraEgress.
+  data:
+    enabled: true
+    namespace: conservices-data
+    postgresPort: 5432
+    s3Port: 9000
+  # Other module backends allowed to call Stash's backend (HR reads
+  # GET /api/role-catalog).
+  allowFromNamespaces:
+    - conservices-hr
+  # Raw NetworkPolicy egress rules appended to the backend policy, e.g.
+  #   - to: [{ ipBlock: { cidr: 10.20.0.0/24 } }]
+  #     ports: [{ protocol: TCP, port: 5432 }]
+  extraEgress: []

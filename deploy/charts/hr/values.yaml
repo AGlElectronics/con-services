@@ -1,0 +1,118 @@
+# HR Helm chart values. STUB (chart version 0.1.0).
+# Docs: https://aglelectronics.github.io/con-services/modules/hr/setup/
+#
+# The namespace is NOT created by this chart. Create it first with the
+# labels the platform NetworkPolicies expect (see the setup page):
+#   conservices.io/tier: module
+#   pod-security.kubernetes.io/enforce: restricted
+
+namespace: conservices-hr
+
+image:
+  backend:
+    repository: ghcr.io/aglelectronics/hr-backend
+    # MAJOR.MINOR.PATCH-BUILD. Required; no HR release is published yet.
+    tag: ""
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ghcr.io/aglelectronics/hr-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  # One-shot migrator (/migrate). Runs as an initContainer of the backend.
+  migrate:
+    repository: ghcr.io/aglelectronics/hr-migrate
+    tag: ""
+    pullPolicy: IfNotPresent
+
+# Existing Secret (from your secret manager). Keys HR reads from it:
+#   DATABASE_URL                      required
+#   KEYCLOAK_CLIENT_SECRET            secret of the hr-provisioner client
+#   LEARN_SERVICE_TOKEN               optional (training-gated roles)
+#   OFFBOARD_HOOKS, DEPARTMENT_HOOKS  optional, "url|token" lists (contain tokens)
+#   SMTP_PASSWORD                     optional
+#   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY  optional (HR stores no files yet)
+# This chart never creates Secrets.
+existingSecret: hr-secrets
+
+# Non-secret settings -> ConfigMap "<release>-config". Documented on the HR
+# configuration page.
+config:
+  APP_ENV: production
+  APP_BASE_URL: https://hr.conservices.test
+  HTTP_ADDR: ":8080"
+  AUTH_MODE: oidc
+  OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  OIDC_CLIENT_ID: hr-spa
+  OIDC_AUDIENCE: hr-spa
+  HR_ACCESS_GROUPS: hr-admin
+  CORS_ALLOWED_ORIGINS: https://hr.conservices.test
+  KEYCLOAK_BASE_URL: http://keycloak.conservices-identity.svc.cluster.local:8080
+  KEYCLOAK_REALM: conservices
+  KEYCLOAK_CLIENT_ID: hr-provisioner
+  KEYCLOAK_SETUP_CLIENT_ID: den-spa
+  KEYCLOAK_SETUP_REDIRECT_URI: https://den.conservices.test/
+  # Comma-separated "slug=url" list of other modules' role catalogs.
+  ROLE_CATALOG_SOURCES: stash=http://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
+  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+  # SMTP_HOST: smtp.example.org
+  # SMTP_PORT: "587"
+  # SMTP_USERNAME: hr@example.org
+  # SMTP_FROM: no-reply@example.org
+  # SMTP_FROM_NAME: Con Services
+
+backend:
+  # Keep 1 for now: HR runs a background worker (pending role grants every
+  # ROLE_GATE_INTERVAL) that has not been tested with several replicas.
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  hostAliases: []
+
+frontend:
+  replicas: 2
+  # nginx listens on 8080 (non-root); the chart mounts its own nginx config.
+  port: 8080
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: hr.conservices.test
+  tlsSecretName: conservices-tls
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+
+networkPolicy:
+  enabled: true
+  ingressControllerNamespace: ingress-nginx
+  oidcViaIngressController: true
+  den:
+    enabled: true
+    namespace: conservices-den
+    port: 8080
+  data:
+    enabled: true
+    namespace: conservices-data
+    postgresPort: 5432
+    s3Port: 9000
+  # Keycloak admin API (creating accounts, groups). Keycloak's namespace
+  # also needs an ingress rule admitting HR; see the HR setup page.
+  keycloak:
+    enabled: true
+    namespace: conservices-identity
+    port: 8080
+  # Module backends HR calls (role catalogs, Learn holdings, offboarding and
+  # department hooks). Each target namespace needs a matching ingress rule.
+  moduleEgressNamespaces:
+    - conservices-stash
+  # Module backends allowed to call HR's backend (GET /api/role-catalog).
+  allowFromNamespaces: []
+  # Raw egress rules for SMTP, an external Postgres, etc.
+  extraEgress: []

@@ -1,0 +1,26 @@
+# LOCAL CLUSTER ONLY; same reason as overlays/example/den-backend-local.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stash-backend
+  namespace: conservices-stash
+spec:
+  template:
+    spec:
+      hostAliases:
+        - ip: "10.96.0.100" # CHANGE ME: ingress controller ClusterIP
+          hostnames:
+            - auth.conservices.test
+      containers:
+        - name: backend
+          env:
+            - name: SSL_CERT_DIR
+              value: /etc/conservices-ca
+          volumeMounts:
+            - name: local-ca
+              mountPath: /etc/conservices-ca
+              readOnly: true
+      volumes:
+        - name: local-ca
+          secret:
+            secretName: local-ca

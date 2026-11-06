@@ -1,0 +1,12 @@
+apiVersion: v2
+name: wiki
+description: >-
+  Wiki, the Con Services knowledge base (spaces, pages, live editing).
+  STUB: first scaffold, not yet tested on a cluster.
+type: application
+version: 0.1.0
+appVersion: "1.0.0-1"
+home: https://aglelectronics.github.io/con-services/modules/wiki/
+sources:
+  - https://github.com/AGlElectronics/wiki
+  - https://github.com/AGlElectronics/con-services

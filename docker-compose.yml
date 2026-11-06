@@ -359,6 +359,9 @@ services:
       # Modules told when someone is offboarded ("url|token", comma
       # separated). The wiki orphans their private space.
       OFFBOARD_HOOKS: http://wiki-backend:8080/api/internal/offboarded|wiki-service-dev-token
+      # Modules told when a department is created or renamed (same format).
+      # Tasks keeps one space per department (TASK-25).
+      DEPARTMENT_HOOKS: http://tasks-backend:8080/api/internal/departments|tasks-service-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro

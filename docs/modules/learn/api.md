@@ -1,0 +1,1175 @@
+# Learn API reference
+
+Learn's web app is built entirely on this HTTP API, so everything it does
+(courses, quizzes, in-person sessions, qualifications, learning paths,
+reports) can also be scripted. Other modules use a few routes too: **HR**
+reads the qualification catalog and asks which qualifications people hold
+before granting a role, and **Den's** portal shows Learn to-dos.
+
+This page lists **every route** in
+[`backend/internal/http/router.go`](https://github.com/AGlElectronics/learn/blob/main/backend/internal/http/router.go)
+and the route files it mounts, with who may call it, request and response
+bodies, errors and `curl` examples. The rules shared by every Con Services
+module (tokens, error shape, ids, timestamps) are on
+[API conventions](../../concepts/api-conventions.md).
+
+## Basics
+
+| What | Value |
+| --- | --- |
+| Base address (browser, scripts) | The Learn address, for example `https://learn.example.org`. nginx forwards `/api/`, `/livez` and `/readyz` to the backend. |
+| Base address (inside the cluster) | `http://learn-backend.conservices-learn.svc.cluster.local:8080` |
+| Version prefix | `/api/v1` for the app; `/api/…` without `v1` for the cross-module contracts (catalogs, holdings, portal, public verify). |
+| Request bodies | JSON, `Content-Type: application/json`. **Unknown fields are rejected** with `400`. The question import is the one `multipart/form-data` route. |
+| Ids | UUIDs. A malformed id answers `400` `invalid <name> id: …`. |
+| Times | RFC 3339, for example `2026-11-06T12:00:00Z`. |
+| Clearing a value | Fields documented as "`null` clears" tell an explicit `null` apart from leaving the field out. |
+| Request id | Every response carries `X-Request-ID`; quote it when reporting a problem. |
+
+In the examples ([how to get a token](../../concepts/api-conventions.md#get-a-token-for-curl)):
+
+```sh
+export LEARN=https://learn.example.org
+export TOKEN=eyJhbGciOi...   # access token from Keycloak for the Learn web app's client
+```
+
+### Languages
+
+Learner-facing responses (course pages, quizzes, sessions, certificates,
+to-dos) are served in the caller's language, chosen in this order:
+
+1. `?lang=nl` on the request;
+2. the language saved with [`PUT /api/v1/me/preferences`](#put-apiv1mepreferences);
+3. the `Accept-Language` header.
+
+Each course uses the first of these it offers, otherwise its
+`default_lang`; missing translations fall back per field to the default
+text. Course **staff** get the default text (the text they edit) unless they
+pass `?lang=` explicitly, so a translation is never saved over the original.
+
+## Authentication
+
+| Caller | How | Accepted on |
+| --- | --- | --- |
+| People (production) | `Authorization: Bearer <token>` from Keycloak, verified against `OIDC_ISSUER_URL` | `/api/v1/…` (except brand) |
+| Den's web app | A Keycloak token whose audience is listed in `OIDC_EXTRA_AUDIENCES` (for example `den-spa`) | **only** `/api/portal/todos` |
+| HR (server to server) | `Authorization: Bearer <LEARN_SERVICE_TOKEN>` | **only** `/api/internal/holdings` |
+| Local development (`AUTH_MODE=dev`) | `X-Dev-User: <name>`, `X-Dev-Groups: learn-trainer,…` | everything a person can call |
+| Anyone | nothing | probes, catalogs, `/api/public/verify/{code}`, brand |
+
+The first time someone signs in, Learn creates a local user for them, keyed
+by token issuer and subject. On every sign-in the token's `groups` are also
+applied to courses and paths linked to Keycloak groups (see
+[Groups](#keycloak-groups-and-group-sync)).
+
+!!! danger "Dev mode trusts a header"
+    With `AUTH_MODE=dev` anyone who can reach the backend can claim any user
+    and group. Local use only; see [Authentication](../../concepts/authentication.md).
+
+### Permissions and who may do what
+
+Keycloak groups map to roles (`infra/access-config.toml`); roles carry
+permissions:
+
+| Permission | Allows | Default role (Keycloak group) |
+| --- | --- | --- |
+| `course.manage` | Edit, publish and enrol on **every** course; manage learning paths. | `organization_admin` (`learn-admin`) |
+| `course.teach` | Create courses; edit and enrol only on courses you **staff**. | `trainer` (`learn-trainer`) |
+| `enrol.manage` | Add and remove people on courses you may edit; the people picker. | `learn-admin`, `learn-trainer` |
+| `settings.manage` | Qualifications, revoking certificates, reminders, the Den pairing. | `learn-admin` |
+| `report.view` | Completion and qualification reports for the whole organisation. | `learn-admin`, `coordinator` (`learn-coordinator`) |
+
+There is **no learner role**: an **enrolment** on a published course is what
+lets a person read it. The tables below use these short names:
+
+| Name | Means |
+| --- | --- |
+| **signed in** | Any valid token. |
+| **staff** | `course.manage` in the course's organisation, or `course.teach` **and** an enrolment with role `trainer` on that course. |
+| **enrolled** | An active enrolment (learner or trainer) on a **published** course, or staff. |
+| **enrol staff** | `enrol.manage` and staff. |
+| **path admin** | `course.manage` in the path's organisation. |
+
+**Hidden, not forbidden.** Someone who is not staff gets `404` for an
+unpublished course and everything in it, exactly as if it did not exist; on a
+published course they get `403` (`you are not enrolled in this course`).
+Paths, certificates and media you may not see also answer `404`.
+
+## Errors
+
+```json
+{"error":{"code":"locked","message":"finish Radio basics: intro first","details":{"needs":["Radio basics: intro"]}}}
+```
+
+| Status | `code` | Typical cause in Learn |
+| --- | --- | --- |
+| 400 | `bad_request` | Malformed JSON, unknown field, bad id, `step` not `preview`/`commit`, completing a quiz or session by hand. |
+| 401 | `unauthorized` | Missing or invalid token; wrong `LEARN_SERVICE_TOKEN`. |
+| 403 | `forbidden` | Missing permission (`missing permission: course.manage`), not enrolled, self-enrolment off. |
+| 403 | `locked` | Prerequisites or an earlier course on a sequential path are not done; `details.needs` lists what is missing. |
+| 404 | `not_found` | Not there, or hidden from you (see above). |
+| 409 | `conflict` | State conflicts: already enrolled, attempts used up, session full or started, question already answered, renewal not open. |
+| 422 | `validation_failed` | Field problems. Learn's messages are full sentences meant to be shown to people. |
+| 429 | `rate_limited` | Public verify called more than 30 times a minute from one address; `Retry-After: 60`. |
+| 503 | `unavailable` | An optional integration is off: object storage (media) or Keycloak group sync. |
+| 500 | `internal` | Unexpected; see the backend log with the request id. |
+
+The Den routes add `pairing_failed` (422) and `sync_failed` (409/502).
+
+## Endpoint overview
+
+**140 endpoints.** Paths below `/api/v1` are written without that prefix in
+the section tables.
+
+| Area | Count | Section |
+| --- | --- | --- |
+| Probes, catalogs, HR, public, portal | 8 | [Service and public](#service-and-public-routes) |
+| Brand, you, people, Den | 15 | [You](#you), [Den](#den-pairing) |
+| Courses, sections, activities, enrolments, rules, copy | 23 | [Courses](#courses) |
+| Quizzes, question bank, attempts, gradebook, stats, import | 25 | [Quizzes](#quizzes) |
+| In-person sessions | 10 | [Sessions](#in-person-sessions) |
+| Media library and page attachments | 11 | [Media](#media) |
+| Keycloak groups | 5 | [Groups](#keycloak-groups-and-group-sync) |
+| Qualifications and certificates | 9 | [Qualifications](#qualifications-and-certificates) |
+| Learning paths | 17 | [Paths](#learning-paths) |
+| Team boards, feedback, translations, reports, reminders | 17 | [Engagement and admin](#engagement-reports-and-admin) |
+
+---
+
+## Service and public routes
+
+| Method | Path | Who |
+| --- | --- | --- |
+| GET | `/livez` | anyone |
+| GET | `/readyz` | anyone |
+| GET | `/api/health` | anyone |
+| GET | `/api/role-catalog` | anyone |
+| GET | `/api/qualification-catalog` | anyone |
+| GET | `/api/internal/holdings?subjects=` | `LEARN_SERVICE_TOKEN` |
+| GET | `/api/public/verify/{code}` | anyone, 30 a minute per address |
+| GET | `/api/portal/todos` | signed in, also Den's tokens |
+
+### `GET /livez`, `GET /readyz`, `GET /api/health`
+
+`/livez` answers `{"status":"ok"}` without touching the database.
+`/readyz` pings PostgreSQL: `{"status":"ok","database":"ok"}`, or `503`
+`{"status":"degraded","database":"down"}`. `/api/health` adds the version:
+
+```sh
+curl -s $LEARN/api/health
+```
+
+```json
+{"status":"ok","database":"ok","version":"0.9.0-1","uptime_sec":5400}
+```
+
+### `GET /api/role-catalog`
+
+Anyone; HR reads it for its access picker. One entry per role and group
+binding.
+
+```json
+{"module":"learn","display_name":"Learn","description":"Courses, enrolments and training progress.",
+ "roles":[{"key":"trainer","label":"Trainer","description":"Creates courses and runs the courses they teach.",
+           "group":"learn-trainer","assignable":true,"scope":"organization:demo-org",
+           "permissions":["course.teach","enrol.manage"]}]}
+```
+
+### `GET /api/qualification-catalog`
+
+Anyone. Every qualification HR can require for a role.
+
+```sh
+curl -s http://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog
+```
+
+```json
+{"module":"learn","display_name":"Learn",
+ "qualifications":[{"key":"first-aid","name":"First aid","description":"Basic first aid at events.","valid_months":24},
+                   {"key":"radio","name":"Radio operator","description":"","valid_months":null}]}
+```
+
+`valid_months: null` means the qualification never expires.
+
+### `GET /api/internal/holdings`
+
+**Server to server, for HR role gating.** HR can require a qualification
+before it grants a role ("only people with *First aid* get *Medic*"). Before
+granting, HR asks Learn which **valid** qualifications the people hold.
+
+- **Auth:** `Authorization: Bearer <LEARN_SERVICE_TOKEN>`, the same value
+  configured on HR. Compared in constant time. When `LEARN_SERVICE_TOKEN`
+  is empty the route answers `404`, as if it did not exist.
+- **Query:** `subjects` — comma-separated Keycloak user ids (the token
+  `sub`), at most 500, duplicates ignored. They are matched under Learn's
+  token issuer (`OIDC_ISSUER_URL`).
+- **Valid** means: not revoked and not expired. If someone holds a key
+  through several certificates, the latest expiry is reported (`null` =
+  never expires).
+
+```sh
+curl -s "http://learn-backend.conservices-learn.svc.cluster.local:8080/api/internal/holdings?subjects=6f1d2a40-…,9a2b7c11-…" \
+  -H "Authorization: Bearer change-me"
+```
+
+```json
+{"holdings":{"6f1d2a40-…":[{"key":"first-aid","expires_at":"2028-05-01T00:00:00Z"}],"9a2b7c11-…":[]}}
+```
+
+Every requested subject appears, with `[]` when they hold nothing (or have
+never signed in to Learn).
+
+| Status | When |
+| --- | --- |
+| `200` | Answered. |
+| `400` | `at most 500 subjects per request`. |
+| `401` | Missing or wrong token. |
+| `404` | `LEARN_SERVICE_TOKEN` is not set: the endpoint is off. |
+
+The token is a secret; see [Secrets](../../operations/secrets.md).
+
+### `GET /api/public/verify/{code}`
+
+Anyone, no sign-in. Checks a certificate from the code printed on it (and in
+its QR code). Shows only the holder's display name, the qualification, dates
+and status. `Cache-Control: no-store`. Rate limited to **30 requests a
+minute per client address**; more answers `429` `rate_limited` with
+`Retry-After: 60`.
+
+```sh
+curl -s $LEARN/api/public/verify/K7M2Q4XZ9A3B
+```
+
+```json
+{"display_name":"Sam Example","qualification":"First aid","issued_at":"2026-05-01T10:00:00Z",
+ "expires_at":"2028-05-01T00:00:00Z","status":"valid"}
+```
+
+`status` is `valid`, `expired` or `revoked`. Unknown code: `404`.
+
+### `GET /api/portal/todos`
+
+Signed in. The suite-wide to-do contract that Den's portal home reads: the
+caller's own open work (due courses, upcoming sessions, expiring
+certificates), most urgent first. Besides Learn tokens it accepts tokens for
+the audiences in `OIDC_EXTRA_AUDIENCES`, so Den's web app can call it with
+its own token. `Cache-Control: private, no-store`.
+
+```sh
+curl -s -H "Authorization: Bearer $DEN_TOKEN" $LEARN/api/portal/todos
+```
+
+```json
+{"items":[
+  {"id":"learn:course:2f6c…","title":"Finish Radio basics","detail":"Overdue","due_at":"2026-11-01T00:00:00Z",
+   "url":"https://learn.example.org/courses/2f6c…","severity":"danger"},
+  {"id":"learn:session:7a10…","title":"First aid practical","detail":"Hall B","due_at":"2026-11-08T10:00:00Z",
+   "url":"https://learn.example.org/courses/9e3d…","severity":"info"}]}
+```
+
+`severity` is `danger`, `warning` or `info`. `url` is absolute, built on
+`PUBLIC_BASE_URL`.
+
+## You
+
+| Method | Path | Who | Notes |
+| --- | --- | --- | --- |
+| GET | `/brand` | anyone | Brand, Den's once paired. |
+| GET | `/brand/{role}` | anyone | `logo` or `login-background` asset; `404` if none. |
+| GET | `/me` | signed in | Identity, memberships, permissions. |
+| GET | `/me/preferences` | signed in | `theme` (from Den), `language` (Learn). |
+| PUT | `/me/preferences` | signed in | Body `{theme?, language?}`. |
+| GET | `/me/channels` | signed in | Notification channels. |
+| PUT | `/me/channels` | signed in | Body `{telegram_chat_id}`. |
+| GET | `/me/qualifications` | signed in | See [Qualifications](#get-apiv1mequalifications). |
+| GET | `/me/paths` | signed in | See [Paths](#get-apiv1mepaths). |
+| GET | `/me/teams` | signed in | See [Team boards](#team-boards). |
+| GET | `/users?q=` | `enrol.manage` | People picker, at most 20. |
+
+### `GET /api/v1/me`
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" $LEARN/api/v1/me
+```
+
+```json
+{"id":"5b1e…","display_name":"Robin Trainer","email":"robin@example.org",
+ "issuer":"https://auth.example.org/realms/conservices","subject":"0a1b…",
+ "memberships":[{"organization_id":"0f1a…","role":"trainer"}],
+ "permissions":["course.teach","enrol.manage"]}
+```
+
+Empty `permissions` is normal for learners: they need enrolments, not roles.
+
+### `GET /api/v1/me/preferences`
+
+```json
+{"theme":"dark","updated_at":"2026-11-01T18:20:00Z","synced":true,"language":"nl"}
+```
+
+`theme` comes from Den (`synced:false` when Learn is not paired or Den is
+down); `language` is stored in Learn, `null` = use the browser's.
+
+### `PUT /api/v1/me/preferences`
+
+Body: `theme` (`system`, `light`, `dark`) and/or `language` (a code such as
+`nl`; `""` or `null` clears). Answers `200` with the same shape as `GET`.
+`422` `theme must be system, light or dark`,
+`language must be a language code such as en or nl`.
+
+```sh
+curl -s -X PUT $LEARN/api/v1/me/preferences \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"language":"nl"}'
+```
+
+### `GET /api/v1/me/channels`, `PUT /api/v1/me/channels`
+
+Where reminders reach you. `PUT` body: `{"telegram_chat_id":"123456789"}`
+(`""` removes it). Answers `200` with:
+
+```json
+{"email":"robin@example.org","telegram_chat_id":"123456789","email_enabled":true,"telegram_enabled":false}
+```
+
+`*_enabled` says whether the server has that channel configured. `422`
+`telegram chat id must be a number (e.g. 123456789)`.
+
+### `GET /api/v1/users`
+
+`enrol.manage` anywhere. Searches people who have signed in (or were synced
+from a group) by name or email; at most 20. Learners can never list people.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" "$LEARN/api/v1/users?q=sam"
+```
+
+```json
+{"people":[{"id":"6f1d…","display_name":"Sam Example","email":"sam@example.org"}]}
+```
+
+## Courses
+
+A **course** has ordered **sections**; each section has ordered
+**activities** of kind `page`, `quiz` or `session`. A course starts
+**unpublished** (only staff see it). Learners need an **enrolment**.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/courses/mine` | signed in | `200` `{courses}`: your enrolments. |
+| GET | `/courses/catalog` | signed in | `200` `{courses}`: published self-enrol courses. |
+| GET | `/courses/teach` | `course.teach` or `course.manage` | `200` `{courses}`: courses you staff (all, for `course.manage`). |
+| POST | `/courses` | `course.teach` or `course.manage` | `201` course; you become its trainer. |
+| GET | `/courses/{course}` | enrolled | `200` course detail. |
+| PATCH | `/courses/{course}` | staff | `200` course. |
+| POST | `/courses/{course}/publish` | staff | `200` course. |
+| POST | `/courses/{course}/unpublish` | staff | `200` course. |
+| POST | `/courses/{course}/copy` | staff | `201` the copy. |
+| POST | `/courses/{course}/sections` | staff | `201` section. |
+| PATCH | `/sections/{section}` | staff | `200` section. |
+| DELETE | `/sections/{section}` | staff | `204`; deletes its activities. |
+| POST | `/sections/{section}/activities` | staff | `201` activity. |
+| PATCH | `/activities/{activity}` | staff | `200` activity. |
+| DELETE | `/activities/{activity}` | staff | `204`. |
+| PUT | `/activities/{activity}/completion` | enrolled | `200`. |
+| PUT | `/activities/{activity}/prerequisites` | staff | `200`. |
+| GET | `/courses/{course}/enrolments` | enrol staff | `200` `{enrolments}`. |
+| POST | `/courses/{course}/enrolments` | enrol staff | `201` enrolment. |
+| POST | `/courses/{course}/enrol` | signed in | `201` enrolment (self-enrol). |
+| PATCH | `/enrolments/{enrolment}` | enrol staff | `200` enrolment (due date). |
+| DELETE | `/enrolments/{enrolment}` | enrol staff | `204`. |
+| PUT | `/courses/{course}/qualification` | staff | See [Qualifications](#put-apiv1coursescoursequalification). |
+
+### Course lists
+
+`GET /courses/mine` returns course summaries: the course plus your
+`enrolment_role`, `progress` (`{completed, total}` pages), `due_at`,
+`overdue`, and `locked`/`needs` when a sequential learning path still holds
+the course closed.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" $LEARN/api/v1/courses/mine
+```
+
+```json
+{"courses":[{"id":"2f6c…","organization_id":"0f1a…","title":"Radio basics","summary":"How we use radios.",
+  "published":true,"self_enrol":true,"created_at":"2026-10-01T09:00:00Z","updated_at":"2026-10-02T09:00:00Z",
+  "default_lang":"en","languages":["en","nl"],"lang":"nl","enrolment_role":"learner",
+  "progress":{"total":4,"completed":1},"due_at":"2026-11-20T00:00:00Z","overdue":false,"locked":false}]}
+```
+
+### `POST /api/v1/courses`
+
+Body: `title` (required), `summary`, `self_enrol`. The course is created
+unpublished in the organisation where you may teach. Answers `201`.
+
+```sh
+curl -s -X POST $LEARN/api/v1/courses \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"Radio basics","summary":"How we use radios at the con.","self_enrol":true}'
+```
+
+```json
+{"id":"2f6c…","organization_id":"0f1a…","title":"Radio basics","summary":"How we use radios at the con.",
+ "published":false,"self_enrol":true,"created_by":"5b1e…","created_at":"2026-11-06T12:00:00Z",
+ "updated_at":"2026-11-06T12:00:00Z","default_lang":"en","languages":["en"]}
+```
+
+`403` without `course.teach`/`course.manage`; `422` `title is required`.
+
+### `GET /api/v1/courses/{course}`
+
+Enrolled. The full course as you see it: `sections[]` each with
+`activities[]` (your `completed` flag, quiz `standing`, `prerequisites`,
+`locked`/`needs`), your `progress`, `due_days` (course setting),
+`due_at`/`overdue` (yours), `awards_qualification` and your renewal `cycle`.
+Locked activities hide their body from learners. `403` `locked` while a
+sequential path holds the course closed.
+
+```json
+{"id":"2f6c…","title":"Radio basics","published":true,"default_lang":"en","languages":["en","nl"],
+ "enrolment_role":"learner","progress":{"total":2,"completed":1},"due_days":14,
+ "due_at":"2026-11-20T00:00:00Z","overdue":false,
+ "awards_qualification":{"id":"a1b2…","key":"radio","name":"Radio operator","valid_months":null},"cycle":1,
+ "sections":[{"id":"s1…","course_id":"2f6c…","title":"Basics","position":0,"activities":[
+   {"id":"a01…","section_id":"s1…","kind":"page","title":"Channels","body":"<p>Channel 1 is…</p>","position":0,
+    "pass_percent":50,"max_attempts":null,"shuffle_options":true,"completed":true,"prerequisites":[],"locked":false},
+   {"id":"a02…","section_id":"s1…","kind":"quiz","title":"Check","body":"Ten questions.","position":1,
+    "pass_percent":80,"max_attempts":3,"shuffle_options":true,"completed":false,
+    "quiz":{"attempts_used":1,"attempts_left":2,"best_score":6,"best_max_score":10,"best_percent":60,
+            "passed":false,"open_attempt_id":null},
+    "prerequisites":["a01…"],"locked":false}]}]}
+```
+
+### `PATCH /api/v1/courses/{course}`
+
+Staff. Any of:
+
+| Field | Notes |
+| --- | --- |
+| `title`, `summary`, `self_enrol` | `422` `title must not be empty`. |
+| `due_days` | Learners are due N days after enrolling; `null` clears. `422` `due_days must be positive (or null for no due date)`. |
+| `languages` | Languages offered, at most 20 codes (`en`, `nl`); always includes `default_lang`. |
+| `default_lang` | Language of the base text. |
+
+```sh
+curl -s -X PATCH $LEARN/api/v1/courses/2f6c… \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"due_days":14,"languages":["en","nl"]}'
+```
+
+### `POST …/publish`, `POST …/unpublish`
+
+Staff, no body. Publishing checks every quiz is ready; otherwise `422`
+`quiz "Check" is not ready: …`. Answers `200` with the course.
+
+### `POST /api/v1/courses/{course}/copy`
+
+Staff of the source. Copies the course for a new edition: content,
+prerequisites, question bank and quiz slots, media (sharing the stored
+files), languages and translations, feedback and team board settings.
+Session activities are copied without their time slots. The copy is
+unpublished and has no learner data (enrolments, attempts, completions,
+certificates); you become its trainer. Body:
+`title` (the new title), `include_group_links` (also copy the Keycloak group
+links). Answers `201` with the new course.
+
+```sh
+curl -s -X POST $LEARN/api/v1/courses/2f6c…/copy \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"Radio basics 2027","include_group_links":true}'
+```
+
+### Sections and activities
+
+- `POST /courses/{course}/sections` body `{"title":"Basics"}` → `201`
+  `{id, course_id, title, position}`; `422` `title is required`.
+- `PATCH /sections/{section}` body `{title?, position?}` → `200` section.
+- `POST /sections/{section}/activities` body:
+
+  | Field | Notes |
+  | --- | --- |
+  | `kind` | `page` (default), `quiz` or `session`. |
+  | `title` | Required. |
+  | `body` | Page HTML, or the quiz/session intro. |
+  | `pass_percent` | Quizzes, `0`–`100`, default `50`. |
+  | `max_attempts` | Quizzes, positive; leave out for unlimited. |
+  | `shuffle_options` | Quizzes, default `true`. |
+
+- `PATCH /activities/{activity}` takes `title`, `body`, `position`,
+  `pass_percent`, `max_attempts` (`null` = unlimited again),
+  `shuffle_options`.
+
+```sh
+curl -s -X POST $LEARN/api/v1/sections/s1…/activities \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"quiz","title":"Check","body":"Ten questions.","pass_percent":80,"max_attempts":3}'
+```
+
+### `PUT /api/v1/activities/{activity}/completion`
+
+Enrolled. Marks a **page** done or not done for you: body
+`{"completed":true}`. Answers `200` `{"activity_id":"a01…","completed":true}`.
+Quizzes complete by passing an attempt and sessions by attending (`400`
+otherwise). `403` `locked` when its prerequisites are not done.
+
+### `PUT /api/v1/activities/{activity}/prerequisites`
+
+Staff. Replaces what must be complete before this activity opens: body
+`{"requires":["a01…"]}` (activities of the same course; `[]` clears). Answers
+`200` `{"activity_id":"…","prerequisites":["a01…"]}`. `422` for self-reference,
+another course, or a loop.
+
+### Enrolments
+
+The enrolment object:
+
+```json
+{"id":"e7c1…","course_id":"2f6c…","user_id":"6f1d…","role":"learner","display_name":"Sam Example",
+ "email":"sam@example.org","created_at":"2026-11-06T12:00:00Z","progress":{"total":4,"completed":1},
+ "source":"manual","status":"active","left_group_at":null,"due_at":"2026-11-20T12:00:00Z","overdue":false}
+```
+
+`source` is `manual` or `group` (created by group sync). `status: inactive`
+means they left the synced group: no access, progress kept, rejoining
+reactivates.
+
+- `POST /courses/{course}/enrolments` body `{"user_id":"6f1d…","role":"learner"}`
+  (`role` `learner` (default) or `trainer`). `201`. `409`
+  `this person is already enrolled`; `404` `user not found` (they must have
+  signed in once or been synced).
+- `POST /courses/{course}/enrol`, no body: self-enrol as a learner. `403`
+  `this course does not allow self-enrolment` unless published with
+  `self_enrol`.
+- `PATCH /enrolments/{enrolment}` body `{"due_at":"2026-12-01T00:00:00Z"}`
+  or `{"due_at":null}`: override one learner's due date. `422`
+  `nothing to change (give due_at)`.
+- `DELETE /enrolments/{enrolment}` → `204`.
+
+```sh
+curl -s -X POST $LEARN/api/v1/courses/2f6c…/enrolments \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"user_id":"6f1d…","role":"learner"}'
+```
+
+## Quizzes
+
+A quiz activity draws questions from the course's **question bank**
+(questions grouped into **categories**). Its **slots** say which questions it
+asks: one fixed question, or N random questions from a category. Question
+kinds: `single` (one correct option), `multiple` (one or more), `hotspot`
+(tap the right places on a picture).
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/courses/{course}/question-categories` | staff | `200` `{categories}` |
+| POST | `/courses/{course}/question-categories` | staff | `201` category (`{name}`) |
+| PATCH | `/question-categories/{category}` | staff | `200` (`{name?, position?}`) |
+| DELETE | `/question-categories/{category}` | staff | `204`; `409` if its questions appear in attempts |
+| GET | `/question-categories/{category}/questions` | staff | `200` `{questions}` |
+| POST | `/question-categories/{category}/questions` | staff | `201` question |
+| PATCH | `/questions/{question}` | staff | `200` question |
+| DELETE | `/questions/{question}` | staff | `204`; `409` if it appears in attempts |
+| PUT | `/questions/{question}/regions` | staff | `200` question (hotspot regions) |
+| POST | `/questions/{question}/options` | staff | `201` the whole question |
+| PATCH | `/options/{option}` | staff | `200` the whole question |
+| DELETE | `/options/{option}` | staff | `200` the whole question |
+| GET | `/activities/{activity}/slots` | staff | `200` `{slots, problems}` |
+| POST | `/activities/{activity}/slots` | staff | `201` slot |
+| PATCH | `/slots/{slot}` | staff | `200` slot (`{position?, draw_count?}`) |
+| DELETE | `/slots/{slot}` | staff | `204` |
+| GET | `/activities/{activity}/quiz` | enrolled | `200` quiz info and your standing |
+| POST | `/activities/{activity}/attempts` | enrolled | `201` new attempt, `200` your open one |
+| DELETE | `/activities/{activity}/attempts` | staff | `200` `{"deleted":N}`: reset everyone's attempts |
+| GET | `/attempts/{attempt}` | its owner, or staff | `200` attempt |
+| POST | `/attempts/{attempt}/submit` | its owner | `200` graded attempt |
+| GET | `/courses/{course}/gradebook` | staff | `200` gradebook |
+| GET | `/courses/{course}/question-stats` | staff | `200` `{questions}` |
+| POST | `/courses/{course}/question-import?step=preview\|commit` | staff | `200` preview or result |
+| GET | `/question-import/csv-template` | signed in | `200` CSV file |
+
+### `POST /api/v1/question-categories/{category}/questions`
+
+| Field | Notes |
+| --- | --- |
+| `kind` | `single`, `multiple` or `hotspot`. |
+| `prompt` | Required. |
+| `feedback` | Shown after submitting. |
+| `points` | Positive, default `1`. |
+| `options` | `single`/`multiple`: at least two, each `{label, correct, media_id?}`; single needs exactly one correct. |
+| `media_id`, `feedback_media_id` | Pictures from the course [media library](#media) (images need alt text). A hotspot question needs `media_id`. |
+| `hotspot_clicks` | Hotspot: how many taps a learner gets (at least one per correct region). |
+| `regions` | Hotspot: `[{shape, coords, correct}]`, coordinates `0`–`1` of the image from the top left: `rect` `{x,y,w,h}`, `circle` `{cx,cy,r}` or `{cx,cy,rx,ry}`. |
+
+```sh
+curl -s -X POST $LEARN/api/v1/question-categories/c9a0…/questions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"single","prompt":"Which channel is for emergencies?","points":1,
+       "options":[{"label":"Channel 1","correct":true},{"label":"Channel 5","correct":false}]}'
+```
+
+```json
+{"id":"q11…","category_id":"c9a0…","kind":"single","prompt":"Which channel is for emergencies?","feedback":"",
+ "points":1,"position":0,"created_at":"2026-11-06T12:00:00Z","updated_at":"2026-11-06T12:00:00Z","locked":false,
+ "options":[{"id":"o1…","question_id":"q11…","label":"Channel 1","correct":true,"position":0,"media_id":null},
+            {"id":"o2…","question_id":"q11…","label":"Channel 5","correct":false,"position":1,"media_id":null}],
+ "media_id":null,"feedback_media_id":null,"hotspot_clicks":null,"regions":[]}
+```
+
+`locked: true` means the question was answered in a submitted attempt: its
+kind, image, taps and options can no longer change (`409`) until staff
+reset the quiz. `PATCH /questions/{question}` takes `kind`, `prompt`,
+`feedback`, `points`, `position`, and `media_id`, `feedback_media_id`,
+`hotspot_clicks` (each `null` clears).
+
+### Slots
+
+`POST /activities/{activity}/slots` body: either `{"question_id":"q11…"}`
+or `{"category_id":"c9a0…","draw_count":5}`. `GET …/slots` also returns
+`problems`, the reasons the quiz cannot be taken yet (`[]` when ready):
+
+```json
+{"slots":[{"id":"sl1…","activity_id":"a02…","position":0,"question_id":null,"category_id":"c9a0…",
+           "draw_count":5,"category_name":"Radio"}],
+ "problems":[]}
+```
+
+### Taking a quiz
+
+1. `GET /activities/{activity}/quiz` — title, intro, `pass_percent`,
+   `max_attempts`, `question_count`, your `standing` and past `attempts`.
+2. `POST /activities/{activity}/attempts` — starts an attempt (`201`), or
+   returns your open one (`200`). `409`
+   `you have used all your attempts on this quiz`, `this quiz has no questions yet`;
+   `403` `locked`.
+3. `POST /attempts/{attempt}/submit` with your answers; the graded attempt
+   comes back.
+
+```sh
+curl -s -X POST $LEARN/api/v1/attempts/at5…/submit \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"answers":{"q11…":["o1…"]},"taps":{"q12…":[{"x":0.42,"y":0.31}]}}'
+```
+
+```json
+{"id":"at5…","activity_id":"a02…","user_id":"6f1d…","started_at":"2026-11-06T12:00:00Z",
+ "submitted_at":"2026-11-06T12:04:00Z","score":2,"max_score":2,"percent":100,"passed":true,"pass_percent":80,
+ "questions":[{"question_id":"q11…","position":0,"kind":"single","prompt":"Which channel is for emergencies?",
+   "points":1,"options":[{"id":"o2…","label":"Channel 5"},{"id":"o1…","label":"Channel 1"}],
+   "chosen_option_ids":["o1…"],"correct":true,"points_awarded":1,"correct_option_ids":["o1…"],"feedback":""}]}
+```
+
+Before submitting, `correct`, `points_awarded`, `correct_option_ids`,
+`feedback` and hotspot `regions` are left out. `409`
+`this attempt has already been submitted`; `422` when an answer refers to a
+question or option not in the attempt.
+
+### Gradebook and statistics
+
+`GET /courses/{course}/gradebook` — one row per learner with each quiz's
+attempts, best percent and pass state, plus due date and progress:
+
+```json
+{"quizzes":[{"activity_id":"a02…","title":"Check","pass_percent":80,"max_attempts":3}],
+ "rows":[{"user_id":"6f1d…","display_name":"Sam Example","email":"sam@example.org",
+          "cells":[{"activity_id":"a02…","attempts":2,"best_percent":100,"passed":true,"in_progress":false}],
+          "due_at":"2026-11-20T12:00:00Z","overdue":false,"progress":{"total":2,"completed":2}}]}
+```
+
+`GET /courses/{course}/question-stats` — per question: `attempts`,
+`correct`, `percent_correct`, option `picks`, and for hotspots region `hits`,
+`hit_rate`, `taps`, `miss_taps`.
+
+### Question import
+
+`POST /courses/{course}/question-import?step=preview` then `?step=commit`,
+as `multipart/form-data`:
+
+| Field | Notes |
+| --- | --- |
+| `file` | Required, at most 32 MB. |
+| `format` | `moodle_xml`, `gift`, `aiken` or `csv`; detected when left out. |
+| `category_id` | Commit only: the category to import into (same course). |
+
+The preview saves nothing; send the same file again to commit. Embedded
+Moodle images are stored in the media library when object storage is on,
+otherwise skipped with a warning.
+
+```sh
+curl -s -X POST "$LEARN/api/v1/courses/2f6c…/question-import?step=preview" \
+  -H "Authorization: Bearer $TOKEN" -F "file=@questions.gift"
+```
+
+```json
+{"format":"gift","questions":[{"index":0,"kind":"single","prompt":"Which channel is for emergencies?",
+  "feedback":"","points":1,"options":[{"label":"Channel 1","correct":true},{"label":"Channel 5","correct":false}],
+  "images":[]}],"warnings":[]}
+```
+
+Commit (`-F "category_id=c9a0…"`) answers
+`{"format":"gift","imported":12,"skipped":1,"images":0,"warnings":[{"index":7,"message":"…"}]}`.
+`GET /question-import/csv-template` downloads the CSV layout.
+
+## In-person sessions
+
+A **session** activity has dated **slots** with a capacity. Learners book a
+slot (or join its waitlist), then **check in** at the venue by scanning a
+rotating QR code; attending completes the activity.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/activities/{activity}/session` | enrolled | `200` slots and your booking |
+| POST | `/activities/{activity}/session-slots` | staff | `201` slot |
+| PATCH | `/session-slots/{slot}` | staff | `200` slot |
+| DELETE | `/session-slots/{slot}` | staff | `204` |
+| POST | `/slots/{slot}/booking` | enrolled | `201` booked or waitlisted, `200` already yours |
+| DELETE | `/slots/{slot}/booking` | enrolled | `204` |
+| GET | `/slots/{slot}/checkin-code` | staff | `200` current QR code |
+| POST | `/slots/{slot}/checkin` | enrolled | `200` check-in result |
+| GET | `/slots/{slot}/roster` | staff | `200` roster |
+| PUT | `/signups/{signup}` | staff | `200` signup (`{status}`) |
+
+Session slots are **edited** under `/session-slots/{slot}` (because
+`/slots/{slot}` is the quiz-slot route) but **booked** under
+`/slots/{slot}/…`.
+
+```sh
+curl -s -X POST $LEARN/api/v1/activities/a03…/session-slots \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"starts_at":"2026-11-08T10:00:00Z","ends_at":"2026-11-08T12:00:00Z","location":"Hall B","capacity":12}'
+```
+
+```json
+{"id":"7a10…","activity_id":"a03…","starts_at":"2026-11-08T10:00:00Z","ends_at":"2026-11-08T12:00:00Z",
+ "location":"Hall B","capacity":12,"booked":0,"waitlist":0,"seats_left":12}
+```
+
+`422` `starts_at and ends_at are required`,
+`the session must end after it starts`, `capacity must be at least 1`.
+
+**Booking** answers a signup `{id, slot_id, activity_id, user_id, status,
+walk_in, created_at, waitlist_position?}` with `status` `booked` or
+`waitlist`. `409` when you hold another time of the same session, the
+session already started, or you already attended. Cancelling after the start
+or after attendance was recorded: `409`.
+
+**Check-in.** Staff show `GET /slots/{slot}/checkin-code`:
+
+```json
+{"code":"K3M7QX2A","expires_at":"2026-11-08T09:58:30Z","url":"https://learn.example.org/checkin/7a10…?code=K3M7QX2A","window_seconds":30}
+```
+
+The code rotates every 30 seconds (the previous one stays valid for one more
+step). Learners scan the QR code, which opens `url`; the web app then posts
+the code: `POST /slots/{slot}/checkin` `{"code":"K3M7QX2A"}`.
+Check-in opens 30 minutes before the start and closes at the end. People
+without a booking are checked in as **walk-ins** while seats are left.
+
+```json
+{"signup":{"id":"sg1…","slot_id":"7a10…","activity_id":"a03…","user_id":"6f1d…","status":"attended",
+           "walk_in":false,"created_at":"2026-11-01T09:00:00Z"},
+ "slot":{"id":"7a10…","activity_id":"a03…","starts_at":"2026-11-08T10:00:00Z","ends_at":"2026-11-08T12:00:00Z",
+         "location":"Hall B","capacity":12,"booked":9,"waitlist":0,"seats_left":3},
+ "course_id":"9e3d…","activity_title":"First aid practical","already_attended":false}
+```
+
+`400` `this check-in code is not valid any more; scan the QR code again`;
+`409` outside the window or when full.
+
+**Roster and attendance.** `GET /slots/{slot}/roster` lists signups with
+names; `PUT /signups/{signup}` `{"status":"attended"|"no_show"|"booked"}`
+corrects attendance by hand.
+
+## Media
+
+The **media library** holds a course's pictures, audio and video in an
+S3-compatible bucket. The browser uploads **directly to storage** with a
+presigned form; the backend never sees the bytes. Without `S3_ENDPOINT`
+these routes answer `503` `unavailable`.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/courses/{course}/media?filter=unused` | staff | `200` `{media}` |
+| POST | `/courses/{course}/media/uploads` | staff | `201` upload ticket |
+| POST | `/media/{media}/complete` | staff | `200` media |
+| GET | `/media/{media}` | staff, or enrolled learners who can see it | `302` to a 5-minute link |
+| GET | `/media/{media}/url` | same | `200` `{url, expires_at}` |
+| PATCH | `/media/{media}` | staff | `200` media (`{alt_text?, name?}`) |
+| DELETE | `/media/{media}` | staff | `204`; `409` while in use |
+| GET | `/activities/{activity}/media` | enrolled | `200` `{attachments}` |
+| POST | `/activities/{activity}/media` | staff | `201` attachment |
+| PATCH | `/activity-media/{attachment}` | staff | `200` (`{caption?, position?}`) |
+| DELETE | `/activity-media/{attachment}` | staff | `204` |
+
+Accepted types and limits: images `png`, `jpeg`, `webp`, `gif` up to 10 MB;
+audio `mpeg`/`mp3`, `mp4`/`m4a`, `ogg` up to 20 MB; video `mp4`, `webm` up to
+200 MB. Images need **alt text** before they can be used.
+
+**Upload in three steps:**
+
+```sh
+# 1. Ask for an upload ticket
+curl -s -X POST $LEARN/api/v1/courses/2f6c…/media/uploads \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"filename":"radio.jpg","content_type":"image/jpeg","size_bytes":183422,"alt_text":"A handheld radio"}'
+```
+
+```json
+{"media":{"id":"m1…","course_id":"2f6c…","kind":"image","content_type":"image/jpeg","size_bytes":183422,
+          "status":"pending","alt_text":"A handheld radio","name":"radio.jpg","created_at":"…","updated_at":"…",
+          "usage_count":0,"unused":true,"upload_unfinished":false},
+ "url":"https://s3.example.org/learn-data","fields":{"key":"…","policy":"…","x-amz-signature":"…"},
+ "expires_at":"2026-11-06T12:15:00Z"}
+```
+
+```sh
+# 2. Upload the file to storage with the returned fields (valid 15 minutes)
+curl -s -X POST "https://s3.example.org/learn-data" -F key=… -F policy=… -F x-amz-signature=… -F file=@radio.jpg
+# 3. Tell Learn it arrived
+curl -s -X POST -H "Authorization: Bearer $TOKEN" $LEARN/api/v1/media/m1…/complete
+```
+
+Step 3 answers the media with `"status":"ready"`; `409`
+`the file hasn't arrived in storage yet`, `422` when the stored type or size
+does not match.
+
+**Page attachments.** `POST /activities/{activity}/media` (pages only) body
+`{"media_id":"m1…","caption":"…"}` or
+`{"external_url":"https://www.youtube.com/watch?v=…","caption":"…"}`; only
+YouTube and Vimeo links can be embedded. The attachment comes back with
+`embed_url` and `provider` for external videos.
+
+## Keycloak groups and group sync
+
+A course or path can be **linked to a Keycloak group**: every member is
+enrolled automatically. Learn keeps links up to date in two ways:
+
+- **At sign-in**, from the `groups` claim in the person's token (always on).
+- **Every 5 minutes** and on "Sync now", by reading group members from the
+  Keycloak admin API with the read-only client `learn-provisioner`. This
+  needs all four `KEYCLOAK_*` settings ([Configuration](configuration.md));
+  without them the routes marked 503 below answer
+  `Keycloak group sync is not configured`.
+
+Members who leave every linked group become `inactive` (never deleted;
+progress is kept).
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/groups` | `course.manage` or `course.teach` | `200` `{groups:[{id,name,path}]}`; 503 without sync |
+| GET | `/courses/{course}/group-links` | enrol staff | `200` `{links, sync_available}` |
+| POST | `/courses/{course}/group-links` | enrol staff | `201` `{link, sync, sync_error?}` |
+| DELETE | `/courses/{course}/group-links?group=NAME` | enrol staff | `200` `{deactivated}` |
+| POST | `/courses/{course}/group-links/sync` | enrol staff | `200` sync result; 503 without sync |
+
+Path links use the same shapes under `/paths/{path}/group-links` (path
+admin), listed with [Paths](#learning-paths).
+
+```sh
+curl -s -X POST $LEARN/api/v1/courses/2f6c…/group-links \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"group_name":"volunteers-radio"}'
+```
+
+```json
+{"link":{"course_id":"2f6c…","group_name":"volunteers-radio","created_at":"2026-11-06T12:00:00Z",
+         "last_synced_at":"2026-11-06T12:00:01Z","last_sync_error":"","members":14,"active":14},
+ "sync":{"courses":1,"groups":1,"members":14,"users_created":3,"enrolled":14,"reactivated":0,"deactivated":0,"errors":[]}}
+```
+
+`422` `there is no Keycloak group called …` when sync is on and the group
+does not exist. If the first sync fails, the link is still made and
+`sync_error` says to try **Sync now**.
+
+## Qualifications and certificates
+
+A **qualification** (for example *First aid*) is earned by finishing a
+course or path that awards it. Each award issues a **certificate** with a
+public verify code; it can expire (`valid_months`) and be renewed, or be
+revoked.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/qualifications` | `settings.manage`, `course.manage` or `course.teach` | `200` `{qualifications}` |
+| POST | `/qualifications` | `settings.manage` | `201` qualification |
+| PATCH | `/qualifications/{qualification}` | `settings.manage` | `200` |
+| DELETE | `/qualifications/{qualification}` | `settings.manage` | `204`; `409` once certificates exist |
+| GET | `/qualifications/{qualification}/certificates` | `settings.manage` | `200` `{qualification, certificates}` |
+| PUT | `/courses/{course}/qualification` | staff | `200` |
+| POST | `/courses/{course}/renew` | learner on the published course | `200` `{course_id, cycle, due_at}` |
+| GET | `/me/qualifications` | signed in | `200` `{qualifications}` |
+| GET | `/certificates/{certificate}` | holder, `settings.manage`/`course.manage`, awarding course staff | `200`; others `404` |
+| POST | `/certificates/{certificate}/revoke` | `settings.manage` | `200` certificate |
+
+### `POST /api/v1/qualifications`
+
+| Field | Notes |
+| --- | --- |
+| `key` | Required, unique: lowercase letters, digits, `-`, `_`, `.` (`first-aid`). HR stores role requirements by this key. |
+| `name` | Required. |
+| `description` | |
+| `valid_months` | `1`–`1200`; `null` = never expires. |
+
+```sh
+curl -s -X POST $LEARN/api/v1/qualifications \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"first-aid","name":"First aid","valid_months":24}'
+```
+
+```json
+{"id":"a1b2…","organization_id":"0f1a…","key":"first-aid","name":"First aid","description":"",
+ "valid_months":24,"created_at":"2026-11-06T12:00:00Z","updated_at":"2026-11-06T12:00:00Z","courses":0,"certificates":0}
+```
+
+`409` `a qualification with this key already exists`.
+
+### `PUT /api/v1/courses/{course}/qualification`
+
+Staff. Body `{"qualification_id":"a1b2…"}` or `{"qualification_id":null}`.
+Answers `{"course_id":"2f6c…","awards_qualification":{"id":"a1b2…","key":"first-aid","name":"First aid","valid_months":24}}`.
+
+### `GET /api/v1/me/qualifications`
+
+Your latest certificate per qualification, with renewal state:
+
+```json
+{"qualifications":[{"id":"ce1…","user_id":"6f1d…","display_name":"Sam Example","organization_id":"0f1a…",
+  "qualification_id":"a1b2…","qualification_key":"first-aid","qualification_name":"First aid",
+  "qualification_description":"","course_id":"9e3d…","course_title":"First aid","cycle":1,
+  "issued_at":"2026-05-01T10:00:00Z","expires_at":"2028-05-01T00:00:00Z","verify_code":"K7M2Q4XZ9A3B",
+  "revoked_at":null,"revoked_reason":"","status":"valid","expiring_soon":false,
+  "verify_url":"https://learn.example.org/verify/K7M2Q4XZ9A3B",
+  "renewable_from":"2028-03-02T00:00:00Z","renewable":false,"renewal_in_progress":false}]}
+```
+
+Renewal opens 60 days before expiry; `expiring_soon` is true in the last 30
+days. `POST /courses/{course}/renew` starts a new cycle on the course; `409`
+`renewal opens on 2 Mar 2028`, `this qualification does not expire`, or
+`there is nothing to renew yet: finish the course first`.
+
+### `POST /api/v1/certificates/{certificate}/revoke`
+
+`settings.manage`. Body `{"reason":"Issued in error"}` (required). The
+certificate's status becomes `revoked`; the public verify page and HR
+holdings stop counting it. `409` `this certificate is already revoked`.
+
+## Learning paths
+
+A **learning path** is an ordered bundle of courses; **sequential** paths
+unlock each course only after the previous one is done. Finishing every
+course can award a qualification.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/me/paths` | signed in | `200` `{paths, available}` |
+| GET | `/paths` | `course.manage` | `200` `{paths}` |
+| POST | `/paths` | `course.manage` | `201` path |
+| GET | `/paths/{path}` | path admin | `200` path |
+| PATCH | `/paths/{path}` | path admin | `200` path |
+| DELETE | `/paths/{path}` | path admin | `204` |
+| PUT | `/paths/{path}/courses` | path admin | `200` path (`{course_ids:[…]}` replaces the order) |
+| POST | `/paths/{path}/courses` | path admin | `201` path (`{course_id}` appends); `409` if already on it |
+| DELETE | `/paths/{path}/courses/{course}` | path admin | `200` path |
+| GET | `/paths/{path}/enrolments` | path admin | `200` `{enrolments}` |
+| POST | `/paths/{path}/enrolments` | path admin | `201` (`{user_id}`) |
+| POST | `/paths/{path}/enrol` | signed in | `201` (self-enrol) |
+| DELETE | `/path-enrolments/{enrolment}` | path admin | `204` |
+| GET | `/paths/{path}/group-links` | path admin | `200` `{links, sync_available}` |
+| POST | `/paths/{path}/group-links` | path admin | `201` `{link, sync, sync_error?}` |
+| DELETE | `/paths/{path}/group-links?group=NAME` | path admin | `200` `{deactivated}` |
+| POST | `/paths/{path}/group-links/sync` | path admin | `200`; 503 without sync |
+
+Body for create and update: `name` (required on create), `description`,
+`sequential`, `self_enrol`, `awards_qualification_id` (`null` clears).
+
+```sh
+curl -s -X POST $LEARN/api/v1/paths \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Medic onboarding","sequential":true,"awards_qualification_id":"a1b2…"}'
+curl -s -X PUT $LEARN/api/v1/paths/p1…/courses \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"course_ids":["9e3d…","2f6c…"]}'
+```
+
+```json
+{"id":"p1…","organization_id":"0f1a…","name":"Medic onboarding","description":"","sequential":true,"self_enrol":false,
+ "awards_qualification_id":"a1b2…","awards_qualification":{"id":"a1b2…","key":"first-aid","name":"First aid","valid_months":24},
+ "created_at":"…","updated_at":"…","active_enrolments":0,
+ "courses":[{"course_id":"9e3d…","title":"First aid","published":true,"position":0},
+            {"course_id":"2f6c…","title":"Radio basics","published":true,"position":1}]}
+```
+
+Enrolling someone on a path enrols them on all its courses. Path enrolments
+carry `source`, `status`, `cycle`, `courses_done`, `courses_total`,
+`complete`. `403` `this path does not allow self-enrolment` on
+`POST /paths/{path}/enrol` unless `self_enrol` is on; `409`
+`this person is already on the path`.
+
+### `GET /api/v1/me/paths`
+
+Signed in. Your paths, each course with your `progress`, `complete`, and
+`locked`/`needs` on sequential paths, plus `available`: self-enrol paths you
+can still join.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" $LEARN/api/v1/me/paths
+```
+
+```json
+{"paths":[{"id":"p1…","name":"Medic onboarding","description":"","sequential":true,"source":"manual",
+  "awards_qualification":{"id":"a1b2…","key":"first-aid","name":"First aid","valid_months":24},
+  "courses":[{"course_id":"9e3d…","title":"First aid","published":true,"position":0,
+              "progress":{"total":3,"completed":3},"complete":true,"locked":false},
+             {"course_id":"2f6c…","title":"Radio basics","published":true,"position":1,
+              "progress":{"total":4,"completed":0},"complete":false,"locked":false}],
+  "courses_done":1,"courses_total":2,"complete":false,"certificate_id":null}],
+ "available":[]}
+```
+
+## Engagement, reports and admin
+
+### Team boards
+
+Team boards show **per-group completion counts, never names**. Groups with
+fewer than 3 members show `"hidden_reason":"too_small"` instead of numbers.
+
+| Method | Path | Who |
+| --- | --- | --- |
+| GET | `/courses/{course}/team-board` | staff; enrolled people when enabled (else `404`) |
+| GET | `/courses/{course}/team-board/settings` | staff |
+| PUT | `/courses/{course}/team-board/settings` | staff, body `{enabled?, groups?}` (at most 50 groups) |
+| GET | `/qualifications/{qualification}/team-board` | `settings.manage`/`course.manage`; holders and people on awarding courses when enabled |
+| GET | `/qualifications/{qualification}/team-board/settings` | `settings.manage` |
+| PUT | `/qualifications/{qualification}/team-board/settings` | `settings.manage` |
+| GET | `/me/teams` | signed in: your groups on enabled boards, `{teams:[…]}` |
+
+```json
+{"target_type":"course","target_id":"2f6c…","title":"Radio basics","enabled":true,
+ "groups":[{"group_name":"volunteers-radio","members_count":14,"complete_count":9,"percent":64},
+           {"group_name":"stage-crew","members_count":null,"complete_count":null,"percent":null,"hidden_reason":"too_small"}]}
+```
+
+### Feedback
+
+| Method | Path | Who | Notes |
+| --- | --- | --- | --- |
+| GET | `/courses/{course}/feedback` | staff | Settings plus averages and comments for the course and each session. |
+| PUT | `/courses/{course}/feedback-settings` | staff | `{enabled?, anonymous?}` → `{enabled, anonymous}`. |
+| GET | `/courses/{course}/feedback/mine` | enrolled | What you may rate: `{course, sessions}` each with `eligible`, `submitted`. |
+| POST | `/courses/{course}/feedback` | enrolled | `{activity_id?, rating, comment}` → `201` `{"ok":true}`. |
+
+`rating` is `1`–`5`; leave `activity_id` out to rate the course (after
+finishing it) or give a session's id (after attending it). `403` when
+feedback is off or you are not eligible yet; `409`
+`you have already given feedback on this`. With `anonymous` on, comments
+carry no `display_name`.
+
+```sh
+curl -s -X POST $LEARN/api/v1/courses/2f6c…/feedback \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"rating":5,"comment":"Clear and short."}'
+```
+
+### Translations
+
+The staff translation editor. `GET` returns every translatable field of the
+course (sections, activities, questions, options, captions), qualification
+or path with its default text, the translation and a `missing` flag; `PUT`
+upserts in bulk (`text: ""` removes one).
+
+| Method | Path | Who |
+| --- | --- | --- |
+| GET, PUT | `/courses/{course}/translations?lang=nl` | staff |
+| GET, PUT | `/qualifications/{qualification}/translations?lang=nl` | `settings.manage` |
+| GET, PUT | `/paths/{path}/translations?lang=nl` | path admin |
+
+```sh
+curl -s -X PUT "$LEARN/api/v1/courses/2f6c…/translations?lang=nl" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"translations":[{"entity_type":"course","entity_id":"2f6c…","field":"title","text":"Radio basis"}]}'
+```
+
+```json
+{"lang":"nl","default_lang":"en","languages":["en","nl"],"missing_count":11,
+ "fields":[{"entity_type":"course","entity_id":"2f6c…","field":"title","context":"",
+            "default":"Radio basics","text":"Radio basis","missing":false}]}
+```
+
+`context` is a hint for translators about where the field sits (it may be
+empty). `entity_type` is one of `course`, `section`, `activity`, `question`,
+`option`, `media`, `activity_media`, `path`, `qualification`. `422`
+`add nl to the course languages first`,
+`the default language is edited in the course itself, not as a translation`.
+
+### Reports
+
+| Method | Path | Who |
+| --- | --- | --- |
+| GET | `/reports/scope` | signed in: what you may report on, `{all, qualifications, courses}` |
+| GET | `/reports/completion?course=&group=&status=&format=csv` | `report.view`, `course.manage`, or `course.teach` (own courses only) |
+| GET | `/reports/qualifications?qualification=&group=&status=&format=csv` | `report.view` |
+
+Completion `status` filter: `done`, `in_progress`, `not_started`, `overdue`.
+Qualification `status`: `valid`, `expiring`, `expired`, `missing` (`missing`
+= member of a linked group without the qualification). `&format=csv`
+downloads a CSV; text cells starting with `=`, `+`, `-` or `@` get a leading
+`'` so spreadsheets do not run them as formulas.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" "$LEARN/api/v1/reports/completion?course=2f6c…&status=overdue"
+```
+
+```json
+{"rows":[{"course_id":"2f6c…","course_title":"Radio basics","user_id":"6f1d…","display_name":"Sam Example",
+  "email":"sam@example.org","source":"group","enrolled_at":"2026-10-01T09:00:00Z","due_at":"2026-10-15T09:00:00Z",
+  "completed":1,"total":4,"last_activity_at":"2026-10-03T18:00:00Z","status":"overdue"}]}
+```
+
+`403` `you can only report on courses you teach` for a trainer asking about
+another course.
+
+### `POST /api/v1/reminders/run`
+
+`settings.manage`. Sends due reminders now instead of waiting for the hourly
+run (due dates, upcoming sessions, expiring certificates; each at most once
+per person and subject).
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" $LEARN/api/v1/reminders/run
+```
+
+```json
+{"ran":true,"channels":["email"],"sent":{"email":3},"already_sent":12,"failed":0}
+```
+
+`ran:false` means another replica was running reminders; `channels: []`
+means no notification channel is configured.
+
+## Den pairing
+
+`settings.manage`. Same contract as every module ([Pairing](../../concepts/pairing.md)):
+
+| Method | Path | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| GET | `/den` | | `200` `{paired, den_base_url?, module_id?, paired_at?, synced_at?, last_error?}` | |
+| POST | `/den/pair` | `{"pairing_url":"…"}` | `200` status | `422` `pairing_failed` |
+| POST | `/den/sync` | | `200` status | `409`/`502` `sync_failed` |
+| DELETE | `/den/pair` | | `204` | |
+
+```sh
+curl -s -X POST $LEARN/api/v1/den/pair \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"pairing_url":"https://den.example.org/pair/abc123…"}'
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| `404` on a course you just created, for someone else | Unpublished courses are invisible to non-staff. Publish it, or enrol them as `trainer`. |
+| `403` `you are not enrolled in this course` | Enrol the person, turn on `self_enrol`, or link a Keycloak group they are in. |
+| `403` `locked` | `details.needs` lists the activities or courses to finish first. |
+| HR says "Learn unreachable" or holdings `401` | `LEARN_SERVICE_TOKEN` differs between HR and Learn, or is empty on Learn (`404`). See [Secrets](../../operations/secrets.md). |
+| Holdings `[]` for someone who has the certificate | They are matched by token subject under `OIDC_ISSUER_URL`; check HR sends the Keycloak user id, and that the certificate is not expired or revoked. |
+| `503` `Keycloak group sync is not configured` | Set all four `KEYCLOAK_*` variables. Links still work from sign-in groups without them. |
+| `503` on media | `S3_ENDPOINT` is empty. |
+| Media upload works but images do not show in the browser | Presigned links point at an in-cluster address; set `S3_PUBLIC_BASE_URL`. |
+| Den's portal gets `401` on `/api/portal/todos` | Add Den's client id (for example `den-spa`) to `OIDC_EXTRA_AUDIENCES`. |
+| `429` on verify | More than 30 checks a minute from one address; wait a minute. |
+| `400` `invalid JSON: json: unknown field` | Learn rejects unknown fields; check the spelling. |

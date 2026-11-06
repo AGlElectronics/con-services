@@ -1,0 +1,123 @@
+{{- $ns := .Values.namespace -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rally-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rally-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# The Rally server never migrates (ADR-0003); the migrate initContainer
+# applies pending migrations and exits before the server starts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rally-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rally
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "rally.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: rally-backend
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "rally.podSecurity" . | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      {{- with .Values.backend.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: migrate
+          image: {{ include "rally.image" (dict "root" . "name" "migrate") | quote }}
+          imagePullPolicy: {{ .Values.image.migrate.pullPolicy }}
+          env:
+            - name: APP_ENV
+              value: {{ .Values.config.APP_ENV | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret is required" .Values.existingSecret }}
+                  key: DATABASE_URL
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "rally.containerSecurity" . | nindent 12 }}
+      containers:
+        - name: backend
+          image: {{ include "rally.image" (dict "root" . "name" "backend") | quote }}
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          {{- with .Values.backend.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "rally.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: access-config
+              mountPath: {{ .Values.accessConfig.mountPath }}
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: access-config
+          configMap:
+            name: {{ .Values.accessConfig.existingConfigMap }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+{{ include "rally.webDeployment" (dict "root" . "name" "rally-frontend" "component" "frontend" "image" (include "rally.image" (dict "root" . "name" "frontend")) "replicas" .Values.frontend.replicas) }}
+{{- if .Values.submit.enabled }}
+---
+{{ include "rally.webDeployment" (dict "root" . "name" "rally-submit" "component" "submit" "image" (printf "%s:%s" (required "submit.image.repository is required when submit.enabled" .Values.submit.image.repository) (required "submit.image.tag is required when submit.enabled" .Values.submit.image.tag)) "replicas" .Values.submit.replicas) }}
+{{- end }}

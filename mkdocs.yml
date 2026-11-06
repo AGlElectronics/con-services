@@ -1,0 +1,172 @@
+site_name: Con Services
+site_description: Self-hosted tools for running conventions.
+site_url: https://aglelectronics.github.io/con-services/
+repo_url: https://github.com/AGlElectronics/con-services
+repo_name: AGlElectronics/con-services
+edit_uri: edit/main/docs/
+copyright: Con Services contributors
+
+docs_dir: docs
+exclude_docs: |
+  requirements.txt
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - How the platform starts: getting-started/how-the-platform-starts.md
+      - Run Den on Kubernetes: getting-started/den-quickstart.md
+      - Run one module on Kubernetes: getting-started/standalone-kubernetes.md
+      - Troubleshooting: getting-started/troubleshooting.md
+  - Concepts:
+      - concepts/index.md
+      - Design principles: concepts/design-principles.md
+      - Architecture: concepts/architecture.md
+      - Authentication: concepts/authentication.md
+      - Pairing: concepts/pairing.md
+      - API conventions: concepts/api-conventions.md
+      - Glossary: concepts/glossary.md
+  - Proposals:
+      - proposals/index.md
+      - Staff communications: proposals/staff-communications.md
+  - Modules:
+      - modules/index.md
+      - Den:
+          - modules/den/index.md
+          - Admin guide: modules/den/admin-guide.md
+          - Configuration: modules/den/configuration.md
+          - API reference: modules/den/api.md
+      - HR:
+          - modules/hr/index.md
+          - Setup: modules/hr/setup.md
+          - Admin guide: modules/hr/admin-guide.md
+          - Configuration: modules/hr/configuration.md
+          - API reference: modules/hr/api.md
+      - Rally (Events):
+          - modules/rally/index.md
+          - Setup: modules/rally/setup.md
+          - Admin guide: modules/rally/admin-guide.md
+          - Configuration: modules/rally/configuration.md
+          - API reference: modules/rally/api.md
+      - Stash:
+          - modules/stash/index.md
+          - Setup: modules/stash/setup.md
+          - Admin guide: modules/stash/admin-guide.md
+          - Configuration: modules/stash/configuration.md
+          - API reference: modules/stash/api.md
+      - Finance:
+          - modules/finance/index.md
+          - Setup: modules/finance/setup.md
+          - Configuration: modules/finance/configuration.md
+          - API reference: modules/finance/api.md
+      - Learn:
+          - modules/learn/index.md
+          - Setup: modules/learn/setup.md
+          - Configuration: modules/learn/configuration.md
+          - API reference: modules/learn/api.md
+      - Wiki:
+          - modules/wiki/index.md
+          - Setup: modules/wiki/setup.md
+          - Admin guide: modules/wiki/admin-guide.md
+          - Configuration: modules/wiki/configuration.md
+          - API reference: modules/wiki/api.md
+      - Desk:
+          - modules/desk/index.md
+          - Setup: modules/desk/setup.md
+          - Configuration: modules/desk/configuration.md
+          - API reference: modules/desk/api.md
+      - Tasks:
+          - modules/tasks/index.md
+          - Setup: modules/tasks/setup.md
+          - Admin guide: modules/tasks/admin-guide.md
+          - Configuration: modules/tasks/configuration.md
+          - API reference: modules/tasks/api.md
+  - Operations:
+      - operations/index.md
+      - Running on Kubernetes: operations/running.md
+      - Installing modules with Helm: operations/helm.md
+      - Versions and upgrades: operations/versioning.md
+      - Network policies and isolation: operations/network-policies.md
+      - Secrets: operations/secrets.md
+      - Databases, backups and restore: operations/databases-and-backups.md
+      - Disaster recovery: operations/disaster-recovery.md
+      - Logs, health and monitoring: operations/observability.md
+      - Production and security: operations/production.md
+      - Full stack on Docker: operations/docker-production.md
+  - Contributing:
+      - contributing/index.md
+      - Local development with Docker Compose: contributing/local-development.md
+      - Changelogs: contributing/changelog.md

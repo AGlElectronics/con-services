@@ -1,0 +1,13 @@
+apiVersion: v2
+name: hr
+description: >-
+  HR, the Con Services people module (onboarding, offboarding, departments,
+  account provisioning in Keycloak). STUB: first scaffold, not yet tested
+  on a cluster.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
+home: https://aglelectronics.github.io/con-services/modules/hr/
+sources:
+  - https://github.com/AGlElectronics/hr
+  - https://github.com/AGlElectronics/con-services

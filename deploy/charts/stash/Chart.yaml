@@ -1,0 +1,13 @@
+apiVersion: v2
+name: stash
+description: >-
+  Stash, the Con Services inventory module (items, sign-outs, Lost & Found).
+  STUB: first scaffold, not yet tested on a cluster. Mirrors
+  deploy/kubernetes/modules/stash/.
+type: application
+version: 0.1.0
+appVersion: "1.0.0-1"
+home: https://aglelectronics.github.io/con-services/modules/stash/
+sources:
+  - https://github.com/AGlElectronics/stash
+  - https://github.com/AGlElectronics/con-services

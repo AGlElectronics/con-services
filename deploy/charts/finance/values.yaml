@@ -1,0 +1,107 @@
+# Finance Helm chart values. STUB (chart version 0.1.0).
+# Docs: https://aglelectronics.github.io/con-services/modules/finance/setup/
+#
+# The namespace is NOT created by this chart. Create it first with the
+# labels the platform NetworkPolicies expect (see the setup page):
+#   conservices.io/tier: module
+#   pod-security.kubernetes.io/enforce: restricted
+
+namespace: conservices-finance
+
+image:
+  backend:
+    repository: ghcr.io/aglelectronics/finance-backend
+    # MAJOR.MINOR.PATCH-BUILD. Never "latest". Use the same tag for all three.
+    tag: "1.0.0-1"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ghcr.io/aglelectronics/finance-frontend
+    tag: "1.0.0-1"
+    pullPolicy: IfNotPresent
+  # One-shot migrator (/migrate). Runs as an initContainer of the backend.
+  migrate:
+    repository: ghcr.io/aglelectronics/finance-migrate
+    tag: "1.0.0-1"
+    pullPolicy: IfNotPresent
+
+# Name of an existing Secret (created by your secret manager, for example an
+# ExternalSecret) with the key DATABASE_URL. This chart never creates Secrets.
+existingSecret: finance-secrets
+
+# Finance has no access config file: who may use it is the
+# FINANCE_ACCESS_GROUPS setting below.
+accessConfig:
+  enabled: false
+  existingConfigMap: ""
+  mountPath: /etc/finance
+  fileName: access-config.toml
+
+# Non-secret settings, rendered into the ConfigMap "<release>-config".
+# Every key is documented on the Finance configuration page.
+config:
+  APP_ENV: production
+  APP_BASE_URL: https://finance.conservices.test
+  HTTP_ADDR: ":8080"
+  AUTH_MODE: oidc
+  OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  OIDC_CLIENT_ID: finance-spa
+  OIDC_AUDIENCE: finance-spa
+  # Keycloak groups allowed to use Finance at all.
+  FINANCE_ACCESS_GROUPS: finance-admin
+  CORS_ALLOWED_ORIGINS: https://finance.conservices.test
+  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+
+backend:
+  # The app keeps no state in the process. Keep 1 for now anyway: every pod
+  # runs the migrate initContainer, and pods starting together would migrate
+  # at the same time.
+  replicas: 1
+  singleReplica: false
+  singleReplicaReason: ""
+  port: 8080
+  terminationGracePeriodSeconds: 30
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  hostAliases: []
+
+frontend:
+  replicas: 2
+  port: 8080
+  clientMaxBodySize: 10m
+  websocketPathRegex: ""
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: finance.conservices.test
+  tlsSecretName: conservices-tls
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+  ingressControllerNamespace: ingress-nginx
+  oidcViaIngressController: true
+  den:
+    enabled: true
+    namespace: conservices-den
+    port: 8080
+  # Finance stores no files, so it needs PostgreSQL only.
+  data:
+    enabled: true
+    namespace: conservices-data
+    postgresPort: 5432
+    s3: false
+    s3Port: 9000
+  # HR reads GET /api/role-catalog.
+  allowFromNamespaces:
+    - conservices-hr
+  keycloakAdmin:
+    enabled: false
+  extraEgress: []

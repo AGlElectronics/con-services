@@ -1,0 +1,170 @@
+{{- $ns := .Values.namespace -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: stash-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "stash.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: stash-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "stash.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+# Stash migrates its database when it starts: one replica, Recreate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stash-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "stash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stash
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "stash.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: stash-backend
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "stash.podSecurity" . | nindent 8 }}
+        runAsUser: 65532
+        runAsGroup: 65532
+      {{- with .Values.backend.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.image.backend.repository }}:{{ required "image.backend.tag is required (MAJOR.MINOR.PATCH-BUILD)" .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ required "existingSecret is required" .Values.existingSecret }}
+          {{- with .Values.backend.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "stash.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: access-config
+              mountPath: {{ .Values.accessConfig.mountPath }}
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: access-config
+          configMap:
+            name: {{ .Values.accessConfig.existingConfigMap }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stash-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "stash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stash
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "stash.labels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: stash-frontend
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "stash.podSecurity" . | nindent 8 }}
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: frontend
+          image: "{{ .Values.image.frontend.repository }}:{{ required "image.frontend.tag is required (MAJOR.MINOR.PATCH-BUILD)" .Values.image.frontend.tag }}"
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- include "stash.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /run
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ .Release.Name }}-frontend-nginx
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

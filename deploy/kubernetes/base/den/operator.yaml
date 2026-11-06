@@ -1,0 +1,102 @@
+# Den operator: the only component with the PostgreSQL superuser login.
+# Creates/drops module databases for Den and runs the daily encrypted
+# backup. Only den-backend may reach it (see networkpolicies.yaml).
+#
+# Exactly ONE replica: the backup scheduler and its lock live in the process.
+# It does not talk to the Kubernetes API, so it needs no RBAC.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: den-operator
+  namespace: conservices-den
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: den-operator
+  namespace: conservices-den
+  labels:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: operator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: den
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: den
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: den-operator
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # the "postgres" user of the postgres:16-alpine runtime image
+        runAsUser: 70
+        runAsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: ghcr.io/aglelectronics/den-operator:1.0.0-1
+          envFrom:
+            - configMapRef:
+                name: den-operator-config
+            - secretRef:
+                name: den-operator-secrets
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Dumps are written here before upload: size it to your databases.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: den-operator
+  namespace: conservices-den
+  labels:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: operator
+spec:
+  selector:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: operator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

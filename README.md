@@ -2,6 +2,14 @@
 
 Docker Desktop stack for **Stash**, **HR**, **Den**, **Events (Rally)**, **Learn**, **Finance**, **Desk**, **Tasks**, **Wiki**, shared **Postgres**, **MinIO (dev only)**, and **Keycloak (dev only)**.
 
+## Documentation
+
+**<https://aglelectronics.github.io/con-services/>**: getting started, concepts, module guides, configuration and API references, and operations. The sources are in [docs/](docs) ([how to contribute](docs/contributing/index.md)). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+Installations run on **Kubernetes** with published, versioned images (`ghcr.io/aglelectronics/<module>-<component>:<MAJOR.MINOR.PATCH-BUILD>`), using the manifests in [deploy/kubernetes/](deploy/kubernetes). Pick your path on [Getting started → Choose your path](https://aglelectronics.github.io/con-services/getting-started/#choose-your-path): full platform on Kubernetes, one module on Kubernetes, full stack on Docker for production, or this Docker Compose stack for development.
+
+**This README describes the Docker Compose development stack.** It uses public passwords and builds from source; never use it for real data.
+
 ## Quick start
 
 ```powershell
@@ -126,7 +134,7 @@ Then open Stash at http://localhost:3000 → Login → Keycloak → `admin` / `a
 
 Den's **operator** (`den-operator`, profile `den`) is the only service holding the Postgres admin login. From Den admin → **Modules** it creates a database and login for a new module, and when a module is removed it can drop that database. Removing asks twice and backs the database up first. It also takes a daily **encrypted** backup of every database (Den, Keycloak and all modules), the logins and the module buckets into `conservices-backups`. Status, retention, "Back up now" and downloads are on Den admin → **Backups**.
 
-**Read [docs/operations.md](docs/operations.md)** before relying on it:
+**Read [Databases, backups and restore](docs/operations/databases-and-backups.md)** before relying on it:
 
 - what is and isn't backed up;
 - the encryption key (lose it and the backups are unreadable);

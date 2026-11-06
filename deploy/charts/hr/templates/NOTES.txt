@@ -1,0 +1,22 @@
+HR {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namespace }}.
+
+1. Watch the pods start. The backend pod shows Init:0/1 while the migrate
+   initContainer applies database migrations:
+
+     kubectl get pods -n {{ .Values.namespace }} -w
+
+2. Check readiness (database reachable):
+
+     kubectl exec -n {{ .Values.namespace }} deploy/hr-frontend -- wget -qO- http://hr-backend:{{ .Values.backend.port }}/readyz
+
+   Expect: {"status":"ready","database":"ok"}
+{{- if .Values.ingress.enabled }}
+
+3. Open https://{{ .Values.ingress.host }} and sign in as a member of
+   {{ .Values.config.HR_ACCESS_GROUPS | default "hr-admin" }}.
+{{- end }}
+
+4. Pair with Den: Den -> Admin console -> Modules -> Pair, then in HR
+   Settings -> Den connection, paste the pairing URL.
+
+Docs: https://aglelectronics.github.io/con-services/modules/hr/setup/

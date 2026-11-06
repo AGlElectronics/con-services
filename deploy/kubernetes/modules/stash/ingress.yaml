@@ -1,0 +1,25 @@
+# Replaces the Caddy block "stash.conservices.test { reverse_proxy stash-frontend:80 }".
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stash
+  namespace: conservices-stash
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - stash.conservices.test
+      secretName: conservices-tls
+  rules:
+    - host: stash.conservices.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stash-frontend
+                port:
+                  name: http

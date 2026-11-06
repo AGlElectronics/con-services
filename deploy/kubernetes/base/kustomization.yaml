@@ -1,0 +1,17 @@
+# The Con Services platform: identity (Keycloak), in-cluster data services
+# (PostgreSQL, MinIO) and Den. Modules live in ../modules/ and are applied
+# afterwards, one overlay each. Documentation:
+# https://aglelectronics.github.io/con-services/operations/running/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: conservices
+    includeTemplates: true
+
+resources:
+  - namespaces.yaml
+  - identity
+  - data
+  - den
