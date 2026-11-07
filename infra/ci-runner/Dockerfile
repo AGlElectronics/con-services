@@ -14,4 +14,10 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
+# The runner runs JavaScript actions with externals/node*/bin/node only; the
+# npm bundled with the Node 20 external is never used and carries an old
+# node-tar (CVE-2026-59873).
+RUN rm -rf /home/runner/externals/node20/lib/node_modules/npm \
+    /home/runner/externals/node20/bin/npm /home/runner/externals/node20/bin/npx
+
 USER runner

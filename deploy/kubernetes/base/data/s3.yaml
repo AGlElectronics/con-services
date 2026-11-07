@@ -104,9 +104,13 @@ spec:
               memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            # The TLS checksum for the liveness probe is written here.
+            - name: tmp
+              mountPath: /tmp
             - name: data
               mountPath: /data
             # No subPath: renewed certificates must show up in place.
@@ -114,6 +118,8 @@ spec:
               mountPath: /etc/s3/tls
               readOnly: true
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: data
           persistentVolumeClaim:
             claimName: s3-data

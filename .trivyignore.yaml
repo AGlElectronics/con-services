@@ -24,6 +24,14 @@ misconfigurations:
     paths: ["k3s/kube-vip.yaml"]
     statement: upstream kube-vip static pod manifest
     expired_at: 2027-11-01
+  # Trial Keycloak (start-dev) rebuilds into /opt/keycloak/lib/quarkus at
+  # startup, which needs the files the image ships there; a read-only root
+  # with an emptyDir over that path stops it from starting. Production runs
+  # Keycloak through the Keycloak Operator (con-services-gitops).
+  - id: KSV-0014
+    paths: ["kubernetes/base/identity/keycloak.yaml"]
+    statement: trial Keycloak start-dev writes its build output into the image
+    expired_at: 2027-05-01
   # Strategic-merge patches: Trivy scans the fragment alone, without the
   # security context the base Deployment already sets.
   - id: KSV-0014
