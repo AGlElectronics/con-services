@@ -1,3 +1,4 @@
+{{- $tls := .Values.internalTLS.enabled -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,6 +11,13 @@ data:
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   ACCESS_CONFIG_PATH: {{ printf "%s/%s" .Values.accessConfig.mountPath .Values.accessConfig.fileName | quote }}
+  {{- if $tls }}
+  TLS_CERT_FILE: /etc/conservices-tls/tls.crt
+  TLS_KEY_FILE: /etc/conservices-tls/tls.key
+  {{- if not (hasKey .Values.config "SSL_CERT_DIR") }}
+  SSL_CERT_DIR: /etc/conservices-internal-ca
+  {{- end }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -24,16 +32,31 @@ data:
         server stash-backend.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.backend.port }};
     }
     server {
+        {{- if $tls }}
+        listen {{ .Values.frontend.port }} ssl;
+        {{- else }}
         listen {{ .Values.frontend.port }};
+        {{- end }}
         server_name _;
         root /usr/share/nginx/html;
         index index.html;
-        client_max_body_size 50m;
+        client_max_body_size {{ .Values.frontend.clientMaxBodySize | default "50m" }};
+        {{- if $tls }}
+        ssl_certificate     /etc/conservices-tls/tls.crt;
+        ssl_certificate_key /etc/conservices-tls/tls.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        proxy_ssl_trusted_certificate /etc/conservices-internal-ca/ca.crt;
+        proxy_ssl_verify              on;
+        proxy_ssl_verify_depth        2;
+        proxy_ssl_name                stash-backend.{{ .Values.namespace }}.svc.cluster.local;
+        proxy_ssl_server_name         on;
+        proxy_ssl_session_reuse       on;
+        {{- end }}
         gzip on;
         gzip_types text/plain text/css application/json application/javascript application/wasm image/svg+xml;
         gzip_min_length 1024;
         location /api/ {
-            proxy_pass http://stash_backend;
+            proxy_pass {{ include "stash.scheme" . }}://stash_backend;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -58,6 +81,13 @@ data:
             add_header Cache-Control "no-cache" always;
             try_files $uri =404;
         }
+        # Installation settings of the web app (sign-in address and the like),
+        # mounted at /etc/conservices. Never cached, so a change shows on reload.
+        location = /config.json {
+            alias /etc/conservices/config.json;
+            add_header Cache-Control "no-store" always;
+        }
+
         location /static/ {
             expires 1y;
             add_header Cache-Control "public, immutable" always;
@@ -69,3 +99,15 @@ data:
             add_header Permissions-Policy "camera=(self)" always;
         }
     }
+  {{- if $tls }}
+  # Started by the nginx image's entrypoint. nginx reads its certificate
+  # only at start and on reload; reload every six hours to pick up a
+  # certificate renewed by cert-manager.
+  90-reload-tls.sh: |
+    #!/bin/sh
+    (
+      while sleep 21600; do
+        nginx -s reload
+      done
+    ) &
+  {{- end }}

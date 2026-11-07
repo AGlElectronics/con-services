@@ -1,0 +1,2 @@
+{{- include "hr.pdb" (dict "root" . "name" "hr-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "hr.pdb" (dict "root" . "name" "hr-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

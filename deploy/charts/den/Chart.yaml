@@ -1,0 +1,14 @@
+apiVersion: v2
+name: den
+description: >-
+  Den, the Con Services hub (portal, module pairing, users, backups): backend
+  with its migrate initContainer, web app and operator.
+  STUB: first scaffold, not yet tested on a cluster. Mirrors
+  deploy/kubernetes/base/den/.
+type: application
+version: 0.1.2
+appVersion: "1.0.0-1"
+home: https://aglelectronics.github.io/con-services/modules/den/
+sources:
+  - https://github.com/AGlElectronics/den
+  - https://github.com/AGlElectronics/con-services

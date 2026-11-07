@@ -1,0 +1,35 @@
+Den {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namespace }}.
+
+1. Watch the pods start. The backend pod shows Init:0/1 while the migrate
+   initContainer applies database migrations:
+
+     kubectl get pods -n {{ .Values.namespace }} -w
+{{- if and .Values.internalTLS.enabled .Values.internalTLS.createCertificates }}
+
+   The certificates must all be READY True:
+
+     kubectl get certificate -n {{ .Values.namespace }}
+{{- end }}
+
+2. Check the backend's readiness (database reachable):
+
+     kubectl exec -n {{ .Values.namespace }} deploy/den-frontend -- {{ if .Values.internalTLS.enabled }}curl -s --cacert /etc/conservices-internal-ca/ca.crt https{{ else }}wget -qO- http{{ end }}://den-backend:{{ .Values.backend.port }}/readyz
+
+   Expect a JSON answer with "status" "ok"; anything else names the problem.
+{{- if .Values.route.enabled }}
+
+   Check that the gateway accepted the route (ACCEPTED and RESOLVEDREFS True):
+
+     kubectl get httproute -n {{ .Values.namespace }} -o custom-columns=NAME:.metadata.name,ACCEPTED:.status.parents[0].conditions[?(@.type=='Accepted')].status,RESOLVEDREFS:.status.parents[0].conditions[?(@.type=='ResolvedRefs')].status
+{{- end }}
+{{- if or .Values.route.enabled .Values.ingress.enabled }}
+
+3. Open https://{{ ternary .Values.route.host .Values.ingress.host .Values.route.enabled }} and sign in as a member of {{ .Values.config.DEN_ADMIN_GROUPS | default "den-admin" }}.
+{{- end }}
+{{- if and .Values.operator.enabled (eq (toString .Values.operatorConfig.BACKUP_AGE_RECIPIENTS) "change-me") }}
+
+WARNING: operatorConfig.BACKUP_AGE_RECIPIENTS is still "change-me". Set
+your age public key(s) before relying on backups.
+{{- end }}
+
+Docs: https://aglelectronics.github.io/con-services/modules/den/configuration/#install-with-helm

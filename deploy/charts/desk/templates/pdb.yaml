@@ -1,0 +1,2 @@
+{{- include "desk.pdb" (dict "root" . "name" "desk-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "desk.pdb" (dict "root" . "name" "desk-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

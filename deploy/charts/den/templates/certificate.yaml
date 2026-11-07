@@ -1,0 +1,9 @@
+{{- if and .Values.internalTLS.enabled .Values.internalTLS.createCertificates }}
+{{ include "den.certificate" (dict "root" . "name" "den-backend") }}
+---
+{{ include "den.certificate" (dict "root" . "name" "den-frontend") }}
+{{- if .Values.operator.enabled }}
+---
+{{ include "den.certificate" (dict "root" . "name" "den-operator") }}
+{{- end }}
+{{- end }}

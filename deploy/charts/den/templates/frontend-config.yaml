@@ -1,0 +1,12 @@
+# The web app's settings (sign-in address, client id, ...), served to the
+# browser as /config.json. Set them with frontend.config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-frontend-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "den.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "den.frontendConfig" . | nindent 4 }}

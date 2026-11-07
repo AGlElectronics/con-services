@@ -1,0 +1,9 @@
+{{- if and .Values.internalTLS.enabled .Values.internalTLS.createCertificates }}
+{{ include "rally.certificate" (dict "root" . "name" "rally-backend") }}
+---
+{{ include "rally.certificate" (dict "root" . "name" "rally-frontend") }}
+{{- if .Values.submit.enabled }}
+---
+{{ include "rally.certificate" (dict "root" . "name" "rally-submit") }}
+{{- end }}
+{{- end }}

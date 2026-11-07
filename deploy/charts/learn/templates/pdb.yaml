@@ -1,0 +1,2 @@
+{{- include "learn.pdb" (dict "root" . "name" "learn-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "learn.pdb" (dict "root" . "name" "learn-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

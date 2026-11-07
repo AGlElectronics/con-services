@@ -1,4 +1,6 @@
 {{- $ns := .Values.namespace -}}
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "rally.scheme" . -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -18,7 +20,9 @@ metadata:
 automountServiceAccountToken: false
 ---
 # The Rally server never migrates (ADR-0003); the migrate initContainer
-# applies pending migrations and exits before the server starts.
+# applies pending migrations and exits before the server starts. One
+# replica with Recreate so a migrate never runs next to an older backend;
+# the web apps are what scales.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,10 +50,17 @@ spec:
     spec:
       serviceAccountName: rally-backend
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds | default 30 }}
+      {{- with (include "rally.scheduling" (dict "root" . "component" "backend" "replicas" .Values.backend.replicas) | trim) }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "rally.podSecurity" . | nindent 8 }}
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
       {{- with .Values.backend.hostAliases }}
       hostAliases:
         {{- toYaml . | nindent 8 }}
@@ -70,6 +81,13 @@ spec:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:
             {{- include "rally.containerSecurity" . | nindent 12 }}
+          {{- if $tls }}
+          # DATABASE_URL uses sslrootcert=/etc/conservices-internal-ca/ca.crt.
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
+          {{- end }}
       containers:
         - name: backend
           image: {{ include "rally.image" (dict "root" . "name" "backend") | quote }}
@@ -84,13 +102,13 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - name: http
+            - name: {{ $scheme }}
               containerPort: {{ .Values.backend.port }}
           livenessProbe:
-            httpGet: { path: /livez, port: http }
+            httpGet: { path: /livez, port: {{ $scheme }}, scheme: {{ upper $scheme }} }
             periodSeconds: 10
           readinessProbe:
-            httpGet: { path: /readyz, port: http }
+            httpGet: { path: /readyz, port: {{ $scheme }}, scheme: {{ upper $scheme }} }
             periodSeconds: 5
             failureThreshold: 3
           resources:
@@ -103,6 +121,9 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if $tls }}
+            {{- include "rally.tlsVolumeMounts" . | nindent 12 }}
+            {{- end }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -112,12 +133,15 @@ spec:
         - name: access-config
           configMap:
             name: {{ .Values.accessConfig.existingConfigMap }}
+        {{- if $tls }}
+        {{- include "rally.tlsVolumes" (dict "root" . "secret" "rally-backend-tls") | nindent 8 }}
+        {{- end }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
 ---
-{{ include "rally.webDeployment" (dict "root" . "name" "rally-frontend" "component" "frontend" "image" (include "rally.image" (dict "root" . "name" "frontend")) "replicas" .Values.frontend.replicas) }}
+{{ include "rally.webDeployment" (dict "root" . "name" "rally-frontend" "component" "frontend" "image" (include "rally.image" (dict "root" . "name" "frontend")) "replicas" .Values.frontend.replicas "config" (printf "%s-frontend-config" .Release.Name)) }}
 {{- if .Values.submit.enabled }}
 ---
-{{ include "rally.webDeployment" (dict "root" . "name" "rally-submit" "component" "submit" "image" (printf "%s:%s" (required "submit.image.repository is required when submit.enabled" .Values.submit.image.repository) (required "submit.image.tag is required when submit.enabled" .Values.submit.image.tag)) "replicas" .Values.submit.replicas) }}
+{{ include "rally.webDeployment" (dict "root" . "name" "rally-submit" "component" "submit" "image" (printf "%s:%s" (required "submit.image.repository is required when submit.enabled" .Values.submit.image.repository) (required "submit.image.tag (or image.frontend.tag) is required when submit.enabled" (.Values.submit.image.tag | default .Values.image.frontend.tag))) "replicas" .Values.submit.replicas "config" (printf "%s-submit-config" .Release.Name)) }}
 {{- end }}

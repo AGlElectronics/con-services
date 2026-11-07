@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "desk.httpRoute" (dict "root" . "name" "desk" "host" .Values.route.host "service" "desk-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "desk.backendTLSPolicy" (dict "root" . "service" "desk-frontend") }}
+{{- end }}
+{{- end }}

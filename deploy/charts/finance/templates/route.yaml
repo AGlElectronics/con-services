@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "finance.httpRoute" (dict "root" . "name" "finance" "host" .Values.route.host "service" "finance-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "finance.backendTLSPolicy" (dict "root" . "service" "finance-frontend") }}
+{{- end }}
+{{- end }}

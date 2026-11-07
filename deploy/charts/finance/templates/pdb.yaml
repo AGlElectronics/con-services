@@ -1,0 +1,2 @@
+{{- include "finance.pdb" (dict "root" . "name" "finance-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "finance.pdb" (dict "root" . "name" "finance-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

@@ -1,0 +1,156 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $ns := .Values.namespace -}}
+{{- $np := .Values.networkPolicy -}}
+# conservices-den: deny everything, then allow
+#   gateway / ingress controller -> den-frontend
+#   den-frontend                 -> den-backend
+#   module backends              -> den-backend   (pairing, bundle, preferences)
+#   den-backend                  -> den-operator, PostgreSQL, S3, Keycloak
+#                                   (OIDC and admin API)
+#   den-operator                 -> PostgreSQL, S3
+#   everything                   -> DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: den-frontend
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: den
+      app.kubernetes.io/component: frontend
+  policyTypes: ["Ingress", "Egress"]
+  {{- with (include "den.webIngressFrom" . | trim) }}
+  ingress:
+    - from:
+        {{- . | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ $.Values.frontend.port }} }
+  {{- else }}
+  # Cilium's gateway is admitted by the CiliumNetworkPolicy below.
+  ingress: []
+  {{- end }}
+  egress:
+    - to:
+        {{- include "den.selectComponent" "backend" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+{{- if ($np.gateway | default dict).cilium }}
+---
+{{ include "den.ciliumGatewayPolicy" (dict "root" . "components" (list "frontend")) }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: den-backend
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: den
+      app.kubernetes.io/component: backend
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        {{- include "den.selectComponent" "frontend" | nindent 8 }}
+        {{- if $np.allowFromModules }}
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.backend.port }} }
+  egress:
+    {{- if .Values.operator.enabled }}
+    - to:
+        {{- include "den.selectComponent" "operator" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.operator.port }} }
+    {{- end }}
+    {{- with (include "den.dataEgress" . | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with (include "den.oidcEgress" . | trim) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with $np.keycloakAdmin }}
+    {{- if .enabled }}
+    {{- $sel := .podSelector | default (dict "app" "keycloak") }}
+    {{- if ne (printf "%s|%s|%d" .namespace (toJson $sel) (int .port)) (include "den.oidcKey" $) }}
+    # Keycloak admin API (KEYCLOAK_ADMIN_URL). Keycloak's namespace also
+    # needs an ingress rule admitting den-backend.
+    {{- include "den.egressTo" (dict "namespace" .namespace "podSelector" $sel "port" (int .port)) | nindent 4 }}
+    {{- else }}
+    # Keycloak admin API: same pods and port as the OIDC rule above.
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if .Values.operator.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: den-operator
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: den
+      app.kubernetes.io/component: operator
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        {{- include "den.selectComponent" "backend" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: {{ .Values.operator.port }} }
+  {{- $opEgress := (include "den.dataEgress" . | trim) }}
+  {{- if or $opEgress $np.operatorExtraEgress }}
+  egress:
+    {{- with $opEgress }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with $np.operatorExtraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- else }}
+  egress: []
+  {{- end }}
+{{- end }}
+{{- include "den.externalS3Policy" (dict "root" . "components" (ternary (list "backend" "operator") (list "backend") .Values.operator.enabled)) }}
+{{- end }}

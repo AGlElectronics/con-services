@@ -1,3 +1,5 @@
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "hr.scheme" . -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,9 +13,9 @@ spec:
     app.kubernetes.io/name: hr
     app.kubernetes.io/component: backend
   ports:
-    - name: http
+    - name: {{ $scheme }}
       port: {{ .Values.backend.port }}
-      targetPort: http
+      targetPort: {{ $scheme }}
 ---
 apiVersion: v1
 kind: Service
@@ -28,9 +30,9 @@ spec:
     app.kubernetes.io/name: hr
     app.kubernetes.io/component: frontend
   ports:
-    - name: http
-      port: 80
-      targetPort: http
+    - name: {{ $scheme }}
+      port: {{ if $tls }}443{{ else }}80{{ end }}
+      targetPort: {{ $scheme }}
 {{- if .Values.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -40,12 +42,25 @@ metadata:
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "hr.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- if or .Values.ingress.annotations (and $tls .Values.internalTLS.ingressNginxAnnotations) }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and $tls .Values.internalTLS.ingressNginxAnnotations }}
+    # The controller talks HTTPS to the web app and checks its certificate
+    # against the ca.crt in hr-frontend-tls.
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: {{ .Values.namespace }}/hr-frontend-tls
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-name: hr-frontend.{{ .Values.namespace }}.svc.cluster.local
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
+    {{- end }}
   {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
   {{- if .Values.ingress.tlsSecretName }}
   tls:
     - hosts:
@@ -62,5 +77,5 @@ spec:
               service:
                 name: hr-frontend
                 port:
-                  name: http
+                  name: {{ $scheme }}
 {{- end }}

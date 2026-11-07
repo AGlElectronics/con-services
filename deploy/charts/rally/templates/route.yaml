@@ -1,0 +1,17 @@
+{{- if .Values.route.enabled }}
+{{- /* One HTTPRoute and one BackendTLSPolicy per web app: each has its own
+certificate (rally-frontend-tls, rally-submit-tls). */}}
+{{ include "rally.httpRoute" (dict "root" . "name" "rally" "host" .Values.route.host "service" "rally-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "rally.backendTLSPolicy" (dict "root" . "service" "rally-frontend") }}
+{{- end }}
+{{- if .Values.submit.enabled }}
+---
+{{ include "rally.httpRoute" (dict "root" . "name" "rally-submit" "host" .Values.submit.host "service" "rally-submit") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "rally.backendTLSPolicy" (dict "root" . "service" "rally-submit") }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -42,13 +42,16 @@ spec:
       app.kubernetes.io/name: wiki
       app.kubernetes.io/component: frontend
   policyTypes: ["Ingress", "Egress"]
+  {{- with (include "wiki.webIngressFrom" . | trim) }}
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+        {{- . | nindent 8 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.frontend.port }} }
+        - { protocol: TCP, port: {{ $.Values.frontend.port }} }
+  {{- else }}
+  # Cilium's gateway is admitted by the CiliumNetworkPolicy below.
+  ingress: []
+  {{- end }}
   egress:
     - to:
         - podSelector:
@@ -57,6 +60,10 @@ spec:
               app.kubernetes.io/component: backend
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
+{{- if ($np.gateway | default dict).cilium }}
+---
+{{ include "wiki.ciliumGatewayPolicy" (dict "root" . "components" (list "frontend")) }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -86,27 +93,8 @@ spec:
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
   egress:
-    {{- if $np.data.enabled }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.data.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: postgres
-      ports:
-        - { protocol: TCP, port: {{ $np.data.postgresPort }} }
-    {{- if $np.data.s3 }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.data.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: minio
-      ports:
-        - { protocol: TCP, port: {{ $np.data.s3Port }} }
-    {{- end }}
+    {{- with (include "wiki.dataEgress" . | trim) }}
+    {{- . | nindent 4 }}
     {{- end }}
     {{- if $np.den.enabled }}
     - to:
@@ -120,31 +108,23 @@ spec:
       ports:
         - { protocol: TCP, port: {{ $np.den.port }} }
     {{- end }}
-    {{- if $np.oidcViaIngressController }}
-    # OIDC discovery and signing keys through the public issuer (Keycloak).
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
-      ports:
-        - { protocol: TCP, port: 443 }
+    {{- with (include "wiki.oidcEgress" . | trim) }}
+    {{- . | nindent 4 }}
     {{- end }}
     {{- with $np.keycloakAdmin }}
     {{- if .enabled }}
+    {{- $sel := .podSelector | default (dict "app" "keycloak") }}
+    {{- if ne (printf "%s|%s|%d" .namespace (toJson $sel) (int .port)) (include "wiki.oidcKey" $) }}
     # Keycloak admin API, in-cluster. Keycloak's namespace also needs an
     # ingress rule admitting this backend.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: keycloak
-      ports:
-        - { protocol: TCP, port: {{ .port }} }
+    {{- include "wiki.egressTo" (dict "namespace" .namespace "podSelector" $sel "port" (int .port)) | nindent 4 }}
+    {{- else }}
+    # Keycloak admin API: same pods and port as the OIDC rule above.
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- include "wiki.externalS3Policy" (dict "root" . "components" (list "backend")) }}
 {{- end }}

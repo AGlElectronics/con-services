@@ -1,0 +1,25 @@
+# The web apps' settings (sign-in address, client id, ...), served to the
+# browser as /config.json. Set them with frontend.config and submit.config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-frontend-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "rally.webConfig" (dict "root" . "app" "frontend") | nindent 4 }}
+{{- if .Values.submit.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-submit-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "rally.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "rally.webConfig" (dict "root" . "app" "submit") | nindent 4 }}
+{{- end }}

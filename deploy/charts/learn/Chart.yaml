@@ -4,7 +4,7 @@ description: >-
   Learn, the Con Services training module (courses, quizzes, sessions,
   qualifications). STUB: first scaffold, not yet tested on a cluster.
 type: application
-version: 0.1.0
+version: 0.2.2
 appVersion: "1.0.0-1"
 home: https://aglelectronics.github.io/con-services/modules/learn/
 sources:

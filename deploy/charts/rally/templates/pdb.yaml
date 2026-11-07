@@ -1,0 +1,5 @@
+{{- include "rally.pdb" (dict "root" . "name" "rally-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- if .Values.submit.enabled }}
+{{- include "rally.pdb" (dict "root" . "name" "rally-submit" "component" "submit" "replicas" .Values.submit.replicas) }}
+{{- end }}
+{{- include "rally.pdb" (dict "root" . "name" "rally-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

@@ -1,0 +1,2 @@
+{{- /* The backend and the operator are singletons: no PDB (it would block node drains). */}}
+{{- include "den.pdb" (dict "root" . "name" "den-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}

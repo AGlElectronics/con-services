@@ -1,7 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $ns := .Values.namespace -}}
 {{- $np := .Values.networkPolicy -}}
-# Deny everything in the namespace, then allow only what Stash needs.
+# Deny everything in the namespace, then allow only what the module needs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -42,13 +42,16 @@ spec:
       app.kubernetes.io/name: stash
       app.kubernetes.io/component: frontend
   policyTypes: ["Ingress", "Egress"]
+  {{- with (include "stash.webIngressFrom" . | trim) }}
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+        {{- . | nindent 8 }}
       ports:
-        - { protocol: TCP, port: {{ .Values.frontend.port }} }
+        - { protocol: TCP, port: {{ $.Values.frontend.port }} }
+  {{- else }}
+  # Cilium's gateway is admitted by the CiliumNetworkPolicy below.
+  ingress: []
+  {{- end }}
   egress:
     - to:
         - podSelector:
@@ -57,6 +60,10 @@ spec:
               app.kubernetes.io/component: backend
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
+{{- if ($np.gateway | default dict).cilium }}
+---
+{{ include "stash.ciliumGatewayPolicy" (dict "root" . "components" (list "frontend")) }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -86,25 +93,8 @@ spec:
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
   egress:
-    {{- if $np.data.enabled }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.data.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: postgres
-      ports:
-        - { protocol: TCP, port: {{ $np.data.postgresPort }} }
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.data.namespace }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: minio
-      ports:
-        - { protocol: TCP, port: {{ $np.data.s3Port }} }
+    {{- with (include "stash.dataEgress" . | trim) }}
+    {{- . | nindent 4 }}
     {{- end }}
     {{- if $np.den.enabled }}
     - to:
@@ -118,16 +108,11 @@ spec:
       ports:
         - { protocol: TCP, port: {{ $np.den.port }} }
     {{- end }}
-    {{- if $np.oidcViaIngressController }}
-    # OIDC discovery and signing keys through the public issuer (Keycloak).
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
-      ports:
-        - { protocol: TCP, port: 443 }
+    {{- with (include "stash.oidcEgress" . | trim) }}
+    {{- . | nindent 4 }}
     {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- include "stash.externalS3Policy" (dict "root" . "components" (list "backend")) }}
 {{- end }}

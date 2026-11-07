@@ -1,0 +1,2 @@
+{{- include "stash.pdb" (dict "root" . "name" "stash-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "stash.pdb" (dict "root" . "name" "stash-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

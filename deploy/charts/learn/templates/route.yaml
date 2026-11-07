@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "learn.httpRoute" (dict "root" . "name" "learn" "host" .Values.route.host "service" "learn-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "learn.backendTLSPolicy" (dict "root" . "service" "learn-frontend") }}
+{{- end }}
+{{- end }}

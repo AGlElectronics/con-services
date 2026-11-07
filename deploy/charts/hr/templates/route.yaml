@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "hr.httpRoute" (dict "root" . "name" "hr" "host" .Values.route.host "service" "hr-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "hr.backendTLSPolicy" (dict "root" . "service" "hr-frontend") }}
+{{- end }}
+{{- end }}

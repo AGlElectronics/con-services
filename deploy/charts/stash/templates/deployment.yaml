@@ -1,4 +1,9 @@
 {{- $ns := .Values.namespace -}}
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "stash.scheme" . -}}
+{{- if and .Values.backend.singleReplica (ne (int .Values.backend.replicas) 1) }}
+{{- fail (printf "backend.replicas must be 1 for this module (got %v): %s" .Values.backend.replicas .Values.backend.singleReplicaReason) }}
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -45,10 +50,17 @@ spec:
     spec:
       serviceAccountName: stash-backend
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds | default 30 }}
+      {{- with (include "stash.scheduling" (dict "root" . "component" "backend" "replicas" .Values.backend.replicas) | trim) }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "stash.podSecurity" . | nindent 8 }}
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
       {{- with .Values.backend.hostAliases }}
       hostAliases:
         {{- toYaml . | nindent 8 }}
@@ -67,17 +79,19 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - name: http
+            - name: {{ $scheme }}
               containerPort: {{ .Values.backend.port }}
           livenessProbe:
             tcpSocket:
-              port: http
+              port: {{ $scheme }}
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /api/health
-              port: http
-            periodSeconds: 10
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
+            periodSeconds: 5
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:
@@ -88,6 +102,9 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if $tls }}
+            {{- include "stash.tlsVolumeMounts" . | nindent 12 }}
+            {{- end }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -97,6 +114,9 @@ spec:
         - name: access-config
           configMap:
             name: {{ .Values.accessConfig.existingConfigMap }}
+        {{- if $tls }}
+        {{- include "stash.tlsVolumes" (dict "root" . "secret" "stash-backend-tls") | nindent 8 }}
+        {{- end }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -123,30 +143,47 @@ spec:
         app.kubernetes.io/component: frontend
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/frontend-config: {{ include (print $.Template.BasePath "/frontend-config.yaml") . | sha256sum }}
     spec:
       serviceAccountName: stash-frontend
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.frontend.terminationGracePeriodSeconds | default 30 }}
+      {{- with (include "stash.scheduling" (dict "root" . "component" "frontend" "replicas" .Values.frontend.replicas) | trim) }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "stash.podSecurity" . | nindent 8 }}
         runAsUser: 101
         runAsGroup: 101
+        fsGroup: 101
       containers:
         - name: frontend
           image: "{{ .Values.image.frontend.repository }}:{{ required "image.frontend.tag is required (MAJOR.MINOR.PATCH-BUILD)" .Values.image.frontend.tag }}"
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           ports:
-            - name: http
+            - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
           readinessProbe:
             httpGet:
               path: /
-              port: http
-            periodSeconds: 10
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /
-              port: http
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
             periodSeconds: 20
+          {{- with .Values.frontend.preStopSleepSeconds }}
+          # Keep serving while the gateway drops this pod from its endpoints.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ . }}"]
+          {{- end }}
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           securityContext:
@@ -156,15 +193,38 @@ spec:
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
               readOnly: true
+            {{- if $tls }}
+            - name: nginx-conf
+              mountPath: /docker-entrypoint.d/90-reload-tls.sh
+              subPath: 90-reload-tls.sh
+              readOnly: true
+            {{- include "stash.tlsVolumeMounts" . | nindent 12 }}
+            {{- end }}
+            # Served as /config.json (frontend.config).
+            - name: frontend-config
+              mountPath: /etc/conservices
+              readOnly: true
             - name: cache
               mountPath: /var/cache/nginx
             - name: run
               mountPath: /run
+            # nginx-unprivileged: nginx.pid and temporary files
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: nginx-conf
           configMap:
             name: {{ .Release.Name }}-frontend-nginx
+            defaultMode: 0555
+        - name: frontend-config
+          configMap:
+            name: {{ .Release.Name }}-frontend-config
         - name: cache
           emptyDir: {}
         - name: run
           emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if $tls }}
+        {{- include "stash.tlsVolumes" (dict "root" . "secret" "stash-frontend-tls") | nindent 8 }}
+        {{- end }}

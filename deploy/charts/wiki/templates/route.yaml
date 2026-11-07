@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "wiki.httpRoute" (dict "root" . "name" "wiki" "host" .Values.route.host "service" "wiki-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "wiki.backendTLSPolicy" (dict "root" . "service" "wiki-frontend") }}
+{{- end }}
+{{- end }}

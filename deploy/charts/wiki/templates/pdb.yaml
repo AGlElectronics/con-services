@@ -1,0 +1,2 @@
+{{- include "wiki.pdb" (dict "root" . "name" "wiki-frontend" "component" "frontend" "replicas" .Values.frontend.replicas) }}
+{{- include "wiki.pdb" (dict "root" . "name" "wiki-backend" "component" "backend" "replicas" .Values.backend.replicas) }}

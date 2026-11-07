@@ -1,4 +1,6 @@
 {{- $ns := .Values.namespace -}}
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "rally.scheme" . -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -12,9 +14,9 @@ spec:
     app.kubernetes.io/name: rally
     app.kubernetes.io/component: backend
   ports:
-    - name: http
+    - name: {{ $scheme }}
       port: {{ .Values.backend.port }}
-      targetPort: http
+      targetPort: {{ $scheme }}
 ---
 apiVersion: v1
 kind: Service
@@ -29,9 +31,9 @@ spec:
     app.kubernetes.io/name: rally
     app.kubernetes.io/component: frontend
   ports:
-    - name: http
-      port: 80
-      targetPort: http
+    - name: {{ $scheme }}
+      port: {{ if $tls }}443{{ else }}80{{ end }}
+      targetPort: {{ $scheme }}
 {{- if .Values.submit.enabled }}
 ---
 apiVersion: v1
@@ -47,55 +49,17 @@ spec:
     app.kubernetes.io/name: rally
     app.kubernetes.io/component: submit
   ports:
-    - name: http
-      port: 80
-      targetPort: http
+    - name: {{ $scheme }}
+      port: {{ if $tls }}443{{ else }}80{{ end }}
+      targetPort: {{ $scheme }}
 {{- end }}
 {{- if .Values.ingress.enabled }}
+{{- /* One Ingress per host: ingress-nginx's proxy-ssl-* annotations apply to
+the whole Ingress, and each web app has its own certificate. */}}
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rally
-  namespace: {{ $ns }}
-  labels:
-    {{- include "rally.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  ingressClassName: {{ .Values.ingress.className }}
-  {{- if .Values.ingress.tlsSecretName }}
-  tls:
-    - hosts:
-        - {{ .Values.ingress.host }}
-        {{- if .Values.submit.enabled }}
-        - {{ .Values.submit.host }}
-        {{- end }}
-      secretName: {{ .Values.ingress.tlsSecretName }}
-  {{- end }}
-  rules:
-    - host: {{ .Values.ingress.host }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: rally-frontend
-                port:
-                  name: http
-    {{- if .Values.submit.enabled }}
-    - host: {{ .Values.submit.host }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: rally-submit
-                port:
-                  name: http
-    {{- end }}
+{{ include "rally.ingress" (dict "root" . "name" "rally" "host" .Values.ingress.host "service" "rally-frontend") }}
+{{- if .Values.submit.enabled }}
+---
+{{ include "rally.ingress" (dict "root" . "name" "rally-submit" "host" .Values.submit.host "service" "rally-submit") }}
+{{- end }}
 {{- end }}

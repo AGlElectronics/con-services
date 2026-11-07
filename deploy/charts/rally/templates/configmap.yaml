@@ -1,3 +1,4 @@
+{{- $tls := .Values.internalTLS.enabled -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,6 +11,13 @@ data:
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   ACCESS_CONFIG_PATH: {{ printf "%s/%s" .Values.accessConfig.mountPath .Values.accessConfig.fileName | quote }}
+  {{- if $tls }}
+  TLS_CERT_FILE: /etc/conservices-tls/tls.crt
+  TLS_KEY_FILE: /etc/conservices-tls/tls.key
+  {{- if not (hasKey .Values.config "SSL_CERT_DIR") }}
+  SSL_CERT_DIR: /etc/conservices-internal-ca
+  {{- end }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -21,3 +29,15 @@ metadata:
 data:
   default.conf: |
     {{- include "rally.nginx" . | nindent 4 }}
+  {{- if $tls }}
+  # Started by the nginx image's entrypoint. nginx reads its certificate
+  # only at start and on reload; reload every six hours to pick up a
+  # certificate renewed by cert-manager.
+  90-reload-tls.sh: |
+    #!/bin/sh
+    (
+      while sleep 21600; do
+        nginx -s reload
+      done
+    ) &
+  {{- end }}

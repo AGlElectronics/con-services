@@ -1,4 +1,4 @@
-# HR Helm chart values. STUB (chart version 0.1.0).
+# HR Helm chart values. STUB (chart version 0.2.1).
 # Docs: https://aglelectronics.github.io/con-services/modules/hr/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -46,25 +46,63 @@ config:
   OIDC_AUDIENCE: hr-spa
   HR_ACCESS_GROUPS: hr-admin
   CORS_ALLOWED_ORIGINS: https://hr.conservices.test
-  KEYCLOAK_BASE_URL: http://keycloak.conservices-identity.svc.cluster.local:8080
+  # Proxies whose X-Forwarded-For is believed when working out the client IP
+  # (Gateway, nginx). Add a proxy that sits outside these ranges.
+  TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
+  KEYCLOAK_BASE_URL: https://keycloak.conservices-identity.svc.cluster.local:8443
   KEYCLOAK_REALM: conservices
   KEYCLOAK_CLIENT_ID: hr-provisioner
   KEYCLOAK_SETUP_CLIENT_ID: den-spa
   KEYCLOAK_SETUP_REDIRECT_URI: https://den.conservices.test/
   # Comma-separated "slug=url" list of other modules' role catalogs.
-  ROLE_CATALOG_SOURCES: stash=http://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
-  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+  ROLE_CATALOG_SOURCES: stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
+  DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
   # SMTP_HOST: smtp.example.org
   # SMTP_PORT: "587"
   # SMTP_USERNAME: hr@example.org
   # SMTP_FROM: no-reply@example.org
   # SMTP_FROM_NAME: Con Services
 
+# Internal TLS: the backend and the web app serve HTTPS inside the cluster
+# with certificates from cert-manager, and check the certificates of the
+# services they call against the platform's internal CA.
+# Docs: https://aglelectronics.github.io/con-services/operations/internal-tls/
+# Needs cert-manager, the ClusterIssuer below and the trust-manager ConfigMap
+# below (the platform's base/pki creates both). With enabled: false every
+# connection inside the cluster is plain HTTP again; change the https:// URLs
+# in config (and in OFFBOARD_HOOKS / DEPARTMENT_HOOKS in the Secret) to
+# http:// as well, and Keycloak's port back to its plain HTTP port.
+internalTLS:
+  enabled: true
+  # true: the chart asks cert-manager for hr-backend-tls and
+  # hr-frontend-tls. false: create those Secrets yourself (keys tls.crt,
+  # tls.key and ca.crt).
+  createCertificates: true
+  issuerRef:
+    kind: ClusterIssuer
+    name: conservices-internal-ca
+  duration: 2160h
+  renewBefore: 720h
+  # ConfigMap (key ca.crt) with the CA that signed the certificates of
+  # PostgreSQL, S3, Den, Keycloak and the other module backends HR calls.
+  # trust-manager copies it into every namespace labelled
+  # app.kubernetes.io/part-of: conservices.
+  caConfigMap: conservices-internal-ca
+  # Legacy, only with ingress.enabled: add the ingress-nginx annotations that
+  # make the controller talk HTTPS to the web app and check its certificate.
+  # The Gateway API route uses a BackendTLSPolicy instead.
+  ingressNginxAnnotations: false
+
 backend:
   # Keep 1 for now: HR runs a background worker (pending role grants every
-  # ROLE_GATE_INTERVAL) that has not been tested with several replicas.
+  # ROLE_GATE_INTERVAL) that has not been tested with several replicas, and
+  # every pod runs the migrate initContainer (Recreate strategy). The web
+  # app (frontend) is what scales.
   replicas: 1
+  singleReplica: false
+  singleReplicaReason: ""
   port: 8080
+  terminationGracePeriodSeconds: 30
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }
@@ -74,40 +112,140 @@ backend:
   hostAliases: []
 
 frontend:
+  # Two or more: the web app is stateless, so a pod or node can die without
+  # an outage (see ha below).
   replicas: 2
   # nginx listens on 8080 (non-root); the chart mounts its own nginx config.
   port: 8080
+  # Upload limit, enforced by nginx in the web app. The gateway (Envoy) has
+  # no body limit of its own, so this is the only one.
+  clientMaxBodySize: 10m
+  terminationGracePeriodSeconds: 30
+  # nginx keeps serving this long after it is told to stop, while the
+  # gateway removes the pod from its endpoints. 0 turns it off.
+  preStopSleepSeconds: 5
   resources:
     requests: { cpu: 10m, memory: 16Mi }
     limits: { cpu: 200m, memory: 64Mi }
+  # Web app settings, served to the browser as /config.json from the
+  # ConfigMap <release>-frontend-config (mounted at /etc/conservices).
+  # The image itself names no domain. Keys left out get these defaults:
+  #   authMode       config.AUTH_MODE
+  #   oidcAuthority  config.OIDC_ISSUER_URL
+  #   oidcClientId   config.OIDC_CLIENT_ID (else hr-spa)
+  #   oidcScope      "openid profile email"
+  #   apiBaseUrl     "" (same origin: nginx forwards /api/)
+  # Docs: https://aglelectronics.github.io/con-services/modules/hr/configuration/#web-app-settings-configjson
+  config: {}
 
-ingress:
+# Gateway API (recommended). Renders an HTTPRoute for the web app and, with
+# internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
+# web app and checks its certificate against internalTLS.caConfigMap.
+route:
   enabled: true
+  host: hr.conservices.test
+  # The Gateway's listener must allow routes from this namespace.
+  parentRefs:
+    - name: public
+      namespace: conservices-gateway
+      sectionName: https
+  annotations: {}
+  # Request timeout for the route (Gateway API HTTPRoute timeouts.request).
+  # Empty: the gateway's default.
+  timeout: 120s
+  # Timeout of a websocket rule. HR has no websockets; kept so every chart
+  # has the same keys.
+  websocketTimeout: 0s
+
+# Plain Ingress, kept for other controllers. Off by default; with
+# ingress-nginx also set internalTLS.ingressNginxAnnotations: true and, for
+# uploads, nginx.ingress.kubernetes.io/proxy-body-size: 10m.
+ingress:
+  enabled: false
   className: nginx
   host: hr.conservices.test
   tlsSecretName: conservices-tls
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+  annotations: {}
+
+# High availability.
+ha:
+  # PodDisruptionBudget (minAvailable 1) for every component running more
+  # than one replica. Single-replica backends get none: it would block
+  # node drains.
+  podDisruptionBudget: true
+  # Spread replicas over nodes (topologySpreadConstraints on
+  # kubernetes.io/hostname, ScheduleAnyway) plus soft pod anti-affinity.
+  topologySpread: true
+
+# PriorityClass for every pod of the release. Empty: the cluster default.
+priorityClassName: ""
+# Secrets for pulling private images, applied to every pod of the chart,
+# e.g. [{ name: ghcr-pull }]. The Secret must exist in the namespace.
+imagePullSecrets: []
 
 networkPolicy:
   enabled: true
+  # Namespace of the ingress controller; admitted only with ingress.enabled.
   ingressControllerNamespace: ingress-nginx
-  oidcViaIngressController: true
+  gateway:
+    # Cilium Gateway API: its Envoy reaches the web app with Cilium's
+    # reserved identity "ingress", which a Kubernetes NetworkPolicy cannot
+    # select. true renders a CiliumNetworkPolicy (fromEntities: ingress).
+    # Needs Cilium's CRDs; set false on other CNIs.
+    cilium: true
+    # Another Gateway API implementation whose proxy pods run in a
+    # namespace: admit that namespace. Empty: none.
+    namespace: ""
+  # Legacy: reach the OIDC issuer through the ingress controller on 443.
+  oidcViaIngressController: false
+  # Reach the OIDC issuer in-cluster: CoreDNS resolves auth.<domain> to the
+  # keycloak-public Service (443 -> Keycloak pods on 8443).
+  oidc:
+    inCluster: true
+    namespace: conservices-identity
+    podSelector:
+      app: keycloak
+    port: 8443
   den:
     enabled: true
     namespace: conservices-den
     port: 8080
+  # PostgreSQL and S3 in conservices-data. Defaults: CloudNativePG cluster
+  # conservices-pg and Garage (S3 API through its TLS sidecar). For the Kustomize
+  # local-trial postgres/s3 use podSelector app.kubernetes.io/name:
+  # postgres / s3 and s3.port 9000. For managed services set
+  # enabled: false and add ipBlock rules to extraEgress.
   data:
     enabled: true
     namespace: conservices-data
-    postgresPort: 5432
-    s3Port: 9000
+    postgres:
+      podSelector:
+        cnpg.io/cluster: conservices-pg
+      port: 5432
+    s3:
+      enabled: true
+      podSelector:
+        app.kubernetes.io/name: garage
+      port: 3900
+      # External S3 such as Hetzner Object Storage
+      # (https://<location>.your-objectstorage.com). Independent of
+      # data.enabled and s3.enabled; set s3.enabled: false if you run no
+      # in-cluster S3. fqdns renders a CiliumNetworkPolicy (toFQDNs plus a DNS
+      # rule to kube-dns) when networkPolicy.gateway.cilium is true; cidrs adds
+      # plain NetworkPolicy ipBlock rules for other CNIs.
+      external:
+        fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
+        cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
+        port: 443
   # Keycloak admin API (creating accounts, groups). Keycloak's namespace
-  # also needs an ingress rule admitting HR; see the HR setup page.
+  # also needs an ingress rule admitting HR; see the HR setup page. Same
+  # pods and port as oidc above: rendered once.
   keycloak:
     enabled: true
     namespace: conservices-identity
-    port: 8080
+    podSelector:
+      app: keycloak
+    port: 8443
   # Module backends HR calls (role catalogs, Learn holdings, offboarding and
   # department hooks). Each target namespace needs a matching ingress rule.
   moduleEgressNamespaces:

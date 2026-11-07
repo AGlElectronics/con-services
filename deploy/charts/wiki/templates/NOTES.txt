@@ -7,12 +7,18 @@ Wiki {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namesp
 
 2. Check the backend's health:
 
-     kubectl exec -n {{ .Values.namespace }} deploy/wiki-frontend -- wget -qO- http://wiki-backend:{{ .Values.backend.port }}/api/health
+     kubectl exec -n {{ .Values.namespace }} deploy/wiki-frontend -- {{ if .Values.internalTLS.enabled }}curl -s --cacert /etc/conservices-internal-ca/ca.crt https{{ else }}wget -qO- http{{ end }}://wiki-backend:{{ .Values.backend.port }}/api/health
 
    Expect: {"status":"ok","database":"ok",...}
-{{- if .Values.ingress.enabled }}
+{{- if .Values.route.enabled }}
 
-3. Open https://{{ .Values.ingress.host }} and sign in.
+   Check that the gateway accepted the route (ACCEPTED and RESOLVEDREFS True):
+
+     kubectl get httproute -n {{ .Values.namespace }} -o custom-columns=NAME:.metadata.name,ACCEPTED:.status.parents[0].conditions[?(@.type=='Accepted')].status,RESOLVEDREFS:.status.parents[0].conditions[?(@.type=='ResolvedRefs')].status
+{{- end }}
+{{- if or .Values.route.enabled .Values.ingress.enabled }}
+
+3. Open https://{{ ternary .Values.route.host .Values.ingress.host .Values.route.enabled }} and sign in.
 {{- end }}
 
 4. Pair with Den: Den -> Admin console -> Modules -> Pair, then in Wiki

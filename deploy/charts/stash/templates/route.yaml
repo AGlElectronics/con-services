@@ -1,0 +1,7 @@
+{{- if .Values.route.enabled }}
+{{ include "stash.httpRoute" (dict "root" . "name" "stash" "host" .Values.route.host "service" "stash-frontend") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "stash.backendTLSPolicy" (dict "root" . "service" "stash-frontend") }}
+{{- end }}
+{{- end }}

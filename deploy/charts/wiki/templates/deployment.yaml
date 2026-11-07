@@ -1,4 +1,6 @@
 {{- $ns := .Values.namespace -}}
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "wiki.scheme" . -}}
 {{- if and .Values.backend.singleReplica (ne (int .Values.backend.replicas) 1) }}
 {{- fail (printf "backend.replicas must be 1 for this module (got %v): %s" .Values.backend.replicas .Values.backend.singleReplicaReason) }}
 {{- end }}
@@ -22,7 +24,8 @@ automountServiceAccountToken: false
 ---
 # The server never migrates; the migrate initContainer applies pending
 # migrations and exits before the server starts. Recreate: old and new pods
-# never run (or migrate) side by side.
+# never run (or migrate) side by side. Usually one replica (see
+# backend.replicas in values.yaml for why); the web app is what scales.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,7 +53,12 @@ spec:
     spec:
       serviceAccountName: wiki-backend
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      {{- with (include "wiki.scheduling" (dict "root" . "component" "backend" "replicas" .Values.backend.replicas) | trim) }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "wiki.podSecurity" . | nindent 8 }}
         runAsUser: 65532
@@ -76,6 +84,12 @@ spec:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:
             {{- include "wiki.containerSecurity" . | nindent 12 }}
+          {{- if $tls }}
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
+          {{- end }}
       containers:
         - name: backend
           image: {{ include "wiki.image" (dict "root" . "name" "backend") | quote }}
@@ -90,18 +104,21 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - name: http
+            - name: {{ $scheme }}
               containerPort: {{ .Values.backend.port }}
           livenessProbe:
             httpGet:
               path: /livez
-              port: http
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
-            periodSeconds: 10
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
+            periodSeconds: 5
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           securityContext:
@@ -119,6 +136,9 @@ spec:
             - name: buffer
               mountPath: {{ .mountPath }}
             {{- end }}
+            {{- end }}
+            {{- if $tls }}
+            {{- include "wiki.tlsVolumeMounts" . | nindent 12 }}
             {{- end }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -141,6 +161,9 @@ spec:
           emptyDir: {}
           {{- end }}
         {{- end }}
+        {{- end }}
+        {{- if $tls }}
+        {{- include "wiki.tlsVolumes" (dict "root" . "secret" "wiki-backend-tls") | nindent 8 }}
         {{- end }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
@@ -168,30 +191,47 @@ spec:
         app.kubernetes.io/component: frontend
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/frontend-config: {{ include (print $.Template.BasePath "/frontend-config.yaml") . | sha256sum }}
     spec:
       serviceAccountName: wiki-frontend
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.frontend.terminationGracePeriodSeconds | default 30 }}
+      {{- with (include "wiki.scheduling" (dict "root" . "component" "frontend" "replicas" .Values.frontend.replicas) | trim) }}{{ . | nindent 6 }}{{ end }}
       securityContext:
         {{- include "wiki.podSecurity" . | nindent 8 }}
         runAsUser: 101
         runAsGroup: 101
+        fsGroup: 101
       containers:
         - name: frontend
           image: {{ include "wiki.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           ports:
-            - name: http
+            - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
           readinessProbe:
             httpGet:
               path: /
-              port: http
-            periodSeconds: 10
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /
-              port: http
+              port: {{ $scheme }}
+              scheme: {{ upper $scheme }}
             periodSeconds: 20
+          {{- with .Values.frontend.preStopSleepSeconds }}
+          # Keep serving while the gateway drops this pod from its endpoints.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ . }}"]
+          {{- end }}
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           securityContext:
@@ -201,15 +241,38 @@ spec:
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
               readOnly: true
+            {{- if $tls }}
+            - name: nginx-conf
+              mountPath: /docker-entrypoint.d/90-reload-tls.sh
+              subPath: 90-reload-tls.sh
+              readOnly: true
+            {{- include "wiki.tlsVolumeMounts" . | nindent 12 }}
+            {{- end }}
+            # Served as /config.json (frontend.config).
+            - name: frontend-config
+              mountPath: /etc/conservices
+              readOnly: true
             - name: cache
               mountPath: /var/cache/nginx
             - name: run
               mountPath: /run
+            # nginx-unprivileged: nginx.pid and temporary files
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: nginx-conf
           configMap:
             name: {{ .Release.Name }}-frontend-nginx
+            defaultMode: 0555
+        - name: frontend-config
+          configMap:
+            name: {{ .Release.Name }}-frontend-config
         - name: cache
           emptyDir: {}
         - name: run
           emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if $tls }}
+        {{- include "wiki.tlsVolumes" (dict "root" . "secret" "wiki-frontend-tls") | nindent 8 }}
+        {{- end }}

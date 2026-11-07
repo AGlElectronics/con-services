@@ -1,0 +1,103 @@
+{{- $tls := .Values.internalTLS.enabled -}}
+{{- $scheme := include "den.scheme" . -}}
+{{- $ns := .Values.namespace -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: den-backend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "den.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: backend
+  ports:
+    - name: {{ $scheme }}
+      port: {{ .Values.backend.port }}
+      targetPort: {{ $scheme }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: den-frontend
+  namespace: {{ $ns }}
+  labels:
+    {{- include "den.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  selector:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: {{ $scheme }}
+      port: {{ if $tls }}443{{ else }}80{{ end }}
+      targetPort: {{ $scheme }}
+{{- if .Values.operator.enabled }}
+---
+# Never exposed through a route or Ingress; only den-backend may reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: den-operator
+  namespace: {{ $ns }}
+  labels:
+    {{- include "den.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+spec:
+  selector:
+    app.kubernetes.io/name: den
+    app.kubernetes.io/component: operator
+  ports:
+    - name: {{ $scheme }}
+      port: {{ .Values.operator.port }}
+      targetPort: {{ $scheme }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+# The backend is not exposed directly: the web app's nginx forwards /api/.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: den
+  namespace: {{ $ns }}
+  labels:
+    {{- include "den.labels" . | nindent 4 }}
+  {{- if or .Values.ingress.annotations (and $tls .Values.internalTLS.ingressNginxAnnotations) }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and $tls .Values.internalTLS.ingressNginxAnnotations }}
+    # The controller talks HTTPS to the web app and checks its certificate
+    # against the ca.crt in den-frontend-tls.
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: {{ $ns }}/den-frontend-tls
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-name: den-frontend.{{ $ns }}.svc.cluster.local
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tlsSecretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: den-frontend
+                port:
+                  name: {{ $scheme }}
+{{- end }}
