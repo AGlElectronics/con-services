@@ -1,5 +1,5 @@
 # Convention services — local Docker Desktop suite
-# MinIO is DEV ONLY (never production). Keycloak here is DEV ONLY.
+# The S3 server (SeaweedFS) is DEV ONLY (never production). Keycloak here is DEV ONLY.
 #
 #   docker compose up --build
 #
@@ -42,40 +42,39 @@ services:
       postgres:
         condition: service_healthy
 
-  # LOCAL DEV ONLY — never use MinIO in production.
-  # LOCAL DEV ONLY. Image tags: use local :latest (Hub pulls may be rate-limited).
-  minio:
-    image: minio/minio:latest
-    container_name: conservices-minio
+  # LOCAL DEV ONLY S3-compatible storage — production uses a managed S3
+  # service. SeaweedFS in its single-process "mini" mode: S3 API on :9000
+  # (https://s3.conservices.test or http://localhost:9000), DEV key
+  # conservices / conservicesdev. The buckets in -bucket are created on start
+  # (no init job); "healthy" means they all exist.
+  s3:
+    image: chrislusf/seaweedfs:4.52
+    container_name: conservices-s3
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command:
+      - mini
+      - -dir=/data
+      - -s3.port=9000
+      - -bucket=stash-data-dev,den-data-dev,events-data-dev,hr-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev,conservices-backups
+      - -master.telemetry=false
+      - -admin.ui=false
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
     environment:
-      MINIO_ROOT_USER: conservices
-      MINIO_ROOT_PASSWORD: conservicesdev
+      AWS_ACCESS_KEY_ID: conservices
+      AWS_SECRET_ACCESS_KEY: conservicesdev
     ports:
       - "9000:9000"
-      - "9001:9001"
     volumes:
-      - conservices-minio-data:/data
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: conservices-minio-init
-    depends_on:
-      - minio
-    restart: "no"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        until mc alias set local http://minio:9000 conservices conservicesdev >/dev/null 2>&1; do
-          echo waiting-for-minio; sleep 1
-        done
-        for b in stash-data-dev den-data-dev events-data-dev hr-data-dev finance-data-dev learn-data-dev wiki-data-dev tasks-data-dev conservices-backups; do
-          mc mb --ignore-existing "local/$$b"
-          echo "bucket ready: $$b"
-        done
+      - conservices-s3-data:/data
+    healthcheck:
+      # The filer (:8888, not published) lists a bucket once it exists.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9000/healthz && wget -q --spider http://127.0.0.1:8888/buckets/conservices-backups/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   # DEV mail catcher — Keycloak sends set-password / onboarding emails here.
   # Inbox UI: https://mail.conservices.test (or http://localhost:8025)
@@ -149,7 +148,7 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
-    # Management interface :9000 (in-container only; host 9000 is MinIO).
+    # Management interface :9000 (in-container only; host 9000 is the s3 service).
     healthcheck:
       test:
         [
@@ -223,8 +222,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -237,12 +236,14 @@ services:
       DEN_INTERNAL_URL: http://den-backend:8080
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://stash:stash@postgres:5432/stash?sslmode=disable
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: stash-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
+      # Browser-facing host for presigned URLs (the proxy keeps Host s3:9000).
+      S3_PUBLIC_BASE_URL: https://s3.conservices.test
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
@@ -250,6 +251,7 @@ services:
       OIDC_AUDIENCE: stash-spa
       ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3000,https://stash.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
     volumes:
       - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
@@ -265,18 +267,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: stash-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PUBLIC_CLAIM_ENABLED: "true"
         STASH_VERSION: dev
     container_name: conservices-stash-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/stash.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - stash-backend
     ports:
-      - "3000:80"
+      - "3000:8080"
 
   # ── HR (OIDC + Keycloak user provisioning against shared realm) ───────────
   hr-migrate:
@@ -305,8 +305,8 @@ services:
         condition: service_healthy
       hr-migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -319,7 +319,7 @@ services:
       # Container :8080 (ecosystem convention); host 8110 avoids :8080 clashes.
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://hr:hr@postgres:5432/hr?sslmode=disable
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: hr-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -363,6 +363,7 @@ services:
       # Tasks keeps one space per department (TASK-25).
       DEPARTMENT_HOOKS: http://tasks-backend:8080/api/internal/departments|tasks-service-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
@@ -376,17 +377,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: hr-spa
-        VITE_OIDC_SCOPE: openid profile email
         HR_VERSION: dev
     container_name: conservices-hr-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/hr.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - hr-backend
     ports:
-      - "3003:80"
+      - "3003:8080"
 
   # ── Finance (invoices + money tracking; OIDC against local Keycloak) ──────
   finance-migrate:
@@ -434,6 +434,7 @@ services:
       OIDC_AUDIENCE: finance-spa
       FINANCE_ACCESS_GROUPS: finance-admin
       CORS_ALLOWED_ORIGINS: http://localhost:3006,https://finance.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
@@ -447,17 +448,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: finance-spa
-        VITE_OIDC_SCOPE: openid profile email
         FINANCE_VERSION: dev
     container_name: conservices-finance-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/finance.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - finance-backend
     ports:
-      - "3006:80"
+      - "3006:8080"
 
   # Den — profile: docker compose --profile den --profile events up --build
   # Unified backend image: /den-server (default) + /den-migrate (entrypoint override).
@@ -490,8 +490,8 @@ services:
     depends_on:
       den-migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -501,12 +501,14 @@ services:
       APP_BASE_URL: https://den.conservices.test
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://den:den@postgres:5432/den?sslmode=disable
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: den-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
+      # Browser-facing host for presigned URLs (the proxy keeps Host s3:9000).
+      S3_PUBLIC_BASE_URL: https://s3.conservices.test
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
@@ -519,6 +521,7 @@ services:
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: den-operator-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3001,https://den.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
@@ -540,8 +543,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
     environment:
       OPERATOR_TOKEN: den-operator-dev-token
       PG_ADMIN_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
@@ -549,15 +552,15 @@ services:
       PROTECTED_DATABASES: den,keycloak
       BACKUP_ENABLED: "true"
       BACKUP_TIMEZONE: Europe/Vienna
-      # DEV: same MinIO as the live data. Production: a different provider
+      # DEV: same S3 server as the live data. Production: a different provider
       # or location, or it isn't really a backup.
-      BACKUP_S3_ENDPOINT: http://minio:9000
+      BACKUP_S3_ENDPOINT: http://s3:9000
       BACKUP_S3_BUCKET: conservices-backups
       BACKUP_S3_ACCESS_KEY_ID: conservices
       BACKUP_S3_SECRET_ACCESS_KEY: conservicesdev
       # DEV key pair: the secret half is infra/operator/dev-backup-identity.txt.
       BACKUP_AGE_RECIPIENTS: age1777a9j365d2nmjl24nvp45jz8ww9sg4xv9n4h84rl4nay9xww39sc5t73k
-      FILES_S3_ENDPOINT: http://minio:9000
+      FILES_S3_ENDPOINT: http://s3:9000
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
       FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
@@ -569,16 +572,15 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: den-spa
-        VITE_OIDC_SCOPE: openid profile email
     container_name: conservices-den-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/den.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - den-backend
     ports:
-      - "3001:80"
+      - "3001:8080"
 
   events-migrate:
     profiles: ["events"]
@@ -606,8 +608,8 @@ services:
     depends_on:
       events-migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -620,7 +622,7 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://events:events@postgres:5432/events?sslmode=disable
       S3_ENABLED: "true"
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: events-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -639,13 +641,14 @@ services:
       PUBLIC_SCHEDULE_ENABLED: "true"
       # The public schedule API requires a key. This is the builtin
       # "programme-page" one the submission site sends (it must match
-      # events-submit's VITE_PUBLIC_SCHEDULE_KEY); other consumers get
+      # publicScheduleKey in infra/frontend-config/rally-submit.json); other consumers get
       # their own keys in the staff UI (Schedule → Setup).
       PUBLIC_API_BUILTIN_KEY: rsk_programme_dev_key
       # Empty = announcements are dry runs (recorded, not posted).
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3002,https://events.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
       - ./Rally/infra/access-config.toml:/etc/rally/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
@@ -661,18 +664,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: events-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Rally
         RALLY_VERSION: dev
     container_name: conservices-events-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/rally.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - events-backend
     ports:
-      - "3002:80"
+      - "3002:8080"
 
   # Public event submission site (attendee-facing, own host and login realm).
   events-submit:
@@ -683,20 +684,17 @@ services:
       args:
         RALLY_APP: submit
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/attendees
-        VITE_OIDC_CLIENT_ID: rally-submit
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Event submissions
-        # Must match events-backend's PUBLIC_API_BUILTIN_KEY.
-        VITE_PUBLIC_SCHEDULE_KEY: rsk_programme_dev_key
         RALLY_VERSION: dev
     container_name: conservices-events-submit
+    volumes:
+      # Web app settings (/config.json). publicScheduleKey must match
+      # events-backend's PUBLIC_API_BUILTIN_KEY.
+      - ./infra/frontend-config/rally-submit.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - events-backend
     ports:
-      - "3004:80"
+      - "3004:8080"
 
   # ── Learn — profile: docker compose --profile learn up --build ────────────
   # Training module (courses, enrolments, completion, quizzes). Files live in
@@ -727,8 +725,8 @@ services:
     depends_on:
       learn-migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       mailpit:
         condition: service_started
       keycloak:
@@ -752,8 +750,9 @@ services:
       OIDC_EXTRA_AUDIENCES: den-spa
       ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3005,https://learn.conservices.test,https://den.conservices.test,http://localhost:3001
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       PUBLIC_BASE_URL: https://learn.conservices.test
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: learn-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -789,18 +788,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: learn-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Learn
         LEARN_VERSION: dev
     container_name: conservices-learn-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/learn.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - learn-backend
     ports:
-      - "3005:80"
+      - "3005:8080"
 
   # ── Desk — profile: docker compose --profile desk up --build ──────────────
   # Shared support inboxes (FreeScout-style). Dev mail: GreenMail holds the
@@ -852,6 +849,7 @@ services:
       OIDC_AUDIENCE: desk-spa
       ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3008,https://desk.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       # Encrypts stored mailbox passwords. Prod: a long random secret.
       DESK_SECRET_KEY: desk-dev-secret-change-me
       FETCH_INTERVAL: 20s
@@ -874,18 +872,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: desk-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Desk
         DESK_VERSION: dev
     container_name: conservices-desk-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/desk.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - desk-backend
     ports:
-      - "3008:80"
+      - "3008:8080"
 
   # ── Tasks — profile: docker compose --profile tasks up --build ────────────
   # Project and task tracking (ClickUp-style spaces, lists, boards).
@@ -932,11 +928,12 @@ services:
       OIDC_AUDIENCE: tasks-spa
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3009,https://tasks.conservices.test
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       # HR department hook (TASK-25). Applied when the container is
       # recreated at cutover; HR gets the matching DEPARTMENT_HOOKS then.
       TASKS_SERVICE_TOKEN: tasks-service-dev-token
       # Attachments (TASK-7)
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: tasks-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -957,18 +954,16 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: tasks-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Tasks
         TASKS_VERSION: dev
     container_name: conservices-tasks-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/tasks.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - tasks-backend
     ports:
-      - "3009:80"
+      - "3009:8080"
 
   # ── Tasks dev copy — profile: docker compose --profile tasks-dev up --build ─
   # Development instance against the tasks_dev database so the live Tasks
@@ -1018,11 +1013,12 @@ services:
       OIDC_AUDIENCE: tasks-spa
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3010
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       # Lets HR keep one space per department (TASK-25). Dev-only value;
       # the live pair is wired at cutover.
       TASKS_SERVICE_TOKEN: tasks-service-dev-token
       # Attachments (TASK-7)
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: tasks-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -1043,19 +1039,17 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.dev-stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: tasks-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Tasks (dev)
         TASKS_VERSION: dev
     image: conservices-tasks-dev-frontend
     container_name: conservices-tasks-dev-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/tasks-dev.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - tasks-dev-backend
     ports:
-      - "3010:80"
+      - "3010:8080"
 
   # ── Wiki — profile: docker compose --profile wiki up --build ──────────────
   # Notion-style pages in private and team spaces; content lives in S3.
@@ -1087,8 +1081,8 @@ services:
     depends_on:
       wiki-migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -1106,7 +1100,8 @@ services:
       OIDC_AUDIENCE: wiki-spa
       ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3007,https://wiki.conservices.test
-      S3_ENDPOINT: http://minio:9000
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
+      S3_ENDPOINT: http://s3:9000
       S3_BUCKET: wiki-data-dev
       S3_ACCESS_KEY_ID: conservices
       S3_SECRET_ACCESS_KEY: conservicesdev
@@ -1134,22 +1129,20 @@ services:
       dockerfile: infra/Dockerfile.frontend
       args:
         NGINX_CONF: nginx.stack.conf
-        VITE_AUTH_MODE: oidc
-        VITE_OIDC_AUTHORITY: https://auth.conservices.test/realms/conservices
-        VITE_OIDC_CLIENT_ID: wiki-spa
-        VITE_OIDC_SCOPE: openid profile email
-        VITE_PRODUCT_NAME: Wiki
         WIKI_VERSION: dev
     container_name: conservices-wiki-frontend
+    volumes:
+      # Web app settings (/config.json): sign-in address and client id.
+      - ./infra/frontend-config/wiki.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
       - wiki-backend
     ports:
-      - "3007:80"
+      - "3007:8080"
 
 volumes:
   conservices-postgres-data:
-  conservices-minio-data:
+  conservices-s3-data:
   conservices-caddy-data:
   conservices-caddy-ca:
   conservices-wiki-buffer:

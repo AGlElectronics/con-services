@@ -28,45 +28,45 @@ auth.conservices.test {
 }
 
 den.conservices.test {
-	reverse_proxy den-frontend:80
+	reverse_proxy den-frontend:8080
 }
 
 hr.conservices.test {
-	reverse_proxy hr-frontend:80
+	reverse_proxy hr-frontend:8080
 }
 
 stash.conservices.test {
-	reverse_proxy stash-frontend:80
+	reverse_proxy stash-frontend:8080
 }
 
 events.conservices.test {
-	reverse_proxy events-frontend:80
+	reverse_proxy events-frontend:8080
 }
 
 learn.conservices.test {
-	reverse_proxy learn-frontend:80
+	reverse_proxy learn-frontend:8080
 }
 
 finance.conservices.test {
-	reverse_proxy finance-frontend:80
+	reverse_proxy finance-frontend:8080
 }
 
 desk.conservices.test {
-	reverse_proxy desk-frontend:80
+	reverse_proxy desk-frontend:8080
 }
 
 tasks.conservices.test {
-	reverse_proxy tasks-frontend:80
+	reverse_proxy tasks-frontend:8080
 }
 
 wiki.conservices.test {
-	reverse_proxy wiki-frontend:80
+	reverse_proxy wiki-frontend:8080
 }
 
 # Public event submission site (attendees). Production host is configuration,
 # e.g. events.<convention-domain>.
 submit.conservices.test {
-	reverse_proxy events-submit:80
+	reverse_proxy events-submit:8080
 }
 
 mail.conservices.test {
@@ -77,9 +77,10 @@ db.conservices.test {
 	reverse_proxy adminer:8080
 }
 
-# Presigned URLs are signed for minio:9000; keep that Host so signatures match.
+# DEV S3 server (compose service "s3"). Presigned URLs are signed for
+# s3:9000; keep that Host so signatures match.
 s3.conservices.test {
-	reverse_proxy minio:9000 {
+	reverse_proxy s3:9000 {
 		header_up Host {upstream_hostport}
 	}
 }

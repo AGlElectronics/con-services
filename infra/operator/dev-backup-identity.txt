@@ -1,7 +1,7 @@
 # DEV ONLY backup decryption key for the local Docker stack. It is public
 # (committed to the repository), so dev backups are not secret. Never use it
 # anywhere else: production generates its own key with age-keygen and keeps
-# the secret key offline (see docs/operations.md).
+# the secret key offline (see docs/operations/databases-and-backups.md).
 # created: 2026-11-04T19:08:00+01:00
 # public key: age1777a9j365d2nmjl24nvp45jz8ww9sg4xv9n4h84rl4nay9xww39sc5t73k
 AGE-SECRET-KEY-1PA2EL8Y88HRUQEWD3P9R9FZR26CXL5LDH6AR6X9XFDFAWXZGJW4QRMSHL8

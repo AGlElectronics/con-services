@@ -174,7 +174,7 @@ stash | Documentation | Document PUBLIC_LOSTFOUND_CLAIM_ENABLED, VITE_PUBLIC_CLA
 stash | Documentation | Write user and admin guides for front desk, sign-outs, scanning, labels and access-config | normal | stash/docs has only plans and a deployment note; no operator guide for daily use or access administration
 stash | Documentation | Fix README quick-start claims about minio-init and the seeded dev-admin user | low | README.md:62,67 mention minio-init and a seeded dev-admin; compose has no minio-init and the seed user is deleted by migration
 stash | Documentation | Correct stale facts in the security hardening plan | low | security-hardening-plan.md:30,37,44 cite oidc_group_role_bindings, no anonymous paths and a public minio-init bucket
-stash | Documentation | Remove the personal absolute path from .env.example | low | stash/.env.example:58 STASH_ACCESS_CONFIG=C:/Users/alanv/AppData/Local/stash/access-config.toml
+stash | Documentation | Remove the personal absolute path from .env.example | low | stash/.env.example:58 STASH_ACCESS_CONFIG pointed at a user's local AppData folder (fixed: now a relative example path)
 stash | Documentation | Mark backend-plan-frontend-redesign.md as done or archive it | low | docs/backend-plan-frontend-redesign.md describes access, Lost & Found and dashboard work that is now implemented
 stash | Tests | Write the integration tests the CI integration job expects | normal | .gitlab-ci.yml:148-176 runs go test -tags=integration, but no _test.go has an integration build tag
 stash | Tests | Add sign-out lifecycle service tests (create, confirm, return, cancel, close) | high | service/signouts.go (574 lines) only has signouts_barcode_test.go; availability and stock math are untested

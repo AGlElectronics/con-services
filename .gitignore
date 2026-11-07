@@ -1,4 +1,6 @@
-# Each module has its own repository (AGlElectronics/den, hr, Rally, stash, …).
+# Each module has its own repository (AGlElectronics/den, hr, Rally, stash, …),
+# cloned into these folders by scripts/workspace.ps1 / workspace.sh. Keep this
+# list in sync with the scripts.
 /den/
 /hr/
 /Rally/
@@ -31,3 +33,6 @@
 Thumbs.db
 .idea/
 .vscode/
+
+# Argo CD GitOps repository (AGlElectronics/con-services-gitops).
+/con-services-gitops/
