@@ -95,7 +95,7 @@ jobs:
             dir="${dir%/}"
             # Example overlays read gitignored local/ files (certificates,
             # copies of infra/); empty stand-ins are enough to render.
-            grep -oE 'local/[A-Za-z0-9._/-]+' "$dir/kustomization.yaml" | sort -u | while read -r f; do
+            { grep -oE 'local/[A-Za-z0-9._/-]+' "$dir/kustomization.yaml" || true; } | sort -u | while read -r f; do
               mkdir -p "$(dirname "$dir/$f")"
               [ -e "$dir/$f" ] || echo "ci-stub" > "$dir/$f"
             done
