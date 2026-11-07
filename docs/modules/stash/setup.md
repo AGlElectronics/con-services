@@ -344,6 +344,7 @@ these defaults.
       frontend: { tag: "1.0.0-1" }
     route:
       host: stash.example.org
+    den: { mode: standalone }   # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://stash.example.org
       CORS_ALLOWED_ORIGINS: https://stash.example.org

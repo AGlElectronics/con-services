@@ -234,6 +234,9 @@ services:
       APP_BASE_URL: https://stash.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://stash:stash@postgres:5432/stash?sslmode=disable
       S3_ENDPOINT: http://s3:9000
@@ -316,6 +319,9 @@ services:
       APP_BASE_URL: https://hr.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       # Container :8080 (ecosystem convention); host 8110 avoids :8080 clashes.
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://hr:hr@postgres:5432/hr?sslmode=disable
@@ -424,6 +430,9 @@ services:
       APP_BASE_URL: https://finance.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       # Container :8080 (ecosystem convention); host 8130 (8120 is Learn).
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://finance:finance@postgres:5432/finance?sslmode=disable
@@ -619,6 +628,9 @@ services:
       APP_BASE_URL: https://events.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://events:events@postgres:5432/events?sslmode=disable
       S3_ENABLED: "true"
@@ -738,6 +750,9 @@ services:
       APP_BASE_URL: https://learn.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       # Container :8080 (ecosystem convention); host 8120 avoids :8080 clashes.
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://learn:learn@postgres:5432/learn?sslmode=disable
@@ -840,6 +855,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://desk.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://desk:desk@postgres:5432/desk?sslmode=disable
       AUTH_MODE: oidc
@@ -919,6 +937,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://tasks.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks?sslmode=disable
       AUTH_MODE: oidc
@@ -1004,6 +1025,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: http://localhost:3010
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://tasks:tasks@postgres:5432/tasks_dev?sslmode=disable
       AUTH_MODE: oidc
@@ -1091,6 +1115,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://wiki.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # standalone (dev default): no Den needed. required: the API waits for
+      # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
+      DEN_MODE: ${DEN_MODE:-standalone}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://wiki:wiki@postgres:5432/wiki?sslmode=disable
       AUTH_MODE: oidc

@@ -215,9 +215,58 @@ For any other module, replace `stash` with the module name.
 10. **Pair it** with Den: Den → **Modules → Pair**, then in the module
     **Settings → Den connection** (see
     [How the platform starts, step 4c](../getting-started/how-the-platform-starts.md#4c-pair-stash-with-den)).
+    Until then the module shows *Waiting for Den* and its API answers
+    `503 den_pairing_required` (`den.mode: required`, see
+    [Den mode](#den-mode)).
 
 Den itself has a chart too (`deploy/charts/den`); its install steps and
 values are on [Den configuration → Install with Helm](../modules/den/configuration.md#install-with-helm).
+
+## Den mode
+
+Every module chart sets the backend's `DEN_MODE` from the value `den.mode`
+([Required or standalone](../concepts/pairing.md#required-or-standalone)).
+Den's chart can list the modules on Den's Modules page in advance.
+
+| Value | Chart | Default | What it does |
+| --- | --- | --- | --- |
+| `den.mode` | every module | `required` | `required`: the module waits for Den; until it is paired, its API answers `503 den_pairing_required` and its web app shows *Waiting for Den*. `standalone`: the module works without Den (pairing stays optional). Rendered as `DEN_MODE` into `<release>-config`. Any other value, or setting `config.DEN_MODE` as well, stops `helm template` with an error. |
+| `preregisterModules` | Den | `[]` | Modules Den lists as unpaired from its first start, so an admin only clicks **Pair**: `[{slug, display_name, base_url}]` (optional `environment`; Rally's slug is `events`). Rendered as JSON into `DEN_PREREGISTER_MODULES` when not empty. Den adds unknown slugs at start-up and never changes or removes existing ones ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
+
+A module installed without Den sets:
+
+```yaml
+den:
+  mode: standalone
+```
+
+Den with two modules listed in advance:
+
+```yaml
+preregisterModules:
+  - { slug: stash, display_name: Stash, base_url: https://stash.con.example.org }
+  - { slug: events, display_name: Rally, base_url: https://events.con.example.org }
+```
+
+Check what the chart renders:
+
+```sh
+helm template stash deploy/charts/stash --set den.mode=standalone | grep DEN_MODE
+```
+
+```text
+  DEN_MODE: "standalone"
+```
+
+A typo fails early:
+
+```sh
+helm template stash deploy/charts/stash --set den.mode=optional
+```
+
+```text
+Error: execution error at (stash/templates/deployment.yaml:49:28): den.mode must be "required" or "standalone", not "optional"
+```
 
 ## Exposing the web app (Gateway API)
 
@@ -539,7 +588,7 @@ spec:
   project: default
   sources:
     - repoURL: https://github.com/AGlElectronics/con-services.git
-      targetRevision: v1.0.0          # a tag of con-services, never a branch
+      targetRevision: v1.1.0          # a tag of con-services, never a branch
       path: deploy/charts/stash
       helm:
         valueFiles:
@@ -668,6 +717,15 @@ Keep `CreateNamespace=false`: the namespace needs the labels from step 3.
 : The cluster lacks Cilium's or the Gateway API CRDs (`BackendTLSPolicy`
   `v1` needs Gateway API v1.4 or later). Install them, or set
   `networkPolicy.gateway.cilium: false` / `route.enabled: false`.
+
+**The module shows *Waiting for Den* and its API answers `503 den_pairing_required`**
+: Working as designed with `den.mode: required` (the default) until the
+  module is paired. Pair it from Den (step 10). If this module runs without
+  Den, set `den.mode: standalone` and run `helm upgrade`.
+
+**`den.mode must be "required" or "standalone"`** or **`config.DEN_MODE is not allowed`**
+: Set only `den.mode`, to one of the two values; remove `DEN_MODE` from
+  `config`.
 
 **Uploads fail with `413 Request Entity Too Large`**
 : Raise `frontend.clientMaxBodySize`; the gateway has no limit of its own.

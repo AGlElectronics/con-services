@@ -139,6 +139,7 @@ Follow [Run one module on Kubernetes](../../getting-started/standalone-kubernete
 skipping the access config step (Finance has none). Values:
 
 ```yaml
+den: { mode: standalone }   # no Den: do not wait for pairing
 config:
   APP_BASE_URL: https://finance.example.org
   OIDC_ISSUER_URL: https://login.example.org/realms/conservices

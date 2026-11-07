@@ -41,6 +41,7 @@ every problem.
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `learn-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). |
+| `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 
 ### Storage

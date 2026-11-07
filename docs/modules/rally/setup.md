@@ -320,6 +320,7 @@ what is specific to Rally:
       frontend: { tag: "1.0.0-1" }
     route:
       host: events.example.org
+    den: { mode: standalone }   # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://events.example.org
       CORS_ALLOWED_ORIGINS: https://events.example.org

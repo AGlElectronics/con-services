@@ -86,6 +86,7 @@ the bucket on first start if it does not exist and the keys allow it.
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces scheme and host of a pasted Den pairing URL, for when the backend reaches Den at a different address than browsers (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty for standalone installs. |
+| `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `PUBLIC_LOSTFOUND_CLAIM_ENABLED` | `false` | no | ConfigMap | Turns on the guest Lost & Found lookup (`/api/public/lostfound`, no sign-in). Leave off until guest kiosks are ready. Pair with `publicClaimEnabled` in the web app's `/config.json` (the Helm chart derives it from this setting). |
 
 ## Other variables

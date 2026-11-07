@@ -1,4 +1,4 @@
-# Finance Helm chart values. STUB (chart version 0.2.1).
+# Finance Helm chart values. STUB (chart version 0.3.0).
 # Docs: https://aglelectronics.github.io/con-services/modules/finance/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -53,6 +53,17 @@ config:
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
   TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
+
+# Den pairing. Docs: https://aglelectronics.github.io/con-services/concepts/pairing/#required-or-standalone
+#   required:   until an admin pairs the module from Den's Modules page, its
+#               API answers 503 den_pairing_required and the web app shows
+#               "Waiting for Den". The reference setup.
+#   standalone: the module works on its own; pairing with Den is optional.
+#               For a module installed without Den.
+# Rendered as DEN_MODE into the ConfigMap "<release>-config" (do not set
+# config.DEN_MODE as well). Any other value stops the chart.
+den:
+  mode: required
 
 # Internal TLS: the backend and the web app serve HTTPS inside the cluster
 # with certificates from cert-manager, and check the certificates of the

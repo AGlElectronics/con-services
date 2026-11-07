@@ -189,6 +189,7 @@ Follow [Run one module on Kubernetes](../../getting-started/standalone-kubernete
 with these Learn values:
 
 ```yaml
+den: { mode: standalone }   # no Den: do not wait for pairing
 config:
   APP_BASE_URL: https://learn.example.org
   PUBLIC_BASE_URL: https://learn.example.org

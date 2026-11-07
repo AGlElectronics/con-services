@@ -10,7 +10,14 @@ Keycloak serving `https://auth.<domain>`.
 
 **You are done when:** every Application in `kubectl get applications -n argocd`
 is `Synced` and `Healthy`, you can sign in to `https://den.<domain>` as an
-admin, and Den admin → Modules shows every module as **paired**.
+admin, and Den admin → Modules shows every module you selected as
+**paired**.
+
+Modules are **opt-in**: `cluster.yaml` lists all eight with
+`enabled: false`, and only Den is installed until you enable some. Every
+module you enable waits for Den (`den.mode: required`) and shows
+*Waiting for Den* until you pair it; see
+[Required or standalone](../concepts/pairing.md#required-or-standalone).
 
 Secrets on this page (database URLs, S3 keys, service tokens, the GitHub
 token) live in OpenBao; see [Secrets](../operations/secrets.md).
@@ -40,10 +47,18 @@ Every Application pins the chart to the same tag of `con-services`
 (`charts.targetRevision`) and every image to an exact tag (`images.tag`,
 for example `1.0.0-1`). Nothing uses `latest`.
 
-!!! note "Chart tag `v1.0.0`"
-    The template points at the tag `v1.0.0` of `con-services`, which is
-    created with the first release. Until it exists Argo CD shows
-    `unable to resolve 'v1.0.0' to a commit SHA`.
+!!! note "Chart tag `v1.1.0`"
+    The template points at the tag `v1.1.0` of `con-services`, the first
+    release whose charts know `den.mode` and `preregisterModules`. Until
+    that tag exists Argo CD shows
+    `unable to resolve 'v1.1.0' to a commit SHA`.
+
+The root chart also sets two values that connect the modules to Den:
+
+| Application | Value | Set to |
+| --- | --- | --- |
+| every module | `den.mode` | `required`, always. `cluster.yaml` has no option to change it, and the root chart stops if `modules.<module>.values.den.mode` tries. |
+| `den` | `preregisterModules` | One entry per enabled module: `slug` (Rally: `events`), `display_name` (`Stash`, `HR`, `Rally`, `Finance`, `Learn`, `Wiki`, `Desk`, `Tasks`) and `base_url` `https://<host>.<domain>`. Den lists them on its Modules page as unpaired ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
 
 ### Where each module's secrets come from
 
@@ -134,16 +149,37 @@ GitHub.
 
 ## Deploy
 
-1. **Choose the modules.** In `cluster.yaml`, set `enabled: false` for the
-   modules you do not want:
+1. **Select the modules.** In `cluster.yaml`, the block under
+   *Pick the modules to run* lists all eight. Set `enabled: true` for the
+   ones you want, for example Stash, HR and Rally:
 
     ```yaml
+    # Pick the modules to run (Den is always deployed). Each module waits for Den
+    # until you pair it from the Den dashboard.
     modules:
-      stash:   { enabled: true,  imageTag: "", accessConfig: "", values: {} }
-      finance: { enabled: false, imageTag: "", values: {} }
+      stash:   { enabled: true }
+      hr:      { enabled: true }
+      rally:   { enabled: true }
+      finance: { enabled: false }
+      learn:   { enabled: false }
+      wiki:    { enabled: false }
+      desk:    { enabled: false }
+      tasks:   { enabled: false }
     ```
 
-    Den is always installed.
+    Den is always installed. With every module at `false`, the cluster runs
+    Den alone; that is a valid setup. Check which Applications the root
+    chart will create:
+
+    ```sh
+    helm template root charts/root -f cluster.yaml --show-only templates/modules.yaml | grep "^  name:"
+    ```
+
+    ```text
+      name: stash
+      name: hr
+      name: rally
+    ```
 
 2. **Check the values Den and the modules need:**
 
@@ -171,8 +207,8 @@ GitHub.
 
     No `Still missing` list should appear.
 
-4. **Commit and push.** Argo CD deploys Den first (wave 5) and the modules
-   once Den is healthy (wave 10). Watch:
+4. **Commit and push (sync).** Argo CD deploys Den first (wave 5) and the
+   selected modules once Den is healthy (wave 10). Watch:
 
     ```sh
     kubectl get applications -n argocd
@@ -181,19 +217,30 @@ GitHub.
     ```text
     NAME       SYNC STATUS   HEALTH STATUS
     den        Synced        Healthy
-    desk       Synced        Healthy
-    finance    Synced        Healthy
     hr         Synced        Healthy
-    learn      Synced        Healthy
     rally      Synced        Healthy
     stash      Synced        Healthy
-    tasks      Synced        Healthy
-    wiki       Synced        Healthy
     ...
     ```
 
+    Only the modules you enabled have an Application.
+
 5. **Open Den:** `https://den.<domain>` must show the sign-in page of
    Keycloak with the Con Services theme.
+6. **Open a module**, for example `https://stash.<domain>`. Before it is
+   paired it shows *Waiting for Den* (or, for the module's admins,
+   *Connect this module to Den*). Its API says the same:
+
+    ```sh
+    curl -s https://stash.<domain>/api/den/state
+    ```
+
+    ```json
+    {"mode":"required","paired":false}
+    ```
+
+    Continue with [First admin](#first-admin) and
+    [Pair the modules](#pair-the-modules).
 
 ### Change a module's settings
 
@@ -256,22 +303,38 @@ them in Keycloak (`hr-provisioner`).
 
 **Pairing** connects a module to Den with a one-time URL, so the module
 follows Den's branding and settings; see [Pairing](../concepts/pairing.md).
-For each module:
+Until a module is paired it is locked: its web app shows *Waiting for Den*
+and its API answers `503 den_pairing_required`. For each module:
 
-1. In Den admin → **Modules → New module**: slug (for example `stash`),
-   name, and address (`https://stash.<domain>`). Den's operator runs with
-   `MANAGED_DATABASES=false`, so there is no *Create a database for it*
-   option: the databases already exist ([Data](data.md#roles-and-databases)).
-2. **Pair**: Den shows a pairing URL, valid 15 minutes and usable once.
-3. Open the module (`https://stash.<domain>`), sign in as an admin, go to
-   its **Den connection** settings and paste the URL.
+1. **Find it in Den.** Den admin → **Modules** already lists every module
+   you enabled in `cluster.yaml`, with its name (for example *Stash*), its
+   address (`https://stash.<domain>`) and the status **unpaired**. The
+   root chart registered them through `preregisterModules`; you do not
+   need **New module**. (Den's operator runs with
+   `MANAGED_DATABASES=false`; the databases already exist, see
+   [Data](data.md#roles-and-databases).)
+2. **Pair**: click **Pair** on the module's row. Den shows a pairing URL,
+   valid 15 minutes and usable once.
+3. **Paste it in the module.** Open the module (`https://stash.<domain>`)
+   and sign in as one of its admins. The page *Connect this module to Den*
+   has a field for the URL; paste it and confirm. (Later, the same field
+   is under the module's **Den connection** settings.)
 
     The module redeems it inside the cluster through
     `DEN_INTERNAL_URL` (`https://den-backend.conservices-den.svc.cluster.local:8080`,
     set by the charts), so the token never leaves the cluster.
 
-4. Den admin → Modules shows the module as **paired**, and the module shows
-   Den's logo within a minute.
+4. **The module unlocks.** The waiting page disappears and the module
+   works normally; within a minute it shows Den's logo. Den admin →
+   Modules shows it as **paired**, and the module's state confirms it:
+
+    ```sh
+    curl -s https://stash.<domain>/api/den/state
+    ```
+
+    ```json
+    {"mode":"required","paired":true}
+    ```
 
 ## Upgrade
 
@@ -285,9 +348,9 @@ A release of Con Services bumps the chart tag and the image tags together.
 
     ```yaml
     charts:
-      targetRevision: v1.1.0
+      targetRevision: v1.2.0
     images:
-      tag: "1.1.0-1"
+      tag: "1.2.0-1"
     ```
 
     All images of a module share one tag. To hold one module back, set its
@@ -309,8 +372,8 @@ from a chart `deploy/charts/shop` in `con-services`:
 
 1. **Root chart:** add `shop` to `root.moduleNames` and a line to
    `root.moduleMeta` in `charts/root/templates/_helpers.tpl` (host prefix,
-   database role, whether it uses S3, has a migrate image, reads an access
-   config), and add `shop` under `modules` in `charts/root/values.yaml`,
+   database role, Den slug and display name for `preregisterModules`,
+   whether it uses S3, has a migrate image, reads an access config), and add `shop` under `modules` in `charts/root/values.yaml`,
    `charts/root/values.schema.json` and your `cluster.yaml`. This gives it
    an Application, a database and role
    ([details](data.md#add-a-database-for-a-new-module)), and, if it uses S3,
@@ -333,12 +396,16 @@ from a chart `deploy/charts/shop` in `con-services`:
 
 ## Remove a module
 
-1. In Den admin → Modules → **Remove**, choose **Remove only, keep its
-   data**. (Den does not drop databases in this setup.)
-2. Set `modules.<module>.enabled: false` in `cluster.yaml`, commit and
+1. Set `modules.<module>.enabled: false` in `cluster.yaml`, commit and
    push. Argo CD deletes the module's Application with its Deployments,
-   Services and Secrets. The namespace stays; delete it with
+   Services and Secrets, and drops the module from Den's
+   `preregisterModules`. The namespace stays; delete it with
    `kubectl delete namespace conservices-<module>` when it is empty.
+2. Once Den has restarted with the new list (Argo CD rolls it out with the
+   same push), in Den admin → Modules → **Remove**, choose **Remove only,
+   keep its data**. (Den does not drop databases in this setup.) In the
+   other order, Den would list the module again, unpaired, at its next
+   start.
 3. The database and the bucket are **kept**: CloudNativePG stops managing
    the role but does not drop it, and the `Database` object uses
    `databaseReclaimPolicy: retain`.
@@ -370,9 +437,36 @@ from a chart `deploy/charts/shop` in `con-services`:
   `kubectl describe externalsecret -n conservices-stash stash-secrets`; the
   event names the missing OpenBao entry. Run the seed script for it.
 
-**Argo CD: `unable to resolve 'v1.0.0' to a commit SHA`**
+**Argo CD: `unable to resolve 'v1.1.0' to a commit SHA`**
 : The chart tag does not exist in `con-services` yet. See the note at the
   top of this page.
+
+**A module stays on *Waiting for Den* after pairing**
+: Check what the module itself reports:
+  `curl -s https://<module-host>.<domain>/api/den/state`. With
+  `"paired":false` the pairing did not go through: the Den connection page
+  shows the error (see the next entries); pair again. With `"paired":true`
+  the web app still shows the old state: reload the page (Ctrl+F5). Every
+  module in this template runs with `den.mode: required` on purpose; it
+  cannot be switched to standalone from `cluster.yaml`.
+
+**A module is not listed on Den's Modules page**
+: Den registers the modules from `preregisterModules` when it starts.
+  Check that the module is `enabled: true` in `cluster.yaml` and that the
+  push reached the cluster (`kubectl get application <module> -n argocd`),
+  then look at what Den received:
+  `kubectl get configmap den-config -n conservices-den -o jsonpath='{.data.DEN_PREREGISTER_MODULES}'`.
+  If the module is in that list but not on the page, Den has not restarted
+  since: `kubectl rollout restart deploy/den-backend -n conservices-den`.
+  If you removed the module in Den on purpose, it comes back at the next
+  start as long as it is enabled; disable it first (see
+  [Remove a module](#remove-a-module)). As a last resort, add it by hand
+  with **New module** (slug, name and address from the table under
+  [What is deployed](#what-is-deployed)).
+
+**Pasting the URL fails with `pairing token expired` or `already consumed`**
+: Pairing URLs are valid for 15 minutes and work once. Click **Pair** in
+  Den again and paste the new URL straight away.
 
 **The modules stay `OutOfSync`/waiting while Den is `Progressing`**
 : Working as designed: the modules (wave 10) start only after Den (wave 5)

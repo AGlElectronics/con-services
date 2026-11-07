@@ -381,3 +381,15 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- end }}
 {{- toPrettyJson $out -}}
 {{- end -}}
+
+{{/* DEN_MODE of the backend from den.mode: "required" or "standalone". */}}
+{{- define "learn.denMode" -}}
+{{- $mode := (.Values.den | default dict).mode | default "required" -}}
+{{- if hasKey .Values.config "DEN_MODE" -}}
+{{- fail "config.DEN_MODE is not allowed: set den.mode instead" -}}
+{{- end -}}
+{{- if not (has $mode (list "required" "standalone")) -}}
+{{- fail (printf "den.mode must be \"required\" or \"standalone\", not %q" (toString $mode)) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}

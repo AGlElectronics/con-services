@@ -2,14 +2,51 @@
 
 **Pairing** connects a module (HR, Stash, Rally, …) to Den. A paired module
 follows Den's brand and organisation settings, and shares each person's
-theme preference with the rest of the suite. A module that is not paired is
-**standalone**: it works on its own, with its own settings and its default
-look.
+theme preference with the rest of the suite. What a module does before it
+is paired depends on its **Den mode** (see
+[Required or standalone](#required-or-standalone)): on Kubernetes it waits
+for Den; in standalone mode it works on its own, with its own settings and
+its default look.
 
 Pairing uses a one-time **pairing URL**. An admin makes one in Den, pastes it
 into the module, and the module exchanges it for a long-lived **module
 credential**. No passwords or storage keys change hands. The reasoning is in
 [ADR 0002](https://github.com/AGlElectronics/den/blob/main/docs/adr/0002-pairing-url-and-token.md).
+
+## Required or standalone
+
+Every module backend reads the setting `DEN_MODE`. It decides whether the
+module may be used before it is paired:
+
+| `DEN_MODE` | Before pairing | Where it is the default |
+| --- | --- | --- |
+| `required` | The module **waits for Den**. Its API answers `503 den_pairing_required` (see [below](#the-503-den_pairing_required-error)) and its web app shows *Connect this module to Den* to the module's admins and *Waiting for Den* to everyone else. Once paired, it works normally. | Every Kubernetes setup: the Helm charts (`den.mode: required`), the Kustomize manifests and the GitOps template. |
+| `standalone` | The module works on its own. Pairing with Den is optional and can happen at any time. | The Docker Compose development stack, and a module started without the setting at all. |
+
+`required` is the reference setup: an organisation runs Den, and a module
+that is not connected to it would otherwise start with its own settings
+and look, and people would begin using it that way. Use `standalone` only
+for a module you run without Den, for example
+[one module on its own on Kubernetes](../getting-started/standalone-kubernetes.md).
+
+How to set it:
+
+| Setup | Setting |
+| --- | --- |
+| Helm chart | `den.mode: required` or `standalone` ([Helm](../operations/helm.md)). The chart stops with an error on any other value. |
+| Kustomize | `DEN_MODE=required` in the module's ConfigMap (`stash-config`); patch it to `standalone` in your overlay for a module without Den. |
+| GitOps template | Always `required`; there is no option in `cluster.yaml`. Enabled modules are listed on Den's Modules page from the start ([Deploy the apps](../deploy/apps.md)). |
+| Docker Compose | `DEN_MODE` in the root `.env` file, default `standalone`. |
+
+While a module waits, these paths still answer, so the web app can sign
+people in, show the waiting page and let an admin pair the module:
+`/api/health`, the brand endpoints (`/api/brand…`), `/api/role-catalog`,
+`/api/me…` and the Den connection endpoints (`/api/den…`, including
+[`GET /api/den/state`](#den-mode-and-pairing-state)).
+
+Switching a module from `required` to `standalone` (or back) needs only a
+restart with the new value; no data changes. Unpairing a module in
+`required` mode puts it back into the waiting state.
 
 ## How it works
 
@@ -44,18 +81,25 @@ Seen from the module, the connection moves through these states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Standalone
+    state "Waiting for Den" as Waiting
+    [*] --> Waiting: DEN_MODE=required
+    [*] --> Standalone: DEN_MODE=standalone
+    Waiting --> Paired: admin pastes a pairing URL,<br/>redeem succeeds
     Standalone --> Paired: admin pastes a pairing URL,<br/>redeem succeeds
     Paired --> Paired: bundle every minute
     Paired --> Unreachable: Den does not answer
     Unreachable --> Paired: Den answers again
     Paired --> Rejected: Den answers 401<br/>(module removed in Den)
     Rejected --> Paired: pair again with a new URL
-    Paired --> Standalone: admin disconnects in the module
-    Rejected --> Standalone: admin disconnects in the module
+    Paired --> Standalone: admin disconnects<br/>(DEN_MODE=standalone)
+    Paired --> Waiting: admin disconnects<br/>(DEN_MODE=required)
+    Rejected --> Standalone: admin disconnects<br/>(DEN_MODE=standalone)
+    Rejected --> Waiting: admin disconnects<br/>(DEN_MODE=required)
 ```
 
-While **Unreachable**, the module keeps using the last bundle it stored.
+**Waiting for Den** only exists with `DEN_MODE=required`: the API answers
+`503 den_pairing_required` for everything except the paths listed in
+[Required or standalone](#required-or-standalone). While **Unreachable**, the module keeps using the last bundle it stored.
 **Rejected** is shown on the module's Den connection page as an error with
 advice to pair again. Both are described in
 [When Den is not there](#when-den-is-not-there).
@@ -155,10 +199,13 @@ The exact endpoints are in the
 
 ## When Den is not there
 
-Den is optional, and modules are built to keep working without it.
+With `DEN_MODE=standalone`, Den is optional and modules are built to keep
+working without it. With `DEN_MODE=required`, a module needs Den only until
+it is paired; after that the rules below apply in both modes.
 
-**Never paired.** The module is standalone. It uses its own settings page and
-its default look.
+**Never paired.** With `standalone`, the module uses its own settings page
+and its default look. With `required`, it shows *Waiting for Den* and its
+API answers `503 den_pairing_required`.
 
 **Paired, but Den is unreachable.** The module keeps the last bundle it
 received (it stores it in its own database, so this survives a restart) and
@@ -249,6 +296,81 @@ Other `pairing_failed` messages you may see:
 
 A module that is not paired answers `GET /api/v1/den` with
 `{"paired": false}`.
+
+### Den mode and pairing state
+
+`GET /api/den/state` tells a web app (or a monitoring check) whether the
+module waits for Den. Every module serves it at this path.
+
+- **Who may call it:** anyone. It needs no token, so the web app can ask
+  before anyone signs in. It reveals only the mode and whether the module
+  is paired.
+- **Request body:** none.
+- **Response:** `200` with
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `required` or `standalone`, the module's `DEN_MODE`. |
+| `paired` | `true` when the module holds a credential from Den. |
+
+- **Errors:** none of its own; `5xx` only when the backend itself is broken.
+
+```sh
+curl -s https://stash.conservices.test/api/den/state
+```
+
+A module on Kubernetes that nobody has paired yet:
+
+```json
+{"mode":"required","paired":false}
+```
+
+After pairing:
+
+```json
+{"mode":"required","paired":true}
+```
+
+The web app reads it at start-up: with `"mode":"required"` and
+`"paired":false` it shows *Connect this module to Den* to the module's
+admins (with the field for the pairing URL) and *Waiting for Den* to
+everyone else.
+
+### The 503 den_pairing_required error
+
+While a module with `DEN_MODE=required` is not paired, every API call
+except the ones listed in [Required or standalone](#required-or-standalone)
+answers `503 Service Unavailable` with:
+
+```json
+{"error":{"code":"den_pairing_required","message":"This module is waiting to be connected to Den."}}
+```
+
+For example, listing Stash's items before Stash is paired:
+
+```sh
+curl -s -i https://stash.conservices.test/api/items -H "Authorization: Bearer $TOKEN"
+```
+
+```text
+HTTP/2 503
+content-type: application/json
+
+{"error":{"code":"den_pairing_required","message":"This module is waiting to be connected to Den."}}
+```
+
+What to do: pair the module (Den admin → **Modules → Pair**, then paste the
+URL into the module's Den connection page). If the module should run
+without Den, set `DEN_MODE=standalone` (Helm: `den.mode: standalone`) and
+restart it. Scripts and integrations that call a module's API should treat
+this code as "not ready yet" and retry later, not as a failure of the
+request itself.
+
+This includes calls between modules and public pages: until Wiki and
+Tasks are paired, HR's notifications to them (`POST /api/internal/offboarded`,
+`POST /api/internal/departments`) get the same `503`, and Rally's public
+submission site shows only its branding. Pair every module you run before
+you rely on these connections.
 
 ## Trying it out
 

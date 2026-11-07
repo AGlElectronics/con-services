@@ -37,6 +37,7 @@ Finance has no access config file.
 | `OIDC_AUDIENCE` | none | no | no | Normally `finance-spa`. |
 | `FINANCE_ACCESS_GROUPS` | `finance-admin` | no | no | Comma-separated Keycloak groups allowed to use Finance (with `oidc`). Members get full access; everyone else gets `403`. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); empty without Den. |
+| `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `S3_ENDPOINT` | none | no | no | Reserved for invoice PDFs; Finance stores no files yet. If **any** `S3_*` value below (endpoint or keys) is set, the endpoint, bucket and both keys become required. |
 | `S3_BUCKET` | `finance-data-dev` | no | no | Reserved. |
 | `S3_ACCESS_KEY_ID` | none | no | **yes** | Reserved. |

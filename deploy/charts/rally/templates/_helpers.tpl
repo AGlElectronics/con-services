@@ -617,3 +617,15 @@ spec:
             - port: {{ $root.Values.frontend.port | quote }}
               protocol: TCP
 {{- end -}}
+
+{{/* DEN_MODE of the backend from den.mode: "required" or "standalone". */}}
+{{- define "rally.denMode" -}}
+{{- $mode := (.Values.den | default dict).mode | default "required" -}}
+{{- if hasKey .Values.config "DEN_MODE" -}}
+{{- fail "config.DEN_MODE is not allowed: set den.mode instead" -}}
+{{- end -}}
+{{- if not (has $mode (list "required" "standalone")) -}}
+{{- fail (printf "den.mode must be \"required\" or \"standalone\", not %q" (toString $mode)) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}

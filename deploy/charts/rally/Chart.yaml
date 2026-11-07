@@ -5,7 +5,7 @@ description: >-
   public schedule API, live-day announcements). STUB: first scaffold, not
   yet tested on a cluster.
 type: application
-version: 0.2.2
+version: 0.3.0
 appVersion: "0.0.0"
 home: https://aglelectronics.github.io/con-services/modules/rally/
 sources:

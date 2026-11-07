@@ -176,6 +176,7 @@ with these Tasks values:
 - Values:
 
     ```yaml
+    den: { mode: standalone }   # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://tasks.example.org
       OIDC_ISSUER_URL: https://login.example.org/realms/conservices

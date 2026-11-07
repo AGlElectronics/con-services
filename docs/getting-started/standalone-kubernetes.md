@@ -13,6 +13,13 @@ full platform.
     [pair](../concepts/pairing.md) the module then; nothing has to be
     reinstalled.
 
+    On Kubernetes every module **waits for Den by default**
+    (`DEN_MODE=required`): until it is paired, its API answers
+    `503 den_pairing_required` and the web app shows *Waiting for Den*.
+    A standalone module must therefore switch this off with
+    `DEN_MODE=standalone` (Helm: `den.mode: standalone`), as shown in step 4.
+    See [Required or standalone](../concepts/pairing.md#required-or-standalone).
+
 ## What a module needs
 
 Even on its own, a module depends on three services. You provide them:
@@ -81,7 +88,7 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
 
 === "Helm chart"
 
-    The chart in `deploy/charts/stash` (a first version, `0.2.0`) never
+    The chart in `deploy/charts/stash` (version `0.3.0`) never
     creates Secrets or the namespace; it uses what you made in steps 1–3.
     Write your settings into a values file (`route.parentRefs` names your
     Gateway and its HTTPS listener):
@@ -91,6 +98,8 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
     image:
       backend:  { tag: "1.0.0-1" }
       frontend: { tag: "1.0.0-1" }
+    den:
+      mode: standalone              # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://stash.example.org
       OIDC_ISSUER_URL: https://login.example.org/realms/conservices
@@ -133,6 +142,24 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
     and `conservices-identity` and add rules for your database, S3 and
     identity provider instead (see
     [Network policies](../operations/network-policies.md#external-services)).
+
+    The base sets `DEN_MODE=required`, so set it to `standalone` in the
+    same merge, with a comment why:
+
+    ```yaml
+    # deploy/kubernetes/overlays/my-stash/kustomization.yaml (excerpt)
+    configMapGenerator:
+      - name: stash-config
+        namespace: conservices-stash
+        behavior: merge
+        literals:
+          # No Den in this cluster: do not wait for pairing.
+          - DEN_MODE=standalone
+          - DEN_INTERNAL_URL=
+          - APP_BASE_URL=https://stash.example.org
+          - OIDC_ISSUER_URL=https://login.example.org/realms/conservices
+          - CORS_ALLOWED_ORIGINS=https://stash.example.org
+    ```
 
     ```sh
     kubectl apply -k deploy/kubernetes/overlays/my-stash
@@ -182,7 +209,17 @@ stash-frontend-6c8b5d9f7-p4ncs    1/1     Running   0          40s
 ```
 
 Stash migrates its database when it starts, so keep the backend at **one
-replica**. Then open your module address and sign in with an account in one
+replica**. Check that it does not wait for Den:
+
+```sh
+curl -s https://stash.example.org/api/den/state
+```
+
+```json
+{"mode":"standalone","paired":false}
+```
+
+Then open your module address and sign in with an account in one
 of the groups from the access config.
 
 ## Adding Den later
@@ -195,6 +232,9 @@ When you later deploy the platform ([How the platform starts](how-the-platform-s
    because the database already exists).
 3. Pair it: Den → **Modules** → **Pair**, then Stash → **Settings → Den
    connection**.
+4. Optional: switch back to the reference setup with `den.mode: required`
+   (Kustomize: drop the `DEN_MODE=standalone` line), so the module would
+   wait for Den again if it is ever unpaired.
 
 ## Other modules
 
@@ -213,6 +253,12 @@ Look at the pods and the backend's last log lines first:
 kubectl get pods -n conservices-stash
 kubectl logs -n conservices-stash deploy/stash-backend --tail 30
 ```
+
+**The web app shows *Waiting for Den* and the API answers `503 den_pairing_required`**
+: The module still runs with `DEN_MODE=required`, the Kubernetes default.
+  Set `den.mode: standalone` (Kustomize: `DEN_MODE=standalone` in
+  `stash-config`) and run `helm upgrade` (or `kubectl apply -k`; the
+  ConfigMap's new name restarts the backend).
 
 **The backend restarts with an OIDC error** (`oidc discovery`, `x509`, `no such host`)
 : It cannot reach or does not trust your issuer. Check `OIDC_ISSUER_URL`,

@@ -37,6 +37,7 @@ of every problem.
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `desk-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); empty without Den. |
+| `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 | `DESK_SECRET_KEY` | a fixed development key, **only** with `APP_ENV=development` | **yes** outside development | **yes** | Encrypts the IMAP and SMTP passwords stored per mailbox (AES-GCM; any length, hashed to a 256-bit key). Generate with `openssl rand -hex 32`. **Changing it makes stored mailbox passwords unreadable**; they must then be entered again. |
 | `FETCH_INTERVAL` | `60s` | no | no | How often every mailbox is polled over IMAP. |

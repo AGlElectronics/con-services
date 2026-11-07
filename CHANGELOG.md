@@ -9,6 +9,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-07
+
+### Added
+
+- Helm charts (every module, version 0.3.0): `den.mode` (`required` by
+  default, or `standalone`), rendered as `DEN_MODE` into the backend's
+  ConfigMap. With `required`, a module waits for Den until it is paired:
+  its API answers `503 den_pairing_required` and its web app shows
+  *Waiting for Den*. `helm template` stops on any other value and when
+  `config.DEN_MODE` is set as well. See
+  [Required or standalone](docs/concepts/pairing.md#required-or-standalone).
+- Den's Helm chart (version 0.2.0): `preregisterModules` (default `[]`),
+  rendered as JSON into `DEN_PREREGISTER_MODULES` when not empty. Den lists
+  these modules as unpaired on its Modules page from the first start, so an
+  admin only clicks **Pair**. See
+  [Modules registered at start-up](docs/modules/den/configuration.md#modules-registered-at-start-up).
+- Docker Compose: every module backend gets `DEN_MODE`, default
+  `standalone`; set `DEN_MODE=required` in `.env` to try the Kubernetes
+  behaviour. Documented in `.env.example`.
+- CI: the deploy validation workflow runs `scripts/check-den-mode.py` and
+  fails when a module backend rendered from a chart with default values, or
+  from a Kustomize tree (including the production overlay), does not get
+  `DEN_MODE=required`.
+- Documentation: the `GET /api/den/state` endpoint and the
+  `503 den_pairing_required` error with `curl` examples, a *Waiting for Den*
+  state in the pairing state diagram, `DEN_MODE` on every module's
+  configuration page, `DEN_PREREGISTER_MODULES` on Den's, the `Den mode`
+  values on [Helm](docs/operations/helm.md#den-mode), and the
+  select → sync → pair → unlock steps with troubleshooting on
+  [Den and the modules](docs/deploy/apps.md).
+
+### Changed
+
+- **BREAKING:** Every Kubernetes setup now makes modules wait for Den: the Helm charts
+  default to `den.mode: required`, and the Kustomize Stash base
+  (`deploy/kubernetes/modules/stash`) sets `DEN_MODE=required`. After the
+  upgrade, a module that was never paired shows *Waiting for Den* until
+  you pair it (Den → Modules → Pair). Modules already paired keep working.
+  A module you run **without Den** must now set `den.mode: standalone`
+  (Helm) or `DEN_MODE=standalone` in its ConfigMap (Kustomize); see
+  [Run one module on Kubernetes](docs/getting-started/standalone-kubernetes.md).
+  The code default and Docker Compose stay `standalone`.
+- The GitOps template pins the charts to `v1.1.0` (`charts.targetRevision`),
+  makes every module opt-in, always deploys modules with
+  `den.mode: required` and fills Den's `preregisterModules` from the enabled
+  modules; see its CHANGELOG.
+- Documentation: the standalone Helm examples on every module's setup page
+  set `den.mode: standalone`, and the Argo CD, Kustomize remote base and
+  Helm GitOps examples pin `v1.1.0`.
+
+### Security
+
+- The trial PostgreSQL and S3 (SeaweedFS) containers in
+  `deploy/kubernetes/base/data/` run with a read-only root file system and
+  a writable `/tmp`. The trial Keycloak (`start-dev`) cannot, because it
+  rebuilds into its own image at startup; it has a dated waiver in
+  `.trivyignore.yaml`. Production runs Keycloak through the Keycloak
+  Operator.
+- The CI runner image (`ghcr.io/aglelectronics/ci-runner:2.338.2-1`) no
+  longer contains the unused npm of the runner's Node 20, which carried
+  node-tar 6.2.1 (CVE-2026-59873, critical).
+
 ## [1.0.0] - 2026-11-07
 
 ### Added

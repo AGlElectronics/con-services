@@ -10,6 +10,7 @@ data:
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
+  DEN_MODE: {{ include "rally.denMode" . | quote }}
   ACCESS_CONFIG_PATH: {{ printf "%s/%s" .Values.accessConfig.mountPath .Values.accessConfig.fileName | quote }}
   {{- if $tls }}
   TLS_CERT_FILE: /etc/conservices-tls/tls.crt

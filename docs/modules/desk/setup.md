@@ -158,6 +158,7 @@ Follow [Run one module on Kubernetes](../../getting-started/standalone-kubernete
 with these Desk values. Desk needs no bucket.
 
 ```yaml
+den: { mode: standalone }   # no Den: do not wait for pairing
 config:
   APP_BASE_URL: https://desk.example.org
   OIDC_ISSUER_URL: https://login.example.org/realms/conservices

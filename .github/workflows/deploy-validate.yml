@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - "deploy/**"
+      - "scripts/check-den-mode.py"
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/**"
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "deploy/**"
+      - "scripts/check-den-mode.py"
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/**"
@@ -100,6 +102,18 @@ jobs:
             echo "kubectl kustomize $dir"
             kubectl kustomize "$dir" > "$out/kustomize-$(echo "${dir#deploy/kubernetes/}" | tr '/' '-').yaml"
           done
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # Kubernetes is the reference setup: every module backend rendered
+      # with default values must wait for Den (den.mode / DEN_MODE=required).
+      - name: Modules wait for Den (DEN_MODE)
+        run: |
+          set -euo pipefail
+          pip install pyyaml==6.0.3
+          python scripts/check-den-mode.py "$RUNNER_TEMP/rendered"
 
       - name: Validate rendered manifests (kubeconform)
         run: |

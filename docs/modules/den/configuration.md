@@ -155,6 +155,32 @@ touching databases.
 | `OPERATOR_URL` | none | no | The operator's internal address, for example `https://den-operator.conservices-den.svc.cluster.local:8080`. |
 | `OPERATOR_TOKEN` | none | when `OPERATOR_URL` is set | The shared secret; must equal the operator's `OPERATOR_TOKEN`. |
 
+### Modules registered at start-up
+
+Optional. Lets an installation list its modules on Den's **Modules** page
+from the first start, so an admin only has to click **Pair** instead of
+creating each module by hand (**New module**).
+
+| Variable | Default | Required | Description |
+| --- | --- | --- | --- |
+| `DEN_PREREGISTER_MODULES` | none | no | JSON array of modules. Each entry: `slug` (the module's slug; Rally is `events`), `display_name`, `base_url` (the module's public address), optional `environment`. At every start Den inserts each slug it does not know yet as **unpaired**. It never updates or deletes an existing module, so names, addresses and removals made on the Modules page stay as they are. Empty or unset: nothing is registered. |
+
+Example, as the GitOps template sets it for Stash and Rally:
+
+```text
+DEN_PREREGISTER_MODULES=[{"slug":"stash","display_name":"Stash","base_url":"https://stash.example.org"},{"slug":"events","display_name":"Rally","base_url":"https://events.example.org"}]
+```
+
+With Helm, set the list as `preregisterModules` (see
+[Helm values](#helm-values)); the chart writes the JSON for you. The
+GitOps template fills it from the modules enabled in `cluster.yaml`
+([Deploy the apps](../../deploy/apps.md)).
+
+Because Den never changes an existing entry, removing a module from the
+list does not remove it from Den; use **Modules → Remove** for that. A
+module removed in Den but still listed is registered again (unpaired) at
+the next start of Den.
+
 ### Other
 
 | Variable | Description |
@@ -529,6 +555,7 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 | `existingSecret` | `den-secrets` | Secret for the backend and the `migrate` initContainer. |
 | `operator.existingSecret` | `den-operator-secrets` | Secret for the operator. |
 | `config.*` | the base's `den-config` | Backend settings. `OPERATOR_URL` (with `operator.enabled`) and the `TLS_*` / `SSL_CERT_DIR` paths (with internal TLS) are added unless you set them. |
+| `preregisterModules` | `[]` | Modules Den lists, unpaired, from its first start: a list of `{slug, display_name, base_url}` (optional `environment`), rendered as `DEN_PREREGISTER_MODULES` only when not empty ([Modules registered at start-up](#modules-registered-at-start-up)). The chart stops when an entry lacks one of the three keys, or when `config.DEN_PREREGISTER_MODULES` is also set. |
 | `operatorConfig.*` | the base's `den-operator-config`, but `MODULE_DB_HOST=conservices-pg-rw.conservices-data.svc.cluster.local:5432` | Operator settings. `MODULE_DB_PARAMS` defaults to `sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`. |
 | `operator.enabled` | `true` | Deploy the operator. Without it, Den runs without backups and managed databases. |
 | `backend.replicas`, `operator.replicas` | `1` | Exactly 1; the chart refuses other values (see [High availability](../../operations/helm.md#high-availability)). |

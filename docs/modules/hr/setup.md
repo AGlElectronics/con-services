@@ -292,6 +292,7 @@ what is specific to HR:
       frontend: { tag: "1.0.0-1" }
     route:
       host: hr.example.org
+    den: { mode: standalone }   # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://hr.example.org
       CORS_ALLOWED_ORIGINS: https://hr.example.org

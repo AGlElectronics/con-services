@@ -44,6 +44,10 @@ configMapGenerator:
       - S3_USE_PATH_STYLE=true
       # Pairing URLs carry Den's public address; Stash swaps in this one.
       - DEN_INTERNAL_URL=https://den-backend.conservices-den.svc.cluster.local:8080
+      # required: the API answers 503 den_pairing_required until Stash is
+      # paired with Den. A Stash without Den patches this to standalone
+      # (docs: getting-started/standalone-kubernetes).
+      - DEN_MODE=required
       # Internal TLS: serve HTTPS with stash-backend-tls and trust the
       # internal CA for PostgreSQL, S3 and Den.
       - TLS_CERT_FILE=/etc/conservices-tls/tls.crt

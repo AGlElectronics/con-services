@@ -343,6 +343,11 @@ on every change to `deploy/`, `docs/`, `mkdocs.yml` or the workflows:
 - `kubectl kustomize` for `deploy/kubernetes/base`, every module and every
   overlay (the example overlays get empty stand-ins for their gitignored
   `local/` files);
+- `scripts/check-den-mode.py` on everything rendered: every module backend
+  (from the charts with default values and from every Kustomize tree,
+  including the production overlay) must get `DEN_MODE=required`, the
+  Kubernetes reference setup
+  ([Required or standalone](../concepts/pairing.md#required-or-standalone));
 - [kubeconform](https://github.com/yannh/kubeconform) in strict mode on
   everything rendered, with the
   [CRDs catalog](https://github.com/datreeio/CRDs-catalog) for
@@ -362,6 +367,25 @@ helm template stash deploy/charts/stash | kubeconform -strict -summary \
 kubectl kustomize deploy/kubernetes/base > /dev/null
 mkdocs build --strict
 ```
+
+The Den mode check reads a folder of rendered manifests (needs PyYAML):
+
+```sh
+mkdir -p rendered
+helm template stash deploy/charts/stash > rendered/helm-stash.yaml
+kubectl kustomize deploy/kubernetes/modules/stash > rendered/kustomize-modules-stash.yaml
+python3 scripts/check-den-mode.py rendered
+```
+
+```text
+den-mode: 2 module backend(s), all DEN_MODE=required
+```
+
+A backend rendered with `standalone` (or without `DEN_MODE`) fails with a
+line such as
+`helm-stash.yaml: Deployment stash-backend has DEN_MODE='standalone', want 'required'`.
+Keep the defaults at `required`; only values files and overlays for a
+module without Den set `standalone`.
 
 ## Troubleshooting
 

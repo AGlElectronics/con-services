@@ -108,6 +108,12 @@ den                 main       2 0     0
         cp .env.example .env
         ```
 
+    Every module backend in the stack starts with `DEN_MODE=standalone`,
+    so it works without Den. To try the Kubernetes behaviour, where a
+    module waits until it is paired, set `DEN_MODE=required` in `.env` and
+    recreate the backends (`docker compose up -d`); see
+    [Required or standalone](../concepts/pairing.md#required-or-standalone).
+
 3. Build and start Den with what it depends on:
 
     ```sh

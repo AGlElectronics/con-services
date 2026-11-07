@@ -194,6 +194,7 @@ with these Wiki-specific values:
 - Values for your own services:
 
     ```yaml
+    den: { mode: standalone }   # no Den: do not wait for pairing
     config:
       APP_BASE_URL: https://wiki.example.org
       OIDC_ISSUER_URL: https://login.example.org/realms/conservices

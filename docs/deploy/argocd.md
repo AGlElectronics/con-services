@@ -84,7 +84,10 @@ them from the main repository
     - `oidcHairpin.mode: coredns-custom` on k3s or AKS, see
       [DNS and certificates](dns-and-certificates.md#inside-the-cluster-reaching-keycloak).
     - `storage.longhornSingle.enabled: true` with Longhorn.
-    - Modules you do not want: `modules.<name>.enabled: false`.
+    - The modules to run: in the block *Pick the modules to run*, set
+      `enabled: true` for each one you want. All eight are off by default;
+      Den is always deployed. Each module waits for Den until you pair it
+      ([Den and the modules](apps.md#deploy)).
 3. Check that nothing is missing:
 
     ```sh
@@ -352,13 +355,13 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 | `images.tag` | `1.0.0-1` | Tag of every Con Services image (`MAJOR.MINOR.PATCH-BUILD`); never `latest` |
 | `images.pullSecret.enabled` | `false` | Create the Secret `ghcr-pull` from OpenBao `kv/infra/ghcr` in every Con Services namespace and use it (private images only) |
 | `charts.repoURL` | `https://github.com/AGlElectronics/con-services.git` | Where the Den and module charts come from |
-| `charts.targetRevision` | `v1.0.0` | Release of those charts |
+| `charts.targetRevision` | `v1.1.0` | Release of those charts (a tag of `con-services`, never a branch) |
 | `den.imageTag` | empty (`images.tag`) | Den's image tag |
-| `den.values` | `{}` | Extra values for the Den chart |
-| `modules.<name>.enabled` | `true` | Install the module; `<name>` is `stash`, `hr`, `rally`, `finance`, `learn`, `wiki`, `desk` or `tasks` |
+| `den.values` | `{}` | Extra values for the Den chart. The root chart already sets `preregisterModules` from the enabled modules |
+| `modules.<name>.enabled` | `false` | Install the module; `<name>` is `stash`, `hr`, `rally`, `finance`, `learn`, `wiki`, `desk` or `tasks`. Opt-in: `cluster.yaml` lists all eight under *Pick the modules to run*. An enabled module is listed on Den's Modules page as unpaired and waits for Den until you pair it ([Den and the modules](apps.md#pair-the-modules)). With none enabled, only Den runs |
 | `modules.<name>.imageTag` | empty (`images.tag`) | The module's image tag |
 | `modules.<name>.accessConfig` | empty | The module's access configuration (TOML text); empty uses the template's default file. Stash, Rally, Learn, Wiki, Desk, Tasks |
-| `modules.<name>.values` | `{}` | Extra values for the module's chart |
+| `modules.<name>.values` | `{}` | Extra values for the module's chart. `den.mode` is always `required` and cannot be overridden here; the root chart stops if you try |
 | `modules.rally.submit.enabled` | `false` | Rally's public submission site on `submit.<domain>` |
 | `smtp.from` | empty (`no-reply@<domain>`) | Sender address of Learn's mail |
 

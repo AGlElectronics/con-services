@@ -245,7 +245,11 @@ stash-frontend-6c8b5d9f7-p4ncs    1/1     Running   0          40s
 
 Stash applies its own database migrations when it starts. Add
 `stash.conservices.test` to your hosts file (the quickstart already did) and
-open <https://stash.conservices.test>.
+open <https://stash.conservices.test>. Stash runs with `DEN_MODE=required`
+like every module on Kubernetes, so until step 4c it shows
+*Connect this module to Den* to Stash admins and *Waiting for Den* to
+everyone else, and its API answers `503 den_pairing_required`
+([Required or standalone](../concepts/pairing.md#required-or-standalone)).
 
 ### 4c. Pair Stash with Den
 
@@ -256,14 +260,15 @@ open <https://stash.conservices.test>.
     https://den.conservices.test/api/v1/integrations/pairing/redeem?token=Q2b9…
     ```
 
-2. In Stash (signed in as a Stash admin, for example `admin`): **Settings →
-   Den connection**, paste the URL and confirm.
+2. In Stash (signed in as a Stash admin, for example `admin`): paste the
+   URL into the field on the *Connect this module to Den* page and confirm.
+   (Once paired, the same field is under **Settings → Den connection**.)
 3. Stash's backend swaps the public address for its `DEN_INTERNAL_URL`
    (`https://den-backend.conservices-den.svc.cluster.local:8080`), redeems
    the token and stores the module credential it gets back.
-4. Den's Modules page now shows Stash as **paired**. Within a minute Stash
-   shows Den's brand, and Den's portal home lists Stash under **Your
-   services**.
+4. Den's Modules page now shows Stash as **paired**. The waiting page is
+   gone and Stash works normally. Within a minute Stash shows Den's brand,
+   and Den's portal home lists Stash under **Your services**.
 
 ## Step 5: Repeat for each module
 

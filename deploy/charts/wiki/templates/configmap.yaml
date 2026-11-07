@@ -10,6 +10,7 @@ data:
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
+  DEN_MODE: {{ include "wiki.denMode" . | quote }}
   {{- if .Values.accessConfig.enabled }}
   ACCESS_CONFIG_PATH: {{ printf "%s/%s" .Values.accessConfig.mountPath .Values.accessConfig.fileName | quote }}
   {{- end }}

@@ -39,6 +39,7 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only: user when no header is sent. |
 | `DEV_DEFAULT_GROUPS` | `tasks-admin` | no | no | `dev` mode only: groups when no header is sent. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address, on the platform `https://den-backend.conservices-den.svc.cluster.local:8080`; replaces the host of pasted pairing URLs. Empty without Den. |
+| `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 | `TASKS_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `POST /api/internal/departments`. **Empty turns the endpoint off** (`404`). Must equal the token in HR's `DEPARTMENT_HOOKS`. Generate with `openssl rand -hex 32`. |
 | `S3_ENDPOINT` | none | no | no | S3 address for attachments, on the platform `https://s3.conservices-data.svc.cluster.local:9000`. **Empty turns attachments off** (`503`). |
