@@ -42,6 +42,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        # Group of the mounted TLS key, so it can stay unreadable to others.
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -68,6 +70,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            # DATABASE_URL's sslrootcert points here.
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
       containers:
         - name: backend
           image: ghcr.io/aglelectronics/den-backend:1.0.0-1
@@ -77,17 +84,19 @@ spec:
             - secretRef:
                 name: den-secrets
           ports:
-            - name: http
+            - name: https
               containerPort: 8080
           livenessProbe:
             httpGet:
               path: /livez
-              port: http
+              port: https
+              scheme: HTTPS
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: https
+              scheme: HTTPS
             periodSeconds: 5
             failureThreshold: 3
           resources:
@@ -106,9 +115,22 @@ spec:
             # Large uploads (branding assets) are buffered here.
             - name: tmp
               mountPath: /tmp
+            - name: tls
+              mountPath: /etc/conservices-tls
+              readOnly: true
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: tls
+          secret:
+            secretName: den-backend-tls
+            defaultMode: 0440
+        - name: internal-ca
+          configMap:
+            name: conservices-internal-ca
 ---
 apiVersion: v1
 kind: Service
@@ -123,6 +145,6 @@ spec:
     app.kubernetes.io/name: den
     app.kubernetes.io/component: backend
   ports:
-    - name: http
+    - name: https
       port: 8080
-      targetPort: http
+      targetPort: https

@@ -1,0 +1,49 @@
+# Replaces the Caddy block "stash.conservices.test { reverse_proxy stash-frontend:8080 }".
+# Same objects as the Stash Helm chart (route.enabled, internalTLS.enabled).
+# Attaches to the Gateway "public" in conservices-gateway, listener "https"
+# (overlays/example on a local cluster; your cluster setup in production).
+# Upload size is limited by nginx in the web app (client_max_body_size 50m);
+# the gateway has no body limit of its own.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: stash
+  namespace: conservices-stash
+spec:
+  parentRefs:
+    - name: public
+      namespace: conservices-gateway
+      sectionName: https
+  hostnames:
+    - stash.conservices.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: stash-frontend
+          port: 443
+      timeouts:
+        request: 120s
+---
+# The gateway talks HTTPS to stash-frontend and checks its certificate against
+# the internal CA. ConfigMap references only (Cilium); never
+# wellKnownCACertificates.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: stash-frontend
+  namespace: conservices-stash
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: stash-frontend
+      sectionName: https
+  validation:
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: conservices-internal-ca
+    hostname: stash-frontend.conservices-stash.svc.cluster.local

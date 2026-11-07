@@ -1,0 +1,10 @@
+# Internal TLS: one private certificate authority for traffic inside the
+# cluster (PostgreSQL, S3, Keycloak, Den, every module backend and web
+# app). Needs cert-manager and trust-manager installed first.
+# Documentation: https://aglelectronics.github.io/con-services/operations/internal-tls/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - issuers.yaml
+  - bundle.yaml

@@ -1,6 +1,11 @@
-# The Con Services platform: identity (Keycloak), in-cluster data services
-# (PostgreSQL, MinIO) and Den. Modules live in ../modules/ and are applied
-# afterwards, one overlay each. Documentation:
+# The Con Services platform: the internal certificate authority (pki),
+# identity (Keycloak), in-cluster data services (PostgreSQL, S3; local
+# trial only) and Den.
+# Requires cert-manager, trust-manager, the Gateway API CRDs and Cilium with
+# the Gateway API enabled. The HTTPRoutes attach to the Gateway "public" in
+# conservices-gateway, which the overlay or your cluster setup provides.
+# Modules live in ../modules/ and are applied afterwards, one overlay each.
+# Documentation:
 # https://aglelectronics.github.io/con-services/operations/running/
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -12,6 +17,7 @@ labels:
 
 resources:
   - namespaces.yaml
+  - pki
   - identity
   - data
   - den

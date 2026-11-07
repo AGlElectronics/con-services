@@ -1,12 +1,15 @@
 # conservices-den: deny everything, then allow
-#   ingress controller -> den-frontend:8080
+#   Cilium gateway     -> den-frontend:8080  (CiliumNetworkPolicy at the end)
 #   den-frontend       -> den-backend:8080
 #   module backends    -> den-backend:8080   (pairing, bundle, preferences)
-#   den-backend        -> postgres:5432, minio:9000, den-operator:8080,
-#                         keycloak:8080 (admin API), ingress controller:443
-#                         (OIDC discovery and keys via the public issuer URL)
-#   den-operator       -> postgres:5432, minio:9000
+#   den-backend        -> postgres:5432, s3:9000, den-operator:8080,
+#                         keycloak:8443 (admin API, and OIDC discovery and
+#                         keys: auth.<domain> resolves to keycloak-public)
+#   den-operator       -> postgres:5432, s3:9000
 #   everything         -> DNS
+# Every connection except DNS uses TLS (internal CA, ../pki).
+# Same rules as the Den Helm chart, except the data selectors (this base runs
+# the in-cluster postgres and s3 pods).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,14 +52,8 @@ spec:
       app.kubernetes.io/name: den
       app.kubernetes.io/component: frontend
   policyTypes: ["Ingress", "Egress"]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-      ports:
-        - protocol: TCP
-          port: 8080
+  # Cilium's gateway is admitted by the CiliumNetworkPolicy den-web-from-gateway.
+  ingress: []
   egress:
     - to:
         - podSelector:
@@ -118,10 +115,12 @@ spec:
               kubernetes.io/metadata.name: conservices-data
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: minio
+              app.kubernetes.io/name: s3
       ports:
         - protocol: TCP
           port: 9000
+    # Keycloak admin API (keycloak:8443) and OIDC discovery and signing keys
+    # (auth.<domain> resolves to keycloak-public, port 443 -> 8443).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -131,14 +130,7 @@ spec:
               app.kubernetes.io/name: keycloak
       ports:
         - protocol: TCP
-          port: 8080
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-      ports:
-        - protocol: TCP
-          port: 443
+          port: 8443
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -177,7 +169,28 @@ spec:
               kubernetes.io/metadata.name: conservices-data
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: minio
+              app.kubernetes.io/name: s3
       ports:
         - protocol: TCP
           port: 9000
+---
+# Cilium Gateway API: the gateway's Envoy reaches den-frontend with Cilium's
+# reserved identity "ingress", which a Kubernetes NetworkPolicy cannot select.
+# Needs Cilium's CRDs. Other CNIs and gateways: delete this object and add an
+# ingress rule for your gateway's namespace to den-frontend above.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: den-web-from-gateway
+  namespace: conservices-den
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: den
+      app.kubernetes.io/component: frontend
+  ingress:
+    - fromEntities: ["ingress"]
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

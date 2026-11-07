@@ -1,0 +1,52 @@
+# Server certificates for Stash's pods, signed by the platform's internal CA
+# (base/pki). cert-manager renews them 30 days before they expire; the
+# backend re-reads its certificate every minute, nginx reloads every six hours.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: stash-backend-tls
+  namespace: conservices-stash
+spec:
+  secretName: stash-backend-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - stash-backend
+    - stash-backend.conservices-stash
+    - stash-backend.conservices-stash.svc
+    - stash-backend.conservices-stash.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: stash-frontend-tls
+  namespace: conservices-stash
+spec:
+  secretName: stash-frontend-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - stash-frontend
+    - stash-frontend.conservices-stash
+    - stash-frontend.conservices-stash.svc
+    - stash-frontend.conservices-stash.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca

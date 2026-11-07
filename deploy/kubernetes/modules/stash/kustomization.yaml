@@ -12,9 +12,10 @@ labels:
 
 resources:
   - namespace.yaml
+  - certificates.yaml
   - backend.yaml
   - frontend.yaml
-  - ingress.yaml
+  - route.yaml
   - networkpolicies.yaml
 
 images:
@@ -36,17 +37,33 @@ configMapGenerator:
       - OIDC_AUDIENCE=stash-spa
       - ACCESS_CONFIG_PATH=/etc/stash/access-config.toml
       - CORS_ALLOWED_ORIGINS=https://stash.conservices.test
-      - S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7
+      - S3_ENDPOINT=https://s3.conservices-data.svc.cluster.local:9000
       - S3_BUCKET=stash-data
       - S3_REGION=us-east-1
       - S3_USE_PATH_STYLE=true
       # Pairing URLs carry Den's public address; Stash swaps in this one.
-      - DEN_INTERNAL_URL=http://den-backend.conservices-den.svc.cluster.local:8080
+      - DEN_INTERNAL_URL=https://den-backend.conservices-den.svc.cluster.local:8080
+      # Internal TLS: serve HTTPS with stash-backend-tls and trust the
+      # internal CA for PostgreSQL, S3 and Den.
+      - TLS_CERT_FILE=/etc/conservices-tls/tls.crt
+      - TLS_KEY_FILE=/etc/conservices-tls/tls.key
+      - SSL_CERT_DIR=/etc/conservices-internal-ca
   - name: stash-frontend-nginx
     namespace: conservices-stash
     files:
       - default.conf=nginx.conf
+      - 90-reload-tls.sh=nginx-reload-tls.sh
+  # The web app's settings, served as /config.json (sign-in address, client
+  # id). Keys: docs/modules/stash/configuration.md, "Web app settings".
+  # For your own domain, replace it from an overlay (behavior: replace).
+  - name: stash-frontend-config
+    namespace: conservices-stash
+    files:
+      - config.json=frontend-config.json
 
 # Secret "stash-secrets" comes from the overlay: DATABASE_URL (the URL Den
-# shows once when it creates Stash's database), S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY.
+# shows once when it creates Stash's database; it ends in
+# ?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt),
+# S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. The TLS Secrets are made by
+# cert-manager from certificates.yaml.

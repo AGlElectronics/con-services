@@ -1,0 +1,73 @@
+# Replaces the Caddy block "auth.conservices.test { reverse_proxy keycloak:8080 }".
+#
+# keycloak-public: Keycloak on port 443, the same Service as in the GitOps
+# repository. Two users:
+#   - the Gateway (HTTPRoute below), for browsers;
+#   - pods: auth.<domain> resolves to this Service inside the cluster
+#     (CoreDNS rewrite in production, hostAliases in overlays/example), so
+#     backends check sign-in tokens against https://auth.<domain>/realms/...
+#     without leaving the cluster. Keycloak's certificate carries that name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-public
+  namespace: conservices-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+# Only the paths browsers and apps need (Keycloak's exposed-path
+# recommendations). /admin, /metrics and /health stay off the public
+# address; overlays/example adds /admin/ for a local trial.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak
+  namespace: conservices-identity
+spec:
+  parentRefs:
+    - name: public
+      namespace: conservices-gateway
+      sectionName: https
+  hostnames:
+    - auth.conservices.test
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /realms/
+        - path:
+            type: PathPrefix
+            value: /resources/
+      backendRefs:
+        - name: keycloak-public
+          port: 443
+      timeouts:
+        request: 60s
+---
+# The gateway talks HTTPS to Keycloak and checks its certificate against the
+# internal CA. ConfigMap references only (Cilium); never
+# wellKnownCACertificates.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: keycloak-public
+  namespace: conservices-identity
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: keycloak-public
+      sectionName: https
+  validation:
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: conservices-internal-ca
+    hostname: keycloak-public.conservices-identity.svc.cluster.local

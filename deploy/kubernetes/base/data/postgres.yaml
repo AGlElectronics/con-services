@@ -40,6 +40,20 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          # TLS with the certificate from certificates.yaml; pg_hba.conf
+          # refuses connections over the network that do not use it.
+          args:
+            - postgres
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/conservices-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/conservices-tls/tls.key
+            - -c
+            - ssl_min_protocol_version=TLSv1.2
+            - -c
+            - hba_file=/etc/postgresql/pg_hba.conf
           env:
             - name: POSTGRES_USER
               value: postgres
@@ -79,12 +93,71 @@ spec:
               readOnly: true
             - name: run
               mountPath: /var/run/postgresql
+            - name: tls
+              mountPath: /etc/conservices-tls
+              readOnly: true
+            - name: hba
+              mountPath: /etc/postgresql
+              readOnly: true
+        # PostgreSQL reads its certificate only at start and on reload. This
+        # sidecar reloads it through the local socket whenever cert-manager
+        # has renewed the certificate.
+        - name: tls-reload
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              last=""
+              while true; do
+                now=$(cat /etc/conservices-tls/tls.crt /etc/conservices-tls/tls.key | sha256sum)
+                if [ "$now" != "$last" ]; then
+                  if [ -z "$last" ] || psql -h /var/run/postgresql -U postgres -d postgres -tAc 'SELECT pg_reload_conf()' >/dev/null; then
+                    [ -n "$last" ] && echo "reloaded the renewed TLS certificate"
+                    last=$now
+                  fi
+                fi
+                sleep 300
+              done
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tls
+              mountPath: /etc/conservices-tls
+              readOnly: true
       volumes:
         - name: init
           configMap:
             name: postgres-init
         - name: run
           emptyDir: {}
+        # Owned by root and group 70 (fsGroup), mode 0640: the only
+        # combination PostgreSQL accepts for a key file it does not own.
+        - name: tls
+          secret:
+            secretName: postgres-tls
+            defaultMode: 0640
+        - name: hba
+          configMap:
+            name: postgres-hba
   volumeClaimTemplates:
     - metadata:
         name: data

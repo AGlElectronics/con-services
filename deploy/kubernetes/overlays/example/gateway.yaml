@@ -1,0 +1,67 @@
+# LOCAL CLUSTER ONLY. The entry point for https://*.conservices.test: one
+# Gateway served by Cilium's built-in Envoy (GatewayClass "cilium", created by
+# the Cilium Helm chart with gatewayAPI.enabled=true). On the kind cluster of
+# the quickstart Envoy listens on ports 80 and 443 of the node
+# (gatewayAPI.hostNetwork), and kind maps them to your computer.
+#
+# Every HTTPRoute of the base and the modules attaches to listener "https" of
+# this Gateway (parentRefs: public / conservices-gateway / https). Production
+# clusters bring their own Gateway with the same name and namespace (the
+# GitOps repository's components/gateway); see docs: deploy/.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conservices-gateway
+  labels:
+    app.kubernetes.io/part-of: conservices
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: conservices-gateway
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          # mkcert certificate for *.conservices.test (secretGenerator in
+          # kustomization.yaml).
+          - group: ""
+            kind: Secret
+            name: conservices-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              app.kubernetes.io/part-of: conservices
+---
+# Answer every plain-HTTP request with a permanent redirect to HTTPS.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: public-https-redirect
+  namespace: conservices-gateway
+spec:
+  parentRefs:
+    - name: public
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

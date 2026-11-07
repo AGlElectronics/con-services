@@ -4,9 +4,10 @@
 #   1. Den -> Admin console -> Modules -> New module (slug "stash", tick
 #      "Create a database for it") and paste the database URL Den shows
 #      into DATABASE_URL in secrets.yaml.
-#   2. Fill local/ (gitignored): tls.crt, tls.key, rootCA.pem (same files as
-#      the platform overlay) and access-config.toml from stash/infra/.
-#   3. Set the ingress controller IP in stash-backend-local.yaml.
+#   2. Fill local/ (gitignored): rootCA.pem (same file as the platform
+#      overlay) and access-config.toml from stash/infra/.
+# The route attaches to the Gateway from overlays/example, which already
+# holds the *.conservices.test certificate.
 # DEV / QUICKSTART ONLY: secrets.yaml is a plain Secret with dev values.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -31,12 +32,6 @@ configMapGenerator:
       - access-config.toml=local/access-config.toml
 
 secretGenerator:
-  - name: conservices-tls
-    namespace: conservices-stash
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=local/tls.crt
-      - tls.key=local/tls.key
   - name: local-ca
     namespace: conservices-stash
     files:

@@ -2,13 +2,20 @@
 # the External Secrets Operator. Compared with overlays/example, the only
 # secrets change is "secrets.yaml" -> "external-secrets.yaml".
 #
-# Also shown: your own host names (con.example.org) and your own build of
-# den-frontend, because the web app's sign-in address is compiled into the
-# image (docs: modules/den/configuration). TLS certificates ("conservices-tls"
-# in each namespace) come from cert-manager or your platform.
+# Also shown: your own host names (con.example.org), including the web app's
+# sign-in address in den-frontend-config.json, served to the browser as
+# /config.json (docs: modules/den/configuration). The published den-frontend
+# image works for any domain. The public TLS certificate lives on the Gateway
+# (see the patches below), not in these namespaces.
 #
-# Requires: External Secrets Operator installed in the cluster, and the
-# Vault (or other) roles described in external-secrets.yaml.
+# Requires: Cilium with the Gateway API (or remove the CiliumNetworkPolicies
+# and admit your gateway's namespace instead), External Secrets Operator,
+# cert-manager and trust-manager installed in the cluster, and the Vault (or
+# other) roles described in external-secrets.yaml.
+#
+# The data services of the base (in-cluster PostgreSQL and S3 server) are for a
+# local trial. For production use CloudNativePG or managed PostgreSQL, and a
+# managed S3 service; the Argo CD path (docs: deploy/) sets that up.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -20,7 +27,6 @@ images:
   - name: ghcr.io/aglelectronics/den-backend
     newTag: 1.0.0-1
   - name: ghcr.io/aglelectronics/den-frontend
-    newName: registry.example.org/conservices/den-frontend
     newTag: 1.0.0-1
   - name: ghcr.io/aglelectronics/den-operator
     newTag: 1.0.0-1
@@ -38,6 +44,11 @@ configMapGenerator:
       - APP_BASE_URL=https://den.con.example.org
       - OIDC_ISSUER_URL=https://auth.con.example.org/realms/conservices
       - CORS_ALLOWED_ORIGINS=https://den.con.example.org
+  - name: den-frontend-config
+    namespace: conservices-den
+    behavior: replace
+    files:
+      - config.json=den-frontend-config.json
   - name: den-operator-config
     namespace: conservices-den
     behavior: merge
@@ -49,24 +60,32 @@ configMapGenerator:
       - BACKUP_S3_ENDPOINT=https://s3.backup-provider.example
       - FILES_S3_BUCKETS=den-data
 
+# The HTTPRoutes attach to the Gateway "public" in conservices-gateway
+# (listener "https"), which this overlay does not create: it comes from your
+# cluster setup, together with its public certificate for *.con.example.org
+# (the GitOps repository's components/gateway; docs: deploy/).
+# Pods resolve auth.con.example.org to keycloak-public through a CoreDNS
+# rewrite (docs: deploy/dns-and-certificates), so Keycloak's internal
+# certificate must carry that name.
 patches:
   - target:
-      kind: Ingress
+      kind: HTTPRoute
       name: keycloak
     patch: |-
       - op: replace
-        path: /spec/rules/0/host
-        value: auth.con.example.org
-      - op: replace
-        path: /spec/tls/0/hosts/0
+        path: /spec/hostnames/0
         value: auth.con.example.org
   - target:
-      kind: Ingress
+      kind: HTTPRoute
       name: den
     patch: |-
       - op: replace
-        path: /spec/rules/0/host
+        path: /spec/hostnames/0
         value: den.con.example.org
+  - target:
+      kind: Certificate
+      name: keycloak-tls
+    patch: |-
       - op: replace
-        path: /spec/tls/0/hosts/0
-        value: den.con.example.org
+        path: /spec/dnsNames/8
+        value: auth.con.example.org

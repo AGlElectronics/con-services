@@ -1,0 +1,14 @@
+# LOCAL CLUSTER ONLY.
+# A fixed address for keycloak-public, so the backends' hostAliases
+# (den-backend-local.yaml, the module overlays) can point
+# auth.conservices.test at it without looking anything up. 10.96.0.100 lies
+# in the static band of the kind cluster's Service range (10.96.0.0/16), which
+# Kubernetes never hands out on its own. Production clusters use a CoreDNS
+# rewrite instead (docs: deploy/dns-and-certificates).
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-public
+  namespace: conservices-identity
+spec:
+  clusterIP: 10.96.0.100

@@ -1,0 +1,61 @@
+# Replaces the Caddy block "den.conservices.test { reverse_proxy den-frontend:8080 }".
+# Same objects as the Den Helm chart (route.enabled, internalTLS.enabled).
+# The backend is not exposed directly: the frontend's nginx forwards /api/.
+#
+# The route attaches to the Gateway "public" in conservices-gateway, listener
+# "https". That Gateway holds the public certificate; it is not part of the
+# base: overlays/example brings one for a local cluster, and in production it
+# comes from your cluster setup (docs: deploy/ and operations/running).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: den
+  namespace: conservices-den
+spec:
+  parentRefs:
+    - name: public
+      namespace: conservices-gateway
+      sectionName: https
+  hostnames:
+    - den.conservices.test
+  rules:
+    # Removing a module backs its database up first and can take minutes.
+    - matches:
+        - path:
+            type: RegularExpression
+            value: "^/api/v1/modules/[^/]+$"
+      backendRefs:
+        - name: den-frontend
+          port: 443
+      timeouts:
+        request: 30m
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: den-frontend
+          port: 443
+      timeouts:
+        request: 120s
+---
+# The gateway talks HTTPS to den-frontend and checks its certificate against
+# the internal CA (trust-manager's ConfigMap). Cilium only supports ConfigMap
+# references here; never use wellKnownCACertificates.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: den-frontend
+  namespace: conservices-den
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: den-frontend
+      sectionName: https
+  validation:
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: conservices-internal-ca
+    hostname: den-frontend.conservices-den.svc.cluster.local

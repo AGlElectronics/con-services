@@ -37,9 +37,11 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        # the "postgres" user of the postgres:16-alpine runtime image
+        # the "postgres" user (UID 70) of the operator image, created by its
+        # PostgreSQL 16 client package
         runAsUser: 70
         runAsGroup: 70
+        fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -51,17 +53,19 @@ spec:
             - secretRef:
                 name: den-operator-secrets
           ports:
-            - name: http
+            - name: https
               containerPort: 8080
           livenessProbe:
             httpGet:
               path: /livez
-              port: http
+              port: https
+              scheme: HTTPS
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /livez
-              port: http
+              port: https
+              scheme: HTTPS
             periodSeconds: 10
           resources:
             requests:
@@ -79,10 +83,24 @@ spec:
             # Dumps are written here before upload: size it to your databases.
             - name: tmp
               mountPath: /tmp
+            - name: tls
+              mountPath: /etc/conservices-tls
+              readOnly: true
+            # PG_ADMIN_URL's sslrootcert points here; pg_dump uses it too.
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 5Gi
+        - name: tls
+          secret:
+            secretName: den-operator-tls
+            defaultMode: 0440
+        - name: internal-ca
+          configMap:
+            name: conservices-internal-ca
 ---
 apiVersion: v1
 kind: Service
@@ -97,6 +115,6 @@ spec:
     app.kubernetes.io/name: den
     app.kubernetes.io/component: operator
   ports:
-    - name: http
+    - name: https
       port: 8080
-      targetPort: http
+      targetPort: https

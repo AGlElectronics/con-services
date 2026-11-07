@@ -1,0 +1,29 @@
+# LOCAL TRIAL ONLY. A one-node kind cluster for the Den quickstart
+# (docs: getting-started/den-quickstart).
+#
+#   kind create cluster --config deploy/kubernetes/local-cluster/kind-config.yaml
+#
+# - No default CNI and no kube-proxy: Cilium replaces both
+#   (cilium-values.yaml), like on the production clusters.
+# - Ports 80 and 443 of the node are published on 127.0.0.1 of your computer.
+#   Cilium's gateway listens there (gatewayAPI.hostNetwork).
+# - The Service range stays kind's default 10.96.0.0/16;
+#   overlays/example pins keycloak-public at 10.96.0.100 inside it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: conservices
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: none
+  serviceSubnet: 10.96.0.0/16
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        listenAddress: 127.0.0.1
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        listenAddress: 127.0.0.1
+        protocol: TCP

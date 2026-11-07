@@ -4,10 +4,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - certificates.yaml
   - backend.yaml
   - frontend.yaml
   - operator.yaml
-  - ingress.yaml
+  - route.yaml
   - networkpolicies.yaml
 
 images:
@@ -32,31 +33,43 @@ configMapGenerator:
       - DEN_ADMIN_GROUPS=den-admin
       - DEN_MEMBER_GROUPS=den-member
       - CORS_ALLOWED_ORIGINS=https://den.conservices.test
-      - S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7
+      - S3_ENDPOINT=https://s3.conservices-data.svc.cluster.local:9000
       - S3_BUCKET=den-data
       - S3_REGION=us-east-1
       - S3_USE_PATH_STYLE=true
-      - KEYCLOAK_ADMIN_URL=http://keycloak.conservices-identity.svc.cluster.local:8080
+      - KEYCLOAK_ADMIN_URL=https://keycloak.conservices-identity.svc.cluster.local:8443
       - KEYCLOAK_REALM=conservices
       - KEYCLOAK_CLIENT_ID=den-keycloak
-      - OPERATOR_URL=http://den-operator.conservices-den.svc.cluster.local:8080
+      - OPERATOR_URL=https://den-operator.conservices-den.svc.cluster.local:8080
       - SHUTDOWN_TIMEOUT=15s
+      # Internal TLS: serve HTTPS with den-backend-tls and trust the
+      # internal CA for every service Den calls.
+      - TLS_CERT_FILE=/etc/conservices-tls/tls.crt
+      - TLS_KEY_FILE=/etc/conservices-tls/tls.key
+      - SSL_CERT_DIR=/etc/conservices-internal-ca
   - name: den-operator-config
     namespace: conservices-den
     literals:
       - OPERATOR_ADDR=:8080
+      - TLS_CERT_FILE=/etc/conservices-tls/tls.crt
+      - TLS_KEY_FILE=/etc/conservices-tls/tls.key
+      - SSL_CERT_DIR=/etc/conservices-internal-ca
       - MODULE_DB_HOST=postgres.conservices-data.svc.cluster.local:5432
+      # Put into every database URL the operator hands out, so modules
+      # check PostgreSQL's certificate too.
+      - MODULE_DB_PARAMS=sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
       - MANAGED_DATABASES=true
       - PROTECTED_DATABASES=den,keycloak
       - BACKUP_ENABLED=true
       - BACKUP_TIMEZONE=UTC
-      - BACKUP_S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - BACKUP_S3_ENDPOINT=https://s3.conservices-data.svc.cluster.local:9000
       - BACKUP_S3_BUCKET=conservices-backups
       - BACKUP_S3_REGION=us-east-1
       - BACKUP_S3_USE_PATH_STYLE=true
       # Your age PUBLIC key(s), comma-separated. Generate with age-keygen.
       - BACKUP_AGE_RECIPIENTS=change-me
-      - FILES_S3_ENDPOINT=http://minio.conservices-data.svc.cluster.local:9000
+      - FILES_S3_ENDPOINT=https://s3.conservices-data.svc.cluster.local:9000
       - FILES_S3_REGION=us-east-1
       - FILES_S3_USE_PATH_STYLE=true
       # Every module bucket that should be in the backups.
@@ -65,6 +78,14 @@ configMapGenerator:
     namespace: conservices-den
     files:
       - default.conf=nginx.conf
+      - 90-reload-tls.sh=nginx-reload-tls.sh
+  # The web app's settings, served as /config.json (sign-in address, client
+  # id). Keys: docs/modules/den/configuration.md, "Web app settings".
+  # Overlays replace it with their own file (behavior: replace).
+  - name: den-frontend-config
+    namespace: conservices-den
+    files:
+      - config.json=frontend-config.json
 
 # Secrets come from the overlay (plain Secrets in overlays/example, External
 # Secrets in overlays/production-external-secrets):
@@ -73,3 +94,7 @@ configMapGenerator:
 #   den-operator-secrets: OPERATOR_TOKEN, PG_ADMIN_URL,
 #                         BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY,
 #                         FILES_S3_ACCESS_KEY_ID, FILES_S3_SECRET_ACCESS_KEY
+# DATABASE_URL and PG_ADMIN_URL end in
+#   ?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
+# The TLS Secrets (den-backend-tls, den-operator-tls, den-frontend-tls) are
+# made by cert-manager from certificates.yaml.

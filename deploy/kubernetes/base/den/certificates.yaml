@@ -1,0 +1,77 @@
+# Server certificates for Den's pods, signed by the internal CA (../pki).
+# cert-manager renews them 30 days before they expire; the backend and the
+# operator re-read them every minute, nginx reloads them every six hours.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: den-backend-tls
+  namespace: conservices-den
+spec:
+  secretName: den-backend-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - den-backend
+    - den-backend.conservices-den
+    - den-backend.conservices-den.svc
+    - den-backend.conservices-den.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: den-operator-tls
+  namespace: conservices-den
+spec:
+  secretName: den-operator-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - den-operator
+    - den-operator.conservices-den
+    - den-operator.conservices-den.svc
+    - den-operator.conservices-den.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: den-frontend-tls
+  namespace: conservices-den
+spec:
+  secretName: den-frontend-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - den-frontend
+    - den-frontend.conservices-den
+    - den-frontend.conservices-den.svc
+    - den-frontend.conservices-den.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca

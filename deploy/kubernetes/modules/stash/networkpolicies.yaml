@@ -1,10 +1,12 @@
 # conservices-stash: deny everything, then allow
-#   ingress controller -> stash-frontend:8080
+#   Cilium gateway     -> stash-frontend:8080  (CiliumNetworkPolicy at the end)
 #   stash-frontend     -> stash-backend:8080
 #   hr-backend         -> stash-backend:8080   (HR reads GET /api/role-catalog)
-#   stash-backend      -> postgres:5432, minio:9000, den-backend:8080,
-#                         ingress controller:443 (OIDC via the public issuer URL)
+#   stash-backend      -> postgres:5432, s3:9000, den-backend:8080,
+#                         keycloak:8443 (OIDC: auth.<domain> resolves to
+#                         keycloak-public in conservices-identity)
 #   everything         -> DNS
+# Every connection except DNS uses TLS (internal CA, base/pki).
 # No other module may reach Stash, and Stash may reach no other module.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -48,14 +50,8 @@ spec:
       app.kubernetes.io/name: stash
       app.kubernetes.io/component: frontend
   policyTypes: ["Ingress", "Egress"]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-      ports:
-        - protocol: TCP
-          port: 8080
+  # Cilium's gateway is admitted by the CiliumNetworkPolicy stash-web-from-gateway.
+  ingress: []
   egress:
     - to:
         - podSelector:
@@ -109,7 +105,7 @@ spec:
               kubernetes.io/metadata.name: conservices-data
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: minio
+              app.kubernetes.io/name: s3
       ports:
         - protocol: TCP
           port: 9000
@@ -124,10 +120,35 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    # OIDC discovery and signing keys.
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: conservices-identity
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
       ports:
         - protocol: TCP
-          port: 443
+          port: 8443
+---
+# Cilium Gateway API: the gateway's Envoy reaches stash-frontend with Cilium's
+# reserved identity "ingress", which a Kubernetes NetworkPolicy cannot select.
+# Needs Cilium's CRDs. Other CNIs and gateways: delete this object and add an
+# ingress rule for your gateway's namespace to stash-frontend above.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: stash-web-from-gateway
+  namespace: conservices-stash
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: stash
+      app.kubernetes.io/component: frontend
+  ingress:
+    - fromEntities: ["ingress"]
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

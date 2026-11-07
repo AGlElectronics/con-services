@@ -1,0 +1,37 @@
+# Keycloak's server certificate inside the cluster, signed by the internal CA
+# (../pki). Browsers never see it: they get the public certificate from the
+# Gateway. Names:
+#   keycloak.conservices-identity.svc...         admin API (Den, HR, Learn)
+#   keycloak-public.conservices-identity.svc...  the Gateway (BackendTLSPolicy)
+#   auth.conservices.test                        pods resolving the public issuer
+#                                                name to keycloak-public; overlays
+#                                                with their own domain replace it
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-tls
+  namespace: conservices-identity
+spec:
+  secretName: keycloak-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages: ["server auth", "digital signature"]
+  dnsNames:
+    - keycloak
+    - keycloak.conservices-identity
+    - keycloak.conservices-identity.svc
+    - keycloak.conservices-identity.svc.cluster.local
+    - keycloak-public
+    - keycloak-public.conservices-identity
+    - keycloak-public.conservices-identity.svc
+    - keycloak-public.conservices-identity.svc.cluster.local
+    - auth.conservices.test
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: conservices-internal-ca

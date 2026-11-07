@@ -1,4 +1,6 @@
-# LOCAL CLUSTER ONLY; same reason as overlays/example/den-backend-local.yaml.
+# LOCAL CLUSTER ONLY; same reason as overlays/example/den-backend-local.yaml:
+# auth.conservices.test -> keycloak-public (fixed at 10.96.0.100 by
+# overlays/example/keycloak-local.yaml).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,14 +10,14 @@ spec:
   template:
     spec:
       hostAliases:
-        - ip: "10.96.0.100" # CHANGE ME: ingress controller ClusterIP
+        - ip: "10.96.0.100" # keycloak-public
           hostnames:
             - auth.conservices.test
       containers:
         - name: backend
           env:
             - name: SSL_CERT_DIR
-              value: /etc/conservices-ca
+              value: /etc/conservices-internal-ca:/etc/conservices-ca
           volumeMounts:
             - name: local-ca
               mountPath: /etc/conservices-ca

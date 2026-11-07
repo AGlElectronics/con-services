@@ -33,6 +33,9 @@ spec:
       labels:
         app.kubernetes.io/name: keycloak
         app.kubernetes.io/component: identity
+        # The Keycloak Operator's pod label. The module Helm charts select
+        # Keycloak by it (networkPolicy.oidc.podSelector).
+        app: keycloak
     spec:
       serviceAccountName: keycloak
       automountServiceAccountToken: false
@@ -52,25 +55,29 @@ spec:
             - secretRef:
                 name: keycloak-secrets
           ports:
-            - name: http
-              containerPort: 8080
+            - name: https
+              containerPort: 8443
+            # Uses the same certificate as 8443 once HTTPS is configured.
             - name: management
               containerPort: 9000
           startupProbe:
             httpGet:
               path: /health/started
               port: management
+              scheme: HTTPS
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /health/ready
               port: management
+              scheme: HTTPS
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health/live
               port: management
+              scheme: HTTPS
             periodSeconds: 20
           resources:
             requests:
@@ -90,7 +97,21 @@ spec:
             - name: theme
               mountPath: /opt/keycloak/themes/conservices
               readOnly: true
+            - name: tls
+              mountPath: /etc/conservices-tls
+              readOnly: true
+            - name: internal-ca
+              mountPath: /etc/conservices-internal-ca
+              readOnly: true
       volumes:
+        # Group 0 is Keycloak's group (runAsGroup: 0).
+        - name: tls
+          secret:
+            secretName: keycloak-tls
+            defaultMode: 0440
+        - name: internal-ca
+          configMap:
+            name: conservices-internal-ca
         - name: realm
           configMap:
             name: keycloak-realm
@@ -124,6 +145,6 @@ spec:
   selector:
     app.kubernetes.io/name: keycloak
   ports:
-    - name: http
-      port: 8080
-      targetPort: http
+    - name: https
+      port: 8443
+      targetPort: https

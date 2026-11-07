@@ -1,14 +1,17 @@
-# Simple in-cluster data services so a local cluster works out of the box.
-# Production: use a managed PostgreSQL or CloudNativePG, and real S3-compatible
-# storage instead of MinIO (MinIO here is DEV ONLY, see Den ADR 0003).
+# LOCAL TRIAL ONLY. Simple in-cluster data services so a local cluster works
+# out of the box. NOT FOR PRODUCTION: use CloudNativePG or a managed
+# PostgreSQL, and a managed S3 service (any S3-compatible one: AWS S3, Hetzner
+# Object Storage, Cloudflare R2, Backblaze B2, ...) instead of the in-cluster
+# S3 server in s3.yaml (SeaweedFS, DEV ONLY, see Den ADR 0003).
 # To use external services, drop "data" from ../kustomization.yaml and point
 # the connection settings of Den, Keycloak and the modules at them.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - certificates.yaml
   - postgres.yaml
-  - minio.yaml
+  - s3.yaml
   - networkpolicies.yaml
 
 configMapGenerator:
@@ -16,9 +19,14 @@ configMapGenerator:
     namespace: conservices-data
     files:
       - 01-platform-databases.sh=postgres-init.sh
+  - name: postgres-hba
+    namespace: conservices-data
+    files:
+      - pg_hba.conf
 
 # Secrets come from the overlay (plain Secrets in overlays/example, External
 # Secrets in overlays/production-external-secrets):
 #   postgres-secrets: POSTGRES_PASSWORD (superuser, only the Den operator
 #                     gets it), DEN_DB_PASSWORD, KEYCLOAK_DB_PASSWORD
-#   minio-secrets:    MINIO_ROOT_USER, MINIO_ROOT_PASSWORD
+#   s3-secrets:       AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (the S3 key
+#                     Den, the operator and the modules use)

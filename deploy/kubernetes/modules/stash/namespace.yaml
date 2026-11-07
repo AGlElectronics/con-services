@@ -1,5 +1,5 @@
 # conservices.io/tier=module lets the platform's NetworkPolicies admit this
-# namespace's backend to Den, PostgreSQL and MinIO.
+# namespace's backend to Den, PostgreSQL and the S3 server.
 apiVersion: v1
 kind: Namespace
 metadata:

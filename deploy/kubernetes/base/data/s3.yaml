@@ -1,0 +1,143 @@
+# LOCAL TRIAL ONLY, NOT FOR PRODUCTION: S3-compatible storage for a laptop
+# (Den ADR 0003), served by SeaweedFS in its single-process "mini" mode.
+# One bucket per module; the buckets below are created on start, and Den,
+# the operator and the modules create any missing bucket themselves.
+# Production: a managed S3 service (any S3-compatible one: AWS S3, Hetzner
+# Object Storage, Cloudflare R2, Backblaze B2, ...). Do not run object
+# storage in the cluster for production.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s3
+  namespace: conservices-data
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: s3-data
+  namespace: conservices-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3
+  namespace: conservices-data
+  labels:
+    app.kubernetes.io/name: s3
+    app.kubernetes.io/component: object-storage
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: s3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3
+        app.kubernetes.io/component: object-storage
+    spec:
+      serviceAccountName: s3
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: s3
+          image: chrislusf/seaweedfs:4.52
+          # HTTPS on 9000 with the certificate from certificates.yaml.
+          # SeaweedFS reads the certificate only at start, so the checksum
+          # taken here lets the liveness probe restart the container once
+          # cert-manager has renewed it. The internal components (master,
+          # volume, filer) talk over 127.0.0.1; only 9000 is reachable.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sha256sum /etc/s3/tls/tls.crt /etc/s3/tls/tls.key > /tmp/tls.sha256
+              exec /usr/bin/weed -logtostderr=true mini -dir=/data \
+                -ip=127.0.0.1 -ip.bind=0.0.0.0 \
+                -s3.port=9000 \
+                -s3.cert.file=/etc/s3/tls/tls.crt -s3.key.file=/etc/s3/tls/tls.key \
+                -bucket=den-data,stash-data,events-data,learn-data,wiki-data,tasks-data,conservices-backups \
+                -master.telemetry=false -admin.ui=false -webdav=false \
+                -s3.port.iceberg=0 -s3.port.lance=0
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: the static admin key
+          # the clients use.
+          envFrom:
+            - secretRef:
+                name: s3-secrets
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: s3
+              scheme: HTTPS
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - sha256sum -c /tmp/tls.sha256 >/dev/null && curl -fsk -o /dev/null https://127.0.0.1:9000/healthz
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # No subPath: renewed certificates must show up in place.
+            - name: tls
+              mountPath: /etc/s3/tls
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: s3-data
+        - name: tls
+          secret:
+            secretName: s3-tls
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+  namespace: conservices-data
+  labels:
+    app.kubernetes.io/name: s3
+spec:
+  selector:
+    app.kubernetes.io/name: s3
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3

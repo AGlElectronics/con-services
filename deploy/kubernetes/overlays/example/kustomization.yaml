@@ -1,17 +1,20 @@
-# Example overlay: the platform (Keycloak, PostgreSQL, MinIO, Den) on a
-# local cluster at https://*.conservices.test.
+# Example overlay: the platform (Keycloak, PostgreSQL, S3, Den) on a
+# local kind cluster with Cilium at https://*.conservices.test.
 #
 # DEV / QUICKSTART ONLY. secrets.yaml holds PUBLIC dev values as plain
-# Kubernetes Secrets. For anything else, swap that one file for External
-# Secrets (overlays/production-external-secrets) and keep secrets out of git.
+# Kubernetes Secrets, and the in-cluster SeaweedFS is a local-trial
+# stand-in for a managed S3 service. For
+# anything else, use the production path (docs: deploy/).
 #
-# Before the first `kubectl apply -k`, fill the local/ folder (gitignored);
-# see docs: getting-started/den-quickstart.
+# Needs: Cilium with the Gateway API enabled (GatewayClass "cilium"),
+# cert-manager and trust-manager. Before the first `kubectl apply -k`, fill
+# the local/ folder (gitignored); see docs: getting-started/den-quickstart.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../base
+  - gateway.yaml
   - secrets.yaml
 
 # Pin exact versions. All images of one module share one tag.
@@ -25,6 +28,19 @@ images:
 
 patches:
   - path: den-backend-local.yaml
+  - path: keycloak-local.yaml
+  # Local trial only: also route Keycloak's admin console (/admin/) through
+  # the Gateway. Production keeps it off the public address.
+  - target:
+      kind: HTTPRoute
+      name: keycloak
+    patch: |-
+      - op: add
+        path: /spec/rules/0/matches/-
+        value:
+          path:
+            type: PathPrefix
+            value: /admin/
 
 configMapGenerator:
   - name: den-operator-config
@@ -51,21 +67,18 @@ configMapGenerator:
       - email-messages_en.properties=local/theme/email/messages/messages_en.properties
 
 secretGenerator:
-  # Local certificate made with mkcert (local/tls.crt, local/tls.key).
-  # An Ingress can only use a TLS secret from its own namespace.
+  # Local certificate made with mkcert (local/tls.crt, local/tls.key) for
+  # *.conservices.test, held by the Gateway in its own namespace. No hash
+  # suffix: Kustomize does not rewrite Gateway certificateRefs.
   - name: conservices-tls
-    namespace: conservices-identity
+    namespace: conservices-gateway
     type: kubernetes.io/tls
+    options:
+      disableNameSuffixHash: true
     files:
       - tls.crt=local/tls.crt
       - tls.key=local/tls.key
-  - name: conservices-tls
-    namespace: conservices-den
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=local/tls.crt
-      - tls.key=local/tls.key
-  # mkcert's root certificate (public), so Den trusts https://auth.conservices.test.
+  # mkcert's root certificate (public), trusted by Den next to the internal CA.
   - name: local-ca
     namespace: conservices-den
     files:

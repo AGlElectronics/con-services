@@ -1,8 +1,8 @@
 # conservices-data: deny everything, then allow
 #   keycloak                      -> postgres:5432
-#   den-backend, den-operator     -> postgres:5432, minio:9000
+#   den-backend, den-operator     -> postgres:5432, s3:9000
 #   module backends (any namespace labelled conservices.io/tier=module)
-#                                 -> postgres:5432, minio:9000
+#                                 -> postgres:5432, s3:9000
 # Which database or bucket a client may use is enforced by PostgreSQL
 # logins (CONNECT is revoked from everyone but the owner) and S3
 # credentials; NetworkPolicy works on addresses and ports only.
@@ -76,12 +76,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: minio
+  name: s3
   namespace: conservices-data
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: minio
+      app.kubernetes.io/name: s3
   policyTypes: ["Ingress"]
   ingress:
     - from:
