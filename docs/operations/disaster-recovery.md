@@ -127,11 +127,12 @@ The cluster is gone (or you move to a new one). The backup bucket, the age
 key, Git and the secret manager survived.
 
 1. **Build the cluster foundations**, in this order:
-    1. a Kubernetes cluster with a CNI that enforces NetworkPolicy (Cilium
-       recommended, see [Network policies](network-policies.md#installing-cilium));
-    2. the ingress controller and the load balancer in front of it
-       ([Production](production.md#load-balancer-in-front-of-the-ingress-controller));
-    3. cert-manager (or your certificate source) and the External Secrets
+    1. a Kubernetes cluster with Cilium, which enforces NetworkPolicy and
+       serves the Gateway API (see [Network policies](network-policies.md#installing-cilium));
+    2. the Gateway `public` and its load-balancer address
+       ([Production](production.md#a-load-balancer-address-for-the-gateway));
+       with the [Argo CD path](../deploy/index.md), Git brings both back;
+    3. cert-manager and trust-manager (see [Internal TLS](internal-tls.md)) and the External Secrets
        Operator with access to your secret manager.
 2. **Apply the platform overlay** from Git:
 

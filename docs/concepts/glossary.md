@@ -34,6 +34,13 @@ too, with a link to where they are explained.
     screen, read Rally's public schedule. Created by staff in Rally and shown
     once. Not the same as a [service token](#service-token).
 
+**Argo CD** { #argo-cd }
+:   A [GitOps](#gitops) tool for Kubernetes. It watches a Git repository
+    and keeps the cluster in line with what is written there: it installs
+    the Helm charts and manifests, shows what differs, and undoes changes
+    made by hand. Production Con Services clusters are managed with it; see
+    [Deploy with Argo CD](../deploy/index.md).
+
 **Asset (branding asset)**
 :   An uploaded image with a *role*, such as `logo`, `favicon` or
     `login-background`. The newest upload per role is the one in use.
@@ -56,6 +63,13 @@ too, with a link to where they are explained.
 :   Each module has a *backend* (a Go program serving the API and talking to
     the database) and a *frontend* (an nginx container serving the web app
     in the browser and forwarding `/api/` to the backend).
+
+**BackendTLSPolicy** { #backendtlspolicy }
+:   A [Gateway API](#gateway-api) object that tells the Gateway to talk
+    HTTPS to an app's Service and how to check the app's certificate: which
+    CA to trust (Con Services: the ConfigMap `conservices-internal-ca`) and
+    which name the certificate must carry (the Service's DNS name). See
+    [Internal TLS](../operations/internal-tls.md#gateway-api-cilium).
 
 **Bearer token**
 :   A secret sent in the `Authorization: Bearer <token>` header. Whoever
@@ -81,11 +95,19 @@ too, with a link to where they are explained.
 
 **Caddy**
 :   The web server used as the HTTPS proxy of the Docker Compose
-    development stack. On Kubernetes the ingress controller does this job.
+    development stack. On Kubernetes the [Gateway](#gateway-api) does this
+    job.
 
 **Call for papers (CfP)**
 :   In Rally, an open invitation to submit talks, panels or workshops for an
     [edition](#edition). See [Rally](../modules/rally/index.md).
+
+**cert-manager**
+:   A Kubernetes add-on that creates TLS certificates from `Certificate`
+    objects, stores them in Secrets and renews them before they expire.
+    Con Services uses it for the public certificate and for the
+    [internal CA](#internal-ca). See
+    [Internal TLS](../operations/internal-tls.md).
 
 **Changelog**
 :   The `CHANGELOG.md` of each module, listing what changed in every release
@@ -93,7 +115,9 @@ too, with a link to where they are explained.
 
 **Cilium**
 :   An open-source network plugin (CNI) for Kubernetes that enforces network
-    policies. The preferred CNI for Con Services in production.
+    policies, encrypts traffic between nodes (WireGuard) and runs the
+    [Gateway](#gateway-api) with its built-in Envoy proxy. The CNI of every
+    Con Services cluster, from the local trial to production.
 
 **Claim**
 :   One piece of information inside a token, such as `sub`, `email` or
@@ -158,6 +182,20 @@ too, with a link to where they are explained.
     recommended way to deliver Con Services' secrets. See
     [Secrets](../operations/secrets.md).
 
+**Gateway API, Gateway** { #gateway-api }
+:   The standard Kubernetes way to bring web traffic into a cluster, the
+    successor of [Ingress](#ingress). A **Gateway** is the entry point: it
+    holds the public HTTPS certificate and listens on ports 80 and 443.
+    Each app attaches an [HTTPRoute](#httproute) to it. Con Services uses
+    Cilium's implementation (GatewayClass `cilium`) and one Gateway called
+    `public` in the namespace `conservices-gateway`.
+
+**GitOps** { #gitops }
+:   Running a cluster from a Git repository: every setting, version and
+    manifest is committed there, and a tool such as [Argo CD](#argo-cd)
+    applies it. A change is a commit, and the history is the change log.
+    Con Services' reference repository is `con-services-gitops`.
+
 **Group**
 :   A set of users in Keycloak, such as `den-admin`. Modules turn groups
     into roles.
@@ -174,6 +212,11 @@ too, with a link to where they are explained.
 :   In Learn, the qualifications a person currently holds. HR asks Learn for
     them before granting a role that requires training.
 
+**HTTPRoute** { #httproute }
+:   A [Gateway API](#gateway-api) object that says "requests for this host
+    name (and path) go to this Service". Every Con Services web app has one,
+    attached to the Gateway `public`.
+
 **ID token** { #id-token }
 :   A signed token from Keycloak describing the person who signed in. The
     web apps send it to their backend as a bearer token.
@@ -188,14 +231,23 @@ too, with a link to where they are explained.
     version: `ghcr.io/aglelectronics/den-backend:1.0.0-1`. Con Services
     never uses the tag `latest`.
 
-**Ingress, ingress controller**
-:   An Ingress is a rule "requests for this host name go to this service".
-    The ingress controller (here ingress-nginx) is the web server that
-    carries out those rules and handles HTTPS.
+**Ingress, ingress controller** { #ingress }
+:   The older Kubernetes way in: an Ingress is a rule "requests for this
+    host name go to this service", and an ingress controller (for example
+    Traefik) is the web server that carries out those rules. Con Services
+    uses the [Gateway API](#gateway-api) instead; the Helm charts can still
+    render a plain Ingress (`ingress.enabled`) for clusters that only have a
+    controller. ingress-nginx is no longer maintained; do not use it.
 
 **initContainer**
 :   A container that runs to completion before a pod's main container
     starts. Den uses one called `migrate` for its database migrations.
+
+**Internal CA (internal certificate authority)** { #internal-ca }
+:   Con Services' own certificate authority inside the cluster
+    (`ClusterIssuer/conservices-internal-ca`). It signs the certificates
+    that encrypt connections between pods; only Con Services' pods trust
+    it, browsers do not. See [Internal TLS](../operations/internal-tls.md).
 
 **Internal endpoint**
 :   An endpoint under `/api/internal/...` that only another module may call,
@@ -221,6 +273,11 @@ too, with a link to where they are explained.
 :   Den pushing its brand into the Keycloak realm, so the sign-in page looks
     like the rest of the suite.
 
+**kind**
+:   "Kubernetes in Docker": a tool that runs a Kubernetes cluster inside
+    Docker containers on your computer. The local trial uses it; see
+    [Run Den on Kubernetes](../getting-started/den-quickstart.md).
+
 **kubectl**
 :   The command-line tool for talking to a Kubernetes cluster.
 
@@ -239,20 +296,24 @@ too, with a link to where they are explained.
     only stops traffic to it until it recovers.
 
 **Load balancer**
-:   A network service that spreads incoming traffic over several servers.
-    Large installations put one in front of several ingress controller
-    replicas.
+:   A network service that spreads incoming traffic over several servers,
+    or gives a Service an address outside the cluster. On Con Services
+    clusters, Cilium's LB IPAM gives the [Gateway](#gateway-api) its
+    address.
 
 **Managed database**
 :   A module database the operator created for Den, and which Den may
     therefore also delete when the module is removed.
 
-**Managed storage**
-:   S3-compatible object storage run by a provider, such as AWS S3 or
-    Hetzner Object Storage. Recommended for production instead of MinIO.
+**Managed storage, managed S3**
+:   S3-compatible object storage run by a provider. Required for
+    production instead of SeaweedFS or any other storage inside the cluster.
+    Any S3-compatible service works, for example AWS S3, Hetzner Object
+    Storage, Cloudflare R2 or Backblaze B2.
 
 **Manifest**
-:   A YAML file describing Kubernetes objects. Con Services' are in
+:   A YAML file describing Kubernetes objects. Con Services' Helm charts are
+    in `deploy/charts/`, the local-trial Kustomize manifests in
     `deploy/kubernetes/`.
 
 **Migration**
@@ -262,8 +323,9 @@ too, with a link to where they are explained.
     [Goose](https://github.com/pressly/goose).
 
 **MinIO**
-:   An S3-compatible file storage server. Used for local and trial
-    installations only.
+:   An S3-compatible file storage server that earlier versions used for
+    development and the local trial. Replaced by [SeaweedFS](#seaweedfs)
+    because MinIO no longer publishes community images.
 
 **Module**
 :   One application of the suite: Den, HR, Rally, Stash, Finance, Learn,
@@ -385,14 +447,20 @@ too, with a link to where they are explained.
 :   The public list of roles a module understands, at `GET /api/role-catalog`.
 
 **S3, S3-compatible storage**
-:   Amazon's object storage protocol for files, also offered by MinIO,
-    Hetzner Object Storage and others. Every module stores its files this
-    way.
+:   Amazon's object storage protocol for files, also offered by Hetzner
+    Object Storage, Cloudflare R2, Backblaze B2, SeaweedFS and others. Every
+    module stores its files this way.
 
 **Sealed Secrets, SOPS**
 :   Two ways of keeping encrypted secrets in Git: Sealed Secrets decrypts
     them inside the cluster, SOPS encrypts files with your own keys.
     Alternatives to the External Secrets Operator.
+
+**SeaweedFS** { #seaweedfs }
+:   An open-source, S3-compatible file storage server. The Docker Compose
+    stack and the Kubernetes local trial run it as the service `s3`
+    (image `chrislusf/seaweedfs:4.52`, single-process `mini` mode), with
+    example keys. Development and trials only, never production.
 
 **Secret manager**
 :   A service that stores secrets safely and hands them to applications,
@@ -432,6 +500,17 @@ too, with a link to where they are explained.
 
 **Subject (`sub`)**
 :   The permanent, unique id of a person in the identity provider.
+
+**TLS (Transport Layer Security)**
+:   The encryption behind `https://`. It also lets the client check that the
+    server is who it claims to be, using a certificate. Con Services uses
+    it for browsers (at the Gateway) and between pods
+    ([Internal TLS](../operations/internal-tls.md)).
+
+**trust-manager**
+:   A companion add-on of cert-manager that copies a CA certificate into a
+    ConfigMap in many namespaces. Con Services uses it to give every pod the
+    [internal CA](#internal-ca).
 
 **Upstream**
 :   A system a module depends on, such as Keycloak or Den. `upstream_failed`

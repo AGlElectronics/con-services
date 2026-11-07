@@ -55,16 +55,19 @@ flowchart LR
 
 | Posture | When | Guide |
 | --- | --- | --- |
-| **Full platform on Kubernetes** (recommended) | Production, next to Den, Keycloak and the other modules. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
+| **Production cluster with Argo CD** (recommended for production) | Production: Den, Keycloak and every module on a cluster managed from Git. | [Den and the modules](../../deploy/apps.md) |
+| Full platform on Kubernetes | A cluster you run yourself, next to Den, Keycloak and the other modules; also the local trial cluster. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
 | Standalone on Kubernetes | A people register with your own database and identity provider. | [Setup: standalone](setup.md#standalone-on-kubernetes) |
 | Production with Docker | A single server without Kubernetes. | [Setup: Docker](setup.md#production-with-docker) |
 | Development with Docker | Trying HR or working on its code. Not for production. | [Setup: development](setup.md#development-with-docker) |
+
+A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only; production installations use the Argo CD path.
 
 ## How HR is built
 
 | Part | Technology | Runs as |
 | --- | --- | --- |
-| Backend | Go 1.25, chi, pgx | Deployment `hr-backend` (`/server`, port 8080) |
+| Backend | Go 1.27, chi, pgx | Deployment `hr-backend` (`/server`, port 8080) |
 | Migrations | Goose, separate binary | initContainer `migrate` in `hr-backend` (`hr-migrate` image). The server **never** migrates (ADR-0003). |
 | Frontend | React 19, Rsbuild, TanStack Query, Tailwind | Deployment `hr-frontend` (nginx) |
 | Database | PostgreSQL 16 | shared server, database `hr` |
@@ -75,7 +78,7 @@ flowchart LR
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/hr-backend:<tag>` | `infra/Dockerfile.backend` | API server `/server`, port 8080. |
 | `ghcr.io/aglelectronics/hr-migrate:<tag>` | `infra/Dockerfile.migrate` | One-shot migrator `/migrate`; needs only `DATABASE_URL`. |
-| `ghcr.io/aglelectronics/hr-frontend:<tag>` | `infra/Dockerfile.frontend` | Web app on nginx (port 80 in the image; the chart mounts a config on 8080). |
+| `ghcr.io/aglelectronics/hr-frontend:<tag>` | `infra/Dockerfile.frontend` | Web app on nginx (non-root as UID 101, port 8080; the chart mounts its own config). |
 
 Use the same tag for all three ([Versions and upgrades](../../operations/versioning.md)).
 No HR release has been published yet; build the images yourself until one is.

@@ -17,7 +17,7 @@ what you need to call Desk.
 | What | Value |
 | --- | --- |
 | Base address (browser, scripts) | The Desk address, for example `https://desk.example.org`. nginx forwards `/api/`, `/livez` and `/readyz` to the backend. |
-| Base address (inside the cluster) | `http://desk-backend.conservices-desk.svc.cluster.local:8080` |
+| Base address (inside the cluster) | `https://desk-backend.conservices-desk.svc.cluster.local:8080` |
 | Version prefix | `/api/v1` for everything except probes and the role catalog. |
 | Request bodies | JSON, `Content-Type: application/json`. **Unknown fields are rejected** with `400` (the decoder is strict), so check spelling. |
 | Ids | UUIDs. A malformed id in the path answers `400` `invalid <name> id: …`. |
@@ -168,7 +168,7 @@ Anyone (HR calls it in-cluster to fill its access picker). One entry per
 role and Keycloak group binding from the access configuration.
 
 ```sh
-curl -s http://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog
+curl -s --cacert /etc/conservices-internal-ca/ca.crt https://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog
 ```
 
 ```json
@@ -688,7 +688,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $DESK/api/v1/den
 ```
 
 ```json
-{"paired":true,"den_base_url":"http://den-backend.conservices-den.svc.cluster.local:8080",
+{"paired":true,"den_base_url":"https://den-backend.conservices-den.svc.cluster.local:8080",
  "module_id":"3c9d…","paired_at":"2026-11-01T09:00:00Z","synced_at":"2026-11-06T11:55:00Z"}
 ```
 

@@ -97,8 +97,9 @@ default look.
   line is settled, then becomes *returned*; admins can then **close** it.
 - **Lost & Found:** the front desk logs found items with a photo; each gets
   a report number and a printable label. Turn on the guest lookup page only
-  when kiosks are ready (`PUBLIC_LOSTFOUND_CLAIM_ENABLED` and the frontend's
-  `VITE_PUBLIC_CLAIM_ENABLED`).
+  when kiosks are ready (`PUBLIC_LOSTFOUND_CLAIM_ENABLED` on the backend and
+  `publicClaimEnabled` in the web app's `/config.json`; the Helm chart sets
+  the second from the first).
 
 ## After the event
 

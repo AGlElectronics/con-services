@@ -12,6 +12,12 @@ such as Stash comes after.
 
 Plan about 45 minutes the first time. Most of that is downloading.
 
+!!! info "A local trial, not production"
+    This is the local trial path. It runs the same images and the same way
+    in (Cilium's Gateway API) as a production cluster, but on one computer,
+    with public test passwords and file storage inside the cluster. To run
+    Con Services for real, follow [Deploy with Argo CD](../deploy/index.md).
+
 !!! tip "Copying commands"
     Every grey command box has a copy button in its top-right corner. Click
     it, then paste into your terminal with ++ctrl+v++ (Windows and Linux) or
@@ -28,35 +34,44 @@ Plan about 45 minutes the first time. Most of that is downloading.
 ## What you are building
 
 **Kubernetes** runs programs in *containers* and keeps them running. A
-**cluster** is a set of computers Kubernetes manages; here it is just your
-computer. **kubectl** is the command-line tool you use to talk to it.
+**cluster** is a set of computers Kubernetes manages; here it is one
+container on your computer, made by **kind** ("Kubernetes in Docker").
+**kubectl** is the command-line tool you use to talk to it.
+
+**Cilium** is the cluster's network plugin. It connects the containers,
+enforces the network rules between them, and runs the **Gateway**: the
+front door that receives every request for `*.conservices.test` and sends
+it to the right app. Each app says which address it answers with an
+**HTTPRoute**; this is the [Gateway API](../concepts/glossary.md#gateway-api),
+the standard Kubernetes way in, and the same setup production clusters use.
 
 You will start these parts, each in its own *namespace* (a named section of
 the cluster):
 
 | Namespace | What runs there |
 | --- | --- |
+| `kube-system` | Cilium, including the Gateway's proxy (Envoy) |
+| `conservices-gateway` | The Gateway `public`, which holds the HTTPS certificate for `*.conservices.test` |
 | `conservices-identity` | Keycloak, the sign-in server, at `https://auth.conservices.test` |
-| `conservices-data` | PostgreSQL (database) and MinIO (file storage), for local use only |
+| `conservices-data` | PostgreSQL (database) and SeaweedFS, an S3-compatible file storage (service `s3`), for local use only |
 | `conservices-den` | Den: its web app at `https://den.conservices.test`, its API and its operator |
-| `ingress-nginx` | The **ingress controller**: the front door that sends each web address to the right app |
 
 The published Den images are pulled from the GitHub Container Registry,
 pinned to an exact version (`1.0.0-1`). Nothing is built on your computer.
 
-## Step 1: Install Docker Desktop and turn on Kubernetes
+## Step 1: Install Docker
+
+kind runs the cluster inside Docker, so you need Docker but **not** Docker
+Desktop's own Kubernetes (leave it switched off).
 
 === "Windows"
 
     1. Install **Docker Desktop** from
        <https://www.docker.com/products/docker-desktop/>. Accept the default
-       options. Restart the computer if the installer asks.
+       options (it uses WSL 2). Restart the computer if the installer asks.
     2. Start Docker Desktop and wait until it says *Engine running*.
-    3. Open **Settings** (gear icon) → **Kubernetes**, tick **Enable
-       Kubernetes**, keep the default cluster type, click **Apply &
-       restart** and confirm the install.
-    4. Wait until the bottom-left corner shows **Kubernetes running** (a
-       few minutes).
+    3. Open **Settings** (gear icon) → **Resources** and give it at least
+       6 GB of memory if your computer has 16 GB.
 
 === "macOS"
 
@@ -64,27 +79,34 @@ pinned to an exact version (`1.0.0-1`). Nothing is built on your computer.
        <https://www.docker.com/products/docker-desktop/>. Pick the build for
        your chip (Apple silicon or Intel).
     2. Start Docker Desktop and wait until it says *Engine running*.
-    3. Open **Settings** → **Kubernetes**, tick **Enable Kubernetes**, keep
-       the default cluster type, click **Apply & restart**.
-    4. Wait until it shows **Kubernetes running**.
+    3. Open **Settings** → **Resources** and give it at least 6 GB of memory.
 
 === "Linux"
 
-    Docker Desktop for Linux works the same way as on Windows and macOS:
-    install it from <https://docs.docker.com/desktop/setup/install/linux/>,
-    then **Settings** → **Kubernetes** → **Enable Kubernetes**.
+    Install Docker Engine from <https://docs.docker.com/engine/install/>
+    and let your user run it without `sudo`:
 
-!!! note "Other local clusters"
-    [kind](https://kind.sigs.k8s.io/) and [k3d](https://k3d.io/) work too.
-    The difference is how web traffic reaches the cluster: follow their
-    "ingress" guide so that ports 80 and 443 on your computer reach the
-    ingress controller, then continue with step 3 (skip step 4's install
-    command if your cluster already has an ingress controller, and adjust
-    the namespace name in the NetworkPolicies if it is not `ingress-nginx`).
+    ```sh
+    sudo usermod -aG docker "$USER"
+    ```
 
-## Step 2: Install kubectl, Git and mkcert
+    Log out and in again so the group change takes effect.
 
-- **kubectl** comes with Docker Desktop.
+Check that Docker runs:
+
+```sh
+docker version --format "{{.Server.Version}}"
+```
+
+It prints a version number, for example `29.0.1`. An error such as
+`Cannot connect to the Docker daemon` means Docker is not running yet.
+
+## Step 2: Install kubectl, kind, Helm, Git and mkcert
+
+- **kubectl** talks to the cluster.
+- **kind** creates the cluster.
+- **Helm** installs ready-made Kubernetes add-ons (Cilium and
+  trust-manager).
 - **Git** downloads the source code.
 - **mkcert** makes a certificate your browser trusts, so the local addresses
   work over HTTPS (signing in requires it).
@@ -94,6 +116,9 @@ pinned to an exact version (`1.0.0-1`). Nothing is built on your computer.
     Open **PowerShell** (Start menu → type *PowerShell*) and run:
 
     ```powershell
+    winget install --id Kubernetes.kubectl -e
+    winget install --id Kubernetes.kind -e
+    winget install --id Helm.Helm -e
     winget install --id Git.Git -e
     winget install --id FiloSottile.mkcert -e
     ```
@@ -105,35 +130,35 @@ pinned to an exact version (`1.0.0-1`). Nothing is built on your computer.
     With [Homebrew](https://brew.sh):
 
     ```sh
-    brew install git mkcert nss
+    brew install kubectl kind helm git mkcert nss
     ```
 
 === "Linux"
 
-    Debian or Ubuntu:
+    Debian or Ubuntu, on an x86-64 computer (for ARM replace `amd64` with
+    `arm64`):
 
     ```sh
     sudo apt install git mkcert libnss3-tools
+    curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+    curl -fsSLo kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    sudo install -m 0755 kind kubectl /usr/local/bin/ && rm kind kubectl
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
     ```
 
-Check that everything is there and that kubectl can see your cluster:
+Check that everything is there:
 
 ```sh
 kubectl version --client
+kind version
+helm version
 git --version
 mkcert -version
-kubectl get nodes
 ```
 
-The last command should list one node with status `Ready`:
-
-```text
-NAME             STATUS   ROLES           AGE   VERSION
-docker-desktop   Ready    control-plane   5m    v1.34.1
-```
-
-If it says `Unable to connect to the server`, Kubernetes is not running yet;
-see [Troubleshooting](troubleshooting.md#kubectl-cannot-connect-to-the-cluster).
+Each command prints a version, for example `kind v0.33.0 go1.25.1 windows/amd64`
+for kind. `not recognized` or `command not found` means the program is
+missing, or (Windows) PowerShell was not reopened after installing it.
 
 ## Step 3: Download Con Services
 
@@ -146,27 +171,100 @@ cd con-services
 
 From now on, every command runs inside this `con-services` folder.
 
-## Step 4: Install the ingress controller
+## Step 4: Create the cluster and install the add-ons
 
-The ingress controller receives every request for `*.conservices.test` and
-passes it to the right app. Install it once per cluster:
+These add-ons are installed once per cluster.
+
+### 4a: The cluster
+
+The file `deploy/kubernetes/local-cluster/kind-config.yaml` describes a
+one-node cluster without kind's default network plugin and without
+kube-proxy (Cilium replaces both), and publishes the ports 80 and 443 of
+the cluster on your computer.
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/cloud/deploy.yaml
-kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
+kind create cluster --config deploy/kubernetes/local-cluster/kind-config.yaml
 ```
 
-You should see, after up to a minute:
+After a minute or two you should see:
 
 ```text
-pod/ingress-nginx-controller-5d8f9c7b6-r2xkq condition met
+Creating cluster "conservices" ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼
+ ✓ Preparing nodes 📦
+ ✓ Writing configuration 📜
+ ✓ Starting control-plane 🕹️
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-conservices"
 ```
 
-!!! note "About ingress-nginx"
-    The ingress-nginx project stopped active development in 2026. It still
-    works for a local trial. The manifests only use standard Kubernetes
-    `Ingress` objects, so in production you can use another controller; see
-    [Running on Kubernetes](../operations/running.md#the-ingress-controller).
+The node is `NotReady` until Cilium runs (step 4c); that is expected.
+
+### 4b: The Gateway API definitions
+
+The Gateway API objects (`Gateway`, `HTTPRoute`, `BackendTLSPolicy`, …) are
+not built into Kubernetes; install their definitions first, because Cilium
+only switches its Gateway on when they exist:
+
+```sh
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
+```
+
+You should see lines such as
+`customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io serverside-applied`.
+
+### 4c: Cilium
+
+The settings for the trial are in
+`deploy/kubernetes/local-cluster/cilium-values.yaml`: Cilium replaces
+kube-proxy, the Gateway API is on, and the Gateway's proxy listens on the
+node's ports 80 and 443 (a laptop has no load balancer).
+
+```sh
+helm repo add cilium https://helm.cilium.io
+helm install cilium cilium/cilium --version 1.20.4 -n kube-system -f deploy/kubernetes/local-cluster/cilium-values.yaml
+kubectl -n kube-system rollout status daemonset/cilium --timeout=300s
+kubectl get nodes
+kubectl get gatewayclass
+```
+
+You should see `daemon set "cilium" successfully rolled out`, the node
+`Ready`, and the GatewayClass `cilium` accepted:
+
+```text
+NAME                        STATUS   ROLES           AGE   VERSION
+conservices-control-plane   Ready    control-plane   4m    v1.37.0
+
+NAME     CONTROLLER                     ACCEPTED   AGE
+cilium   io.cilium/gateway-controller   True       1m
+```
+
+If `kubectl get gatewayclass` says `No resources found`, Cilium started
+before the definitions from step 4b existed; restart its operator with
+`kubectl -n kube-system rollout restart deployment/cilium-operator` and
+check again after a minute.
+
+### 4d: cert-manager and trust-manager
+
+Con Services encrypts the connections *inside* the cluster too (between
+the Gateway, Den, the database, the sign-in server and so on).
+**cert-manager** makes and renews the certificates for that, and
+**trust-manager** hands every app the certificate authority it needs to
+check them. More on [Internal TLS](../operations/internal-tls.md).
+
+```sh
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.3/cert-manager.yaml
+kubectl wait --namespace cert-manager --for=condition=Available deployment --all --timeout=180s
+helm upgrade --install trust-manager oci://quay.io/jetstack/charts/trust-manager --namespace cert-manager --version v0.26.0 --wait
+```
+
+You should see three lines ending in `condition met`, and then from Helm:
+
+```text
+Release "trust-manager" does not exist. Installing it now.
+...
+STATUS: deployed
+```
 
 ## Step 5: Make the local certificate and copy the sign-in setup
 
@@ -207,42 +305,22 @@ committed.
         ```
 
     mkcert prints `The certificate is at "…tls.crt" and the key at "…tls.key"`.
+    The Gateway presents this certificate to your browser.
 
 !!! danger "Never share rootCA-key.pem"
     mkcert's own key stays in the folder shown by `mkcert -CAROOT`. Only the
     public `rootCA.pem` is copied. Anyone with the key could fake any website
     for your computer.
 
-## Step 6: Tell Den where the sign-in server is inside the cluster
+!!! note "How Den finds the sign-in server inside the cluster"
+    Den checks every sign-in against `https://auth.conservices.test`. Your
+    browser finds that address through the hosts file (step 6). Inside the
+    cluster, the overlay points the name at the Service `keycloak-public`,
+    which it gives the fixed address `10.96.0.100`
+    (`den-backend-local.yaml` and `keycloak-local.yaml`). Nothing to do
+    for you; production clusters use a DNS rewrite instead.
 
-Den checks every sign-in against `https://auth.conservices.test`. Your
-browser finds that address through your computer's hosts file (step 7), but
-programs *inside* the cluster need to be told too. The overlay file
-`den-backend-local.yaml` points the name at the ingress controller; it needs
-your ingress controller's internal address (its *ClusterIP*):
-
-=== "Windows"
-
-    ```powershell
-    $ip = kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath="{.spec.clusterIP}"
-    $file = "deploy\kubernetes\overlays\example\den-backend-local.yaml"
-    (Get-Content $file) -replace '10\.96\.0\.100', $ip | Set-Content $file
-    Select-String -Path $file -Pattern "ip:"
-    ```
-
-=== "macOS / Linux"
-
-    ```sh
-    ip=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath="{.spec.clusterIP}")
-    file=deploy/kubernetes/overlays/example/den-backend-local.yaml
-    sed -i.bak "s/10\.96\.0\.100/$ip/" "$file" && rm "$file.bak"
-    grep "ip:" "$file"
-    ```
-
-The last line should show your address, for example
-`- ip: "10.104.211.37" # CHANGE ME: ingress controller ClusterIP`.
-
-## Step 7: Add the local web addresses (one time only)
+## Step 6: Add the local web addresses (one time only)
 
 Your computer must know that the `*.conservices.test` addresses are on your
 own computer. This needs administrator rights once.
@@ -262,7 +340,7 @@ own computer. This needs administrator rights once.
     echo "127.0.0.1 auth.conservices.test den.conservices.test stash.conservices.test" | sudo tee -a /etc/hosts
     ```
 
-## Step 8: Start everything
+## Step 7: Start everything
 
 ```sh
 kubectl apply -k deploy/kubernetes/overlays/example
@@ -274,21 +352,32 @@ a list of created objects ending in lines like:
 ```text
 namespace/conservices-data created
 namespace/conservices-den created
+namespace/conservices-gateway created
 namespace/conservices-identity created
+...
+certificate.cert-manager.io/den-backend-tls created
+certificate.cert-manager.io/keycloak-tls created
+certificate.cert-manager.io/postgres-tls created
 ...
 deployment.apps/den-backend created
 deployment.apps/den-frontend created
 deployment.apps/den-operator created
 deployment.apps/keycloak created
-deployment.apps/minio created
+deployment.apps/s3 created
 statefulset.apps/postgres created
-ingress.networking.k8s.io/den created
-ingress.networking.k8s.io/keycloak created
+backendtlspolicy.gateway.networking.k8s.io/den-frontend created
+backendtlspolicy.gateway.networking.k8s.io/keycloak-public created
+gateway.gateway.networking.k8s.io/public created
+httproute.gateway.networking.k8s.io/den created
+httproute.gateway.networking.k8s.io/keycloak created
+httproute.gateway.networking.k8s.io/public-https-redirect created
+ciliumnetworkpolicy.cilium.io/den-web-from-gateway created
+ciliumnetworkpolicy.cilium.io/keycloak-from-gateway created
 networkpolicy.networking.k8s.io/default-deny created
 ...
 ```
 
-## Step 9: Wait until everything runs
+## Step 8: Wait until everything runs
 
 Watch the pods (the running programs) come up:
 
@@ -304,8 +393,8 @@ like this:
 
 ```text
 NAMESPACE              NAME                            READY   STATUS    RESTARTS      AGE
-conservices-data       minio-7c9d8f6b5-8xk2p           1/1     Running   0             4m
-conservices-data       postgres-0                      1/1     Running   0             4m
+conservices-data       postgres-0                      2/2     Running   0             4m
+conservices-data       s3-7c9d8f6b5-8xk2p              1/1     Running   0             4m
 conservices-den        den-backend-6d9c8b7f5d-x2kqp    1/1     Running   2 (90s ago)   4m
 conservices-den        den-frontend-7b9f6c4d8-4hzvn    1/1     Running   0             4m
 conservices-den        den-frontend-7b9f6c4d8-q8tml    1/1     Running   0             4m
@@ -313,7 +402,44 @@ conservices-den        den-operator-5c6f9d7b84-mn2rs   1/1     Running   0      
 conservices-identity   keycloak-6f4d8b9c7-zt5wq        1/1     Running   0             4m
 ```
 
-Every line must say `1/1` and `Running`. Press ++ctrl+c++ to stop watching.
+PostgreSQL shows `2/2`: it runs a small helper next to it that reloads its
+certificate when cert-manager renews it.
+
+!!! note "File storage in the trial"
+    `s3` is [SeaweedFS](https://github.com/seaweedfs/seaweedfs), a small
+    S3-compatible server that creates the trial's buckets when it starts.
+    It is only a stand-in for a laptop; production uses a managed S3
+    service (any S3-compatible service works: AWS S3, Hetzner Object
+    Storage, Cloudflare R2, Backblaze B2, ...).
+
+Every line must say `Running` with all containers ready (`1/1`, or `2/2` for
+PostgreSQL). Press ++ctrl+c++ to stop watching. Pods may wait a few seconds
+in `ContainerCreating` until cert-manager has written their certificate;
+check that every certificate is ready with:
+
+```sh
+kubectl get certificate -A
+```
+
+Every line must say `True` under `READY`. Then check that the Gateway is
+ready and has accepted the routes:
+
+```sh
+kubectl get gateway -n conservices-gateway
+kubectl get httproute -A
+```
+
+```text
+NAME     CLASS    ADDRESS      PROGRAMMED   AGE
+public   cilium   172.18.0.2   True         3m
+
+NAMESPACE              NAME                    HOSTNAMES                   AGE
+conservices-den        den                     ["den.conservices.test"]    3m
+conservices-gateway    public-https-redirect                               3m
+conservices-identity   keycloak                ["auth.conservices.test"]   3m
+```
+
+`PROGRAMMED` must be `True`; the address is the kind node's and may differ.
 If a line stays on `ImagePullBackOff`, `CrashLoopBackOff`, `Pending` or
 `Init:Error`, see [Troubleshooting](troubleshooting.md).
 
@@ -337,7 +463,7 @@ Expected answer:
 {"database":"ok","status":"ok","uptime_sec":95,"version":"1.0.0-1"}
 ```
 
-## Step 10: Open Den and sign in
+## Step 9: Open Den and sign in
 
 1. Open <https://den.conservices.test> in your browser. You should see a
    **Sign in** card with a **Continue with SSO** button, and no certificate
@@ -355,7 +481,7 @@ Expected answer:
         This account comes from the test realm in the repository and its
         password is public. Real installations use their own accounts.
 
-## Step 11: Check that it worked
+## Step 10: Check that it worked
 
 After signing in you land on the **portal home**
 (`https://den.conservices.test/dashboard`). You should see:
@@ -381,12 +507,16 @@ the database and the file storage all work together.
 - change the colours and logo under **Branding**
   ([admin guide](../modules/den/admin-guide.md#branding));
 - read why the parts are separated the way they are:
-  [Network policies](../operations/network-policies.md).
+  [Network policies](../operations/network-policies.md). Unlike Docker
+  Desktop's built-in Kubernetes, this cluster enforces them (Cilium).
 
 ## Stopping, starting and cleaning up
 
-**Pause:** quit Docker Desktop. The cluster stops and all data stays. Start
-Docker Desktop again to continue; the pods come back by themselves.
+**Pause:** quit Docker Desktop (Linux: stop Docker). The cluster stops and
+all data stays. Start Docker again to continue; the cluster's container
+starts with it and the pods come back by themselves. If
+`kubectl get nodes` cannot connect, start it by hand with
+`docker start conservices-control-plane`.
 
 **Update to a newer version:** change `newTag` in
 `deploy/kubernetes/overlays/example/kustomization.yaml`, read the changelog,
@@ -397,16 +527,20 @@ and run the apply command again. See
 
 ```sh
 kubectl delete -k deploy/kubernetes/overlays/example
-kubectl delete namespace conservices-data conservices-den conservices-identity --ignore-not-found
+kubectl delete namespace conservices-data conservices-den conservices-gateway conservices-identity --ignore-not-found
 ```
 
 Deleting the namespaces also deletes the database and file storage volumes,
 so **all data is gone**.
 
-**Remove everything**, including the ingress controller: Docker Desktop →
-**Settings → Kubernetes → Reset Kubernetes Cluster**. To undo the other
-changes, remove the line you added to the hosts file and run
-`mkcert -uninstall`.
+**Remove everything**, including the cluster:
+
+```sh
+kind delete cluster --name conservices
+```
+
+To undo the other changes, remove the line you added to the hosts file and
+run `mkcert -uninstall`.
 
 ## Troubleshooting
 
@@ -415,14 +549,22 @@ The most common problems at each step, with the full fix on the
 
 | Step | You see | Go to |
 | --- | --- | --- |
-| 2 | `Unable to connect to the server` | [kubectl cannot connect](troubleshooting.md#kubectl-cannot-connect-to-the-cluster) |
-| 4 | `kubectl wait` times out | The controller is still pulling its image; run `kubectl get pods -n ingress-nginx` and wait. If `EXTERNAL-IP` of `kubectl get svc -n ingress-nginx` stays `<pending>` on kind or k3d, follow their ingress guide. |
-| 8 | `error: … local/tls.crt: no such file or directory` | Step 5 was skipped or run from another folder; run it again from `con-services`. |
-| 9 | `ImagePullBackOff` | [ImagePullBackOff](troubleshooting.md#imagepullbackoff-or-errimagepull) |
-| 9 | `Pending` | [A pod is Pending](troubleshooting.md#a-pod-is-pending) |
-| 9 | `den-backend` in `CrashLoopBackOff` for more than five minutes | [CrashLoopBackOff](troubleshooting.md#crashloopbackoff); usually the IP from step 6 |
-| 9 | `Init:Error` | [The migration step failed](troubleshooting.md#den-backend-stays-in-init-the-migration-step-failed) |
-| 10 | Certificate warning | [Certificate warnings](troubleshooting.md#certificate-warnings) |
-| 10 | *This site can't be reached* | [The browser cannot open the page](troubleshooting.md#the-browser-cannot-open-the-page-at-all) |
-| 10 | Back on **Sign in** after logging in | [Sign-in loops](troubleshooting.md#sign-in-loops-back-to-the-sign-in-page) |
-| 11 | No **Admin console** button | [Signed in, but no Admin console](troubleshooting.md#signed-in-but-failed-to-load-your-services-or-no-admin-console) |
+| 1 | `Cannot connect to the Docker daemon` or `error during connect` | Docker is not running: start Docker Desktop and wait for *Engine running*. |
+| 4a | `failed to create cluster: … address already in use` or `port is already allocated` | Something else uses port 80 or 443 on your computer (IIS, Apache, another proxy, the Docker Compose stack's Caddy). Stop it, run `kind delete cluster --name conservices`, then 4a again. |
+| 4a | `node(s) already exist for a cluster with the name "conservices"` | The cluster exists from an earlier try. Continue with 4b, or start over with `kind delete cluster --name conservices`. |
+| 4c | Node stays `NotReady`, `cilium` pods in `CrashLoopBackOff` | [Cilium does not start](troubleshooting.md#cilium-does-not-start-on-the-kind-cluster) |
+| 4c | `kubectl get gatewayclass` says `No resources found` | Restart the Cilium operator as described in step 4c. |
+| 4d | `helm: command not found` or `not recognized` | Helm from step 2 is missing, or PowerShell was not reopened after installing it. |
+| 7 | `no matches for kind "Certificate"`, `"Bundle"`, `"HTTPRoute"` or `"CiliumNetworkPolicy"` | An add-on from step 4 is missing; install it and apply again. |
+| 7 | `error: … local/tls.crt: no such file or directory` | Step 5 was skipped or run from another folder; run it again from `con-services`. |
+| 8 | Pods stay in `ContainerCreating`, `kubectl get certificate -A` shows `False` | [Internal TLS troubleshooting](../operations/internal-tls.md#troubleshooting) |
+| 8 | `s3` stays `0/1` or restarts | [The s3 storage pod is not ready](troubleshooting.md#the-s3-storage-pod-is-not-ready) |
+| 8 | Other pods in `ImagePullBackOff` | [ImagePullBackOff](troubleshooting.md#imagepullbackoff-or-errimagepull) |
+| 8 | `Pending` | [A pod is Pending](troubleshooting.md#a-pod-is-pending) |
+| 8 | `den-backend` in `CrashLoopBackOff` for more than five minutes | [CrashLoopBackOff](troubleshooting.md#crashloopbackoff) |
+| 8 | `Init:Error` | [The migration step failed](troubleshooting.md#den-backend-stays-in-init-the-migration-step-failed) |
+| 8 | Gateway `PROGRAMMED` stays `False` or `Unknown` | [The Gateway is not programmed](troubleshooting.md#the-gateway-is-not-programmed) |
+| 9 | Certificate warning | [Certificate warnings](troubleshooting.md#certificate-warnings) |
+| 9 | *This site can't be reached* | [The browser cannot open the page](troubleshooting.md#the-browser-cannot-open-the-page-at-all) |
+| 9 | Back on **Sign in** after logging in | [Sign-in loops](troubleshooting.md#sign-in-loops-back-to-the-sign-in-page) |
+| 10 | No **Admin console** button | [Signed in, but no Admin console](troubleshooting.md#signed-in-but-failed-to-load-your-services-or-no-admin-console) |

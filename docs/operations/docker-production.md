@@ -24,7 +24,7 @@ builds from source and uses public passwords.
 | --- | --- |
 | Builds every image from local source (`build:`). | Pulls published images with pinned tags (`image: ghcr.io/aglelectronics/den-backend:1.0.0-1`). |
 | Passwords written in the compose file. | Secrets in root-only env files outside Git, filled from a secret manager (see [Secrets on Docker](secrets.md#secrets-on-docker)). |
-| Keycloak in `start-dev` mode, MinIO, Mailpit, Adminer, GreenMail. | Keycloak in production mode (`start`); managed S3 and SMTP; **no** Adminer, Mailpit, GreenMail or MinIO. |
+| Keycloak in `start-dev` mode, a local S3 server (SeaweedFS, service `s3`), Mailpit, Adminer, GreenMail. | Keycloak in production mode (`start`); managed S3 and SMTP; **no** Adminer, Mailpit, GreenMail or local S3 server. |
 | Caddy with its own local certificate authority. | Caddy (or another reverse proxy) with real certificates from Let's Encrypt. |
 | Many published ports (`8090`, `5432`, `9000`, …). | Only the proxy publishes ports 80 and 443. |
 | `APP_ENV=development`. | `APP_ENV=production`, `AUTH_MODE=oidc`. |
@@ -36,8 +36,9 @@ builds from source and uses public passwords.
 2. DNS names for every app pointing at the server, for example
    `auth.con.example.org`, `den.con.example.org`, `stash.con.example.org`.
 3. Managed PostgreSQL 16 (or PostgreSQL on another host you back up) and
-   managed S3 storage, preferably AWS S3 or Hetzner Object Storage
-   (see [Production](production.md#object-storage-use-managed-s3)).
+   managed S3 storage; any S3-compatible service works (AWS S3, Hetzner
+   Object Storage, Cloudflare R2, Backblaze B2, ...; see
+   [Production](production.md#object-storage-use-managed-s3)).
 4. A folder for secrets, owned by root:
 
     ```sh
@@ -165,9 +166,15 @@ services:
       FILES_S3_BUCKETS: example-den,example-stash
 
   den-frontend:
-    image: registry.example.org/conservices/den-frontend:1.0.0-1   # your own build
-    restart: unless-stopped
+    image: ghcr.io/aglelectronics/den-frontend:1.0.0-1
+    # nginx runs as UID 101 on port 8080 and writes only to /tmp.
+    <<: *hardening
     networks: [internal]
+    volumes:
+      # Den's infra/nginx.stack.conf: forwards /api/ to den-backend:8080.
+      - ./den-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # The web app's sign-in settings, served as /config.json.
+      - ./den-frontend/config.json:/etc/conservices/config.json:ro
 
 networks:
   internal: { internal: true }   # no route out, no published ports
@@ -192,8 +199,27 @@ What the hardening does:
   databases are big.
 - **One Den backend container only**: backup download links live in its
   memory, and migrations run in `den-migrate` before it starts.
-- The frontend image must be your own build for your sign-in address
-  (see [Den configuration](../modules/den/configuration.md#frontend-build-settings)).
+- **The published frontend image works for any domain.** Two files next to
+  the compose file make it yours:
+
+    ```sh
+    # infra/nginx.stack.conf from a checkout of github.com/AGlElectronics/den
+    # at the release you run (it names no domain)
+    mkdir den-frontend
+    cp ~/src/den/infra/nginx.stack.conf den-frontend/nginx.conf
+    ```
+
+    ```json
+    {
+      "authMode": "oidc",
+      "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+      "oidcClientId": "den-spa"
+    }
+    ```
+
+    Save the second one as `den-frontend/config.json`. The keys are listed
+    under [Web app settings](../modules/den/configuration.md#web-app-settings-configjson).
+    A change shows on the next page load; no restart needed.
 
 !!! note "Verify before relying on it"
     This compose file is a reference, not a tested release artifact. Run
@@ -214,9 +240,15 @@ auth.con.example.org {
 }
 
 den.con.example.org {
-	reverse_proxy den-frontend:80
+	reverse_proxy den-frontend:8080
 }
 ```
+
+The web app images listen on port **8080** inside the container (nginx
+runs as a normal user, which cannot use ports below 1024). Older images
+built on `nginx:1.27-alpine` listened on port 80; if you upgrade from one
+of them, change `reverse_proxy den-frontend:80` to
+`reverse_proxy den-frontend:8080`.
 
 Add rate limiting at this proxy or in front of the server; Den has none
 built in.
@@ -246,8 +278,8 @@ docker compose -f compose.production.yml ps
 - [ ] Secrets only in root-only env files outside Git, written from a secret
   manager.
 - [ ] Keycloak in production mode; no test accounts; real SMTP.
-- [ ] Managed PostgreSQL and S3 (AWS S3 or Hetzner Object Storage); no MinIO,
-  Adminer, Mailpit or GreenMail.
+- [ ] Managed PostgreSQL and S3 (AWS S3 or Hetzner Object Storage); no local S3
+  server (SeaweedFS), Adminer, Mailpit or GreenMail.
 - [ ] Backups to a different provider or account, own age key, one test
   restore done.
 - [ ] Everything on [Production and security](production.md#checklist) that
@@ -276,14 +308,23 @@ docker compose -f compose.production.yml logs --tail 50 den-backend
 : The file does not exist or you ran Compose as a user who cannot read it.
   Run the command with `sudo`, or as the user that owns the deployment.
 
+**The web app returns `502 Bad Gateway` after an upgrade, and Caddy logs `dial tcp …:80: connect: connection refused`**
+: The web app image now listens on port 8080. Change the `reverse_proxy`
+  line for that web app to port 8080 (see [Step 4](#step-4-the-proxy)) and
+  reload Caddy:
+
+    ```sh
+    docker compose -f compose.production.yml exec proxy caddy reload --config /etc/caddy/Caddyfile
+    ```
+
 **Caddy logs `obtaining certificate: … timeout during connect`**
 : Let's Encrypt cannot reach port 80 on the server. Check the DNS name
   points at the server and that the firewall allows 80 and 443 from
   anywhere.
 
 **Sign-in fails with *Invalid parameter: redirect_uri* or an issuer mismatch**
-: `KC_HOSTNAME`, `OIDC_ISSUER_URL` and the address in your `den-frontend`
-  build must use the same `https://auth.…` address. See
+: `KC_HOSTNAME`, `OIDC_ISSUER_URL` and `oidcAuthority` in
+  `den-frontend/config.json` must use the same `https://auth.…` address. See
   [Troubleshooting](../getting-started/troubleshooting.md#sign-in-loops-back-to-the-sign-in-page).
 
 **`den-backend` logs `oidc discovery … no such host` for the `auth.` name**

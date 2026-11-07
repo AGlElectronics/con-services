@@ -76,8 +76,10 @@ code cannot use it. Every `*-spa` client in the realm requires PKCE with
 
 ### What the Den web app does
 
-The web app uses the `oidc-client-ts` library. When it is built for OIDC
-(`VITE_AUTH_MODE=oidc`), it:
+The web app uses the `oidc-client-ts` library. It first loads its settings
+from `/config.json` (issuer, client id, scopes; see
+[Web app settings](../modules/den/configuration.md#web-app-settings-configjson)).
+With `"authMode": "oidc"` there, it:
 
 - sends people back to `/auth/callback` after sign-in, and to `/login` after
   sign-out;
@@ -248,7 +250,8 @@ For quick local work on Den alone, the backend can run with
   `DEV_DEFAULT_USER` (default `dev-admin`) when there is no header;
 - unknown names are created on the spot as **admins** of the default
   organisation;
-- the web app, built with `VITE_AUTH_MODE=dev`, shows a **Dev sign in** page
+- the web app, with `"authMode": "dev"` in its `/config.json` (or
+  `VITE_AUTH_MODE=dev` on the dev server), shows a **Dev sign in** page
   where you type a name, and stores it in `localStorage` under
   `den.devUser`.
 
@@ -313,7 +316,11 @@ The rules for all of these secrets are the same:
   keys) are stored only as hashes and shown once;
 - every one of them lives in a Kubernetes Secret delivered by your secret
   manager, and appears in the inventory on [Secrets](../operations/secrets.md)
-  with how to rotate it.
+  with how to rotate it;
+- on Kubernetes every one of these calls travels over TLS, and the caller
+  checks the server's certificate against the internal certificate
+  authority, so a pod that pretends to be Den or Learn cannot collect the
+  secret. See [Internal TLS](../operations/internal-tls.md).
 
 ## Signing out and sessions
 

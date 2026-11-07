@@ -20,7 +20,7 @@ on [Authentication](../../concepts/authentication.md).
 
 ### Base URL and routing
 
-HR is reached at its own address. The ingress sends every request to
+HR is reached at its own address. The Gateway sends every request to
 `hr-frontend`, whose nginx passes `/api/`, `/livez` and `/readyz` on to
 `hr-backend`. The examples on this page use the
 [local example installation](../../getting-started/den-quickstart.md):
@@ -32,7 +32,7 @@ HR=https://hr.conservices.test
 | From | Address |
 | --- | --- |
 | Your computer, scripts, the web app | `https://hr.conservices.test` (your own domain in a real installation) |
-| Inside the cluster | `http://hr-backend.conservices-hr.svc.cluster.local:8080`, only from namespaces the [network policies](../../operations/network-policies.md) allow |
+| Inside the cluster | `https://hr-backend.conservices-hr.svc.cluster.local:8080`, only from namespaces the [network policies](../../operations/network-policies.md) allow |
 | Docker Compose development stack | the backend's published port; see [Setup](setup.md#development-with-docker) |
 
 !!! note "No `/v1` segment"
@@ -176,12 +176,15 @@ The Den pairing endpoints answer with their own codes (`pairing_failed`,
 ### `GET /livez`
 
 Is the process running? Never touches the database. **Access:** public.
-Not routed through the ingress; forward the port to try it:
+Not routed through the Gateway; forward the port to try it:
 
 ```sh
 kubectl -n conservices-hr port-forward deploy/hr-backend 8080:8080
-curl -s http://localhost:8080/livez
+curl -sk https://localhost:8080/livez
 ```
+
+The backend serves HTTPS with a certificate for its service name, not for
+`localhost`, so `-k` skips the name check for this local test only.
 
 ```json
 {"status":"ok","version":"1.0.0-1","uptime_sec":930}
@@ -192,7 +195,7 @@ curl -s http://localhost:8080/livez
 Can HR serve traffic? Pings the database (2-second limit). **Access:** public.
 
 ```sh
-curl -s http://localhost:8080/readyz
+curl -sk https://localhost:8080/readyz
 ```
 
 ```json
@@ -963,7 +966,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 {
   "username": "alex",
   "warnings": [
-    "Could not tell http://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded about the offboarding: HTTP 503 Service Unavailable. The module keeps their data until it hears about it."
+    "Could not tell https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded about the offboarding: HTTP 503 Service Unavailable. The module keeps their data until it hears about it."
   ]
 }
 ```
@@ -1017,8 +1020,8 @@ curl -s -H "Authorization: Bearer $TOKEN" $HR/api/access-catalog
   {"module": "hr", "display_name": "HR", "roles": [ … ], "source": "self", "status": "ok"},
   {"module": "stash", "display_name": "Stash", "description": "Inventory.", "roles": [
      {"key": "volunteer", "label": "Volunteer", "group": "stash-volunteer", "assignable": true, "default": true, "scope": "organization", "permissions": ["item.view"]}
-   ], "source": "http://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog", "status": "ok"},
-  {"module": "events", "display_name": "events", "roles": [], "source": "http://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog",
+   ], "source": "https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog", "status": "ok"},
+  {"module": "events", "display_name": "events", "roles": [], "source": "https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog",
    "status": "error", "error": "Get \"http://rally-backend…\": context deadline exceeded"}
 ]}
 ```

@@ -20,8 +20,8 @@ on [API conventions](api-conventions.md).
 flowchart LR
     browser([Browser])
 
-    subgraph ingress [ingress-nginx]
-        ing[Ingress controller<br/>HTTPS, one host per app]
+    subgraph gw [conservices-gateway]
+        ing[Gateway public<br/>Cilium Envoy, HTTPS,<br/>one HTTPRoute per app]
     end
 
     subgraph identity [conservices-identity]
@@ -66,10 +66,13 @@ flowchart LR
 
 Reading it from left to right:
 
-1. The **browser** only ever talks to the **ingress controller**, over HTTPS.
-   Every app has its own address: `den.conservices.test`,
-   `stash.conservices.test`, `auth.conservices.test` for sign-in, and so on.
-   (In your installation these are your own domain names.)
+1. The **browser** only ever talks to the **Gateway**, over HTTPS. The
+   Gateway is the cluster's entry point ([Gateway API](glossary.md#gateway-api),
+   run by Cilium's Envoy proxy). Every app has its own address, set in its
+   **HTTPRoute**: `den.conservices.test`, `stash.conservices.test`,
+   `auth.conservices.test` for sign-in, and so on. (In your installation
+   these are your own domain names.) The Gateway talks HTTPS to each app
+   too, checked by a **BackendTLSPolicy**.
 2. Each module has a **frontend** (an nginx container serving the React app)
    and a **backend** (a Go API). The frontend's nginx forwards everything
    under `/api/` to its own backend, so the browser sees one address per app.
@@ -88,32 +91,38 @@ form `<service>.<namespace>.svc.cluster.local`, for example
 `den-backend.conservices-den.svc.cluster.local:8080`. Every namespace
 blocks all traffic that is not explicitly allowed; the allowed paths are
 exactly the arrows above, listed in
-[Network policies](../operations/network-policies.md).
+[Network policies](../operations/network-policies.md), and every one of them
+is encrypted with TLS ([Internal TLS](../operations/internal-tls.md)).
 
 ## Namespaces and pieces
 
 | Namespace | Piece | What it is | In-cluster address |
 | --- | --- | --- | --- |
-| `ingress-nginx` | Ingress controller | The HTTPS entry point. Replaces the Caddy proxy of the development stack. | ports 80 and 443 |
-| `conservices-identity` | Keycloak | The identity provider (sign-in server), realm `conservices`. | `keycloak.conservices-identity.svc.cluster.local:8080` |
-| `conservices-den` | Den frontend | Den's web app, served by nginx. | `den-frontend.conservices-den.svc.cluster.local:80` |
+| `conservices-gateway` | Gateway `public` | The HTTPS entry point (Gateway API, served by Cilium's Envoy), holding the public certificate. Replaces the Caddy proxy of the development stack. | ports 80 and 443 |
+| `conservices-identity` | Keycloak | The identity provider (sign-in server), realm `conservices`. Backends reach it as `auth.<domain>` through the Service `keycloak-public`, without leaving the cluster. | `keycloak.conservices-identity.svc.cluster.local:8443`, `keycloak-public.conservices-identity.svc.cluster.local:443` |
+| `conservices-den` | Den frontend | Den's web app, served by nginx. | `den-frontend.conservices-den.svc.cluster.local:443` |
 | `conservices-den` | Den backend | Den's API. Runs its database migrations in an initContainer before it starts. | `den-backend.conservices-den.svc.cluster.local:8080` |
 | `conservices-den` | Den operator | Internal service for module databases and backups. Reachable only from Den's backend. | `den-operator.conservices-den.svc.cluster.local:8080` |
-| `conservices-data` | PostgreSQL 16 | The shared database server (in-cluster option). | `postgres.conservices-data.svc.cluster.local:5432` |
-| `conservices-data` | MinIO | S3-compatible storage, **for development and trials only**. | `minio.conservices-data.svc.cluster.local:9000` |
+| `conservices-data` | PostgreSQL 16 | The shared database server (in-cluster option for a local trial; production: CloudNativePG with failover). | `postgres.conservices-data.svc.cluster.local:5432` |
+| `conservices-data` | S3 storage (`s3`, SeaweedFS) | S3-compatible storage, **for a local trial only**. | `s3.conservices-data.svc.cluster.local:9000` |
 | `conservices-<module>` | Module frontend and backend | One namespace per module, e.g. `conservices-stash`. | `stash-backend.conservices-stash.svc.cluster.local:8080` |
 
-The manifests for all of this are in the
+The local-trial manifests for all of this are in the
 [`deploy/kubernetes/`](https://github.com/AGlElectronics/con-services/tree/main/deploy/kubernetes)
-folder of the con-services repository.
+folder of the con-services repository; production installations use the
+Helm charts in `deploy/charts/` through the GitOps repository
+([Deploy with Argo CD](../deploy/index.md)).
 
-!!! info "At scale: load balancer, Cilium, managed storage"
-    The diagram above is the local shape. A production installation adds a
-    **load balancer** (cloud or on-prem) in front of several ingress
-    controller replicas, runs on a CNI that enforces NetworkPolicy
-    (**Cilium** recommended; any enforcing CNI works), and uses **managed S3
-    storage** (AWS S3 or Hetzner Object Storage) and managed PostgreSQL
-    instead of the in-cluster MinIO and PostgreSQL. See
+!!! info "In production: Argo CD, Cilium, managed storage"
+    The diagram above is the shape of every installation; production adds
+    what a laptop does not have. A production cluster is managed with
+    **Argo CD** from a Git repository, runs **Cilium** as its network plugin
+    (it enforces the network policies, encrypts traffic between nodes and
+    gives the Gateway a load-balancer address), runs PostgreSQL with
+    failover (CloudNativePG), and stores files in a **managed S3 service**
+    instead of the trial's SeaweedFS. Any S3-compatible service works, for example AWS S3,
+    Hetzner Object Storage, Cloudflare R2 or Backblaze B2. See
+    [Deploy with Argo CD](../deploy/index.md) and
     [Production and security](../operations/production.md#the-production-shape).
 
 For working on the code there is also a Docker Compose stack; see
@@ -127,7 +136,7 @@ Here is what happens when someone opens Den's portal home:
 sequenceDiagram
     autonumber
     participant B as Browser
-    participant I as Ingress controller
+    participant I as Gateway (Cilium Envoy)
     participant F as den-frontend (nginx)
     participant A as den-backend
     participant DB as PostgreSQL (den)
@@ -241,10 +250,14 @@ Den's logo, it downloads it through Den's API with its pairing credential; it
 never gets credentials for Den's bucket. See
 [ADR 0004](https://github.com/AGlElectronics/den/blob/main/docs/adr/0004-one-bucket-per-module.md).
 
-**MinIO is for development only.**
-The bundled MinIO has example passwords, no replication and no encryption.
-In production, point the `S3_*` settings at a managed S3-compatible service;
-AWS S3 or Hetzner Object Storage are the recommended choices.
+**The bundled S3 server is for development and local trials only.**
+Docker Compose and the Kubernetes trial run
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) as the service `s3`
+(MinIO until it stopped publishing community images). It has example keys,
+a single copy of the data and no encryption. In production, point the
+`S3_*` settings at a managed S3 service; any S3-compatible service works
+(AWS S3, Hetzner Object Storage, Cloudflare R2, Backblaze B2, ...). Do not
+run object storage inside the cluster.
 See [ADR 0003](https://github.com/AGlElectronics/den/blob/main/docs/adr/0003-minio-dev-only.md).
 
 **Modules do not talk to each other unless they must.**

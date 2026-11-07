@@ -46,7 +46,15 @@ Procedures for larger failures (lost server, lost cluster, lost key) are on
 | PostgreSQL | One server holding a separate database per module, plus Den's and Keycloak's. |
 | Den backend | The portal and admin console. It never holds the PostgreSQL admin login. |
 | Den operator (`den-operator`) | An internal service, built from `den/backend/cmd/operator`. It is the **only** component with the PostgreSQL admin (superuser) login. It creates and drops module databases when Den asks, and takes the backups. |
-| Backup storage | An S3-compatible bucket the operator writes encrypted backups to (example installation: MinIO bucket `conservices-backups`). |
+| Backup storage | An S3-compatible bucket the operator writes encrypted backups to (local trial and Docker Compose: bucket `conservices-backups` on the bundled SeaweedFS S3 server). |
+
+!!! info "Kubernetes with CloudNativePG"
+    In the [GitOps reference deployment](../deploy/data.md) the server is a
+    three-instance CloudNativePG cluster (`conservices-pg`), which takes
+    its own continuous backups (WAL archiving, daily base backups,
+    point-in-time recovery) next to Den's. Den's operator connects to
+    `conservices-pg-rw` as the `postgres` superuser and runs with
+    `MANAGED_DATABASES=false`. See [Data: Backups](../deploy/data.md#backups).
 
 The operator has no Ingress and no user interface. Only the Den backend
 calls it, inside the namespace `conservices-den`, with a shared token
@@ -89,10 +97,20 @@ new module and drop it when the module is removed.
 
 Set `MANAGED_DATABASES=false` when the databases are not on the operator's
 server, for example when each module has its own managed database at a cloud
-provider. Den admin → Backups then says Den-managed databases are turned off,
+provider, or when they are declared somewhere else. The
+[GitOps reference deployment](../deploy/data.md#roles-and-databases) does
+this: CloudNativePG creates every role and database from Git, so Den must
+not create or drop them. Den admin → Backups then says Den-managed databases are turned off,
 the module dialogs no longer offer to create or drop anything, and creating and removing
 module databases is up to you. Backups keep working for whatever is on the
 operator's server.
+
+!!! info "Kubernetes with CloudNativePG (GitOps reference)"
+    The [GitOps reference deployment](../deploy/data.md) declares every
+    role and database in Git (CloudNativePG `Database` objects) and runs
+    Den's operator with `MANAGED_DATABASES=false`. CloudNativePG also takes
+    its own continuous backups (point-in-time recovery, 30 days) next to
+    Den's daily encrypted backups; see [Data](../deploy/data.md#backups).
 
 **Protected databases** are never dropped, whatever anyone clicks:
 
@@ -179,7 +197,7 @@ happens when:
 provider or account** from the one holding the live data, for example live
 files in Hetzner Object Storage and backups in AWS S3, or the other way
 round. Both are S3-compatible and the recommended storage for real
-installations; the in-cluster MinIO is for local trials only. A backup that
+installations; the in-cluster S3 server (SeaweedFS) is for local trials only. A backup that
 disappears together with the server it protects is not a backup.
 
 ## What is not backed up
@@ -232,8 +250,9 @@ box. Everyone can read it. Never use it anywhere else.
 
 There is deliberately no restore button. A restore overwrites live data, so it
 is a command-line job. You need `age`, PostgreSQL 16 client tools (`psql`,
-`pg_restore`) and the [MinIO client](https://min.io/docs/minio/linux/reference/minio-mc.html)
-`mc` (or any S3 tool) for files.
+`pg_restore`) and an S3 tool for files, for example the
+[AWS CLI](https://docs.aws.amazon.com/cli/) (`aws s3 cp`) or
+[rclone](https://rclone.org/s3/).
 
 The `den-operator` pod already has `age` and the PostgreSQL tools, and the
 network policies let it reach PostgreSQL, so the easiest place to work is
@@ -316,7 +335,7 @@ pg_restore -d "$PG_ADMIN_URL" --clean --if-exists --create restore/databases/sta
 
   ```sh
   psql "$PG_ADMIN_URL" -c 'CREATE DATABASE stash_check'
-  pg_restore -d "${PG_ADMIN_URL%/postgres*}/stash_check?sslmode=disable" --no-owner restore/databases/stash.dump
+  pg_restore -d "${PG_ADMIN_URL%/postgres*}/stash_check?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt" --no-owner restore/databases/stash.dump
   ```
 
   The `${PG_ADMIN_URL%/postgres*}` part is the server address without the
@@ -387,7 +406,7 @@ Operator (`den-operator`):
 | `FILES_S3_BUCKETS` | none | Comma-separated buckets to include in every backup. |
 | `OPERATOR_ADDR` | `:8080` | Listen address. |
 
-Den backend: `OPERATOR_URL` (e.g. `http://den-operator.conservices-den.svc.cluster.local:8080`) and
+Den backend: `OPERATOR_URL` (e.g. `https://den-operator.conservices-den.svc.cluster.local:8080`) and
 `OPERATOR_TOKEN`. Without `OPERATOR_URL`, Den runs without the operator: the
 Backups page says "Not set up", and modules are added and removed without
 touching databases.
@@ -425,9 +444,16 @@ kubectl logs -n conservices-den deploy/den-operator --since=24h | grep -i -E 'er
   [Troubleshooting](../getting-started/troubleshooting.md#den-shows-cant-reach-the-operator).
 
 **A backup fails with `pg_dump: error: aborting because of server version mismatch`**
-: The operator image is built on `postgres:16-alpine`, so its `pg_dump`
-  cannot dump a newer server. Keep the server on PostgreSQL 16 until the
-  operator image supports newer versions.
+: The operator image ships the PostgreSQL 16 client tools (Alpine's
+  `postgresql16-client`), so its `pg_dump` cannot dump a newer server. Keep
+  the server on PostgreSQL 16 until the operator image supports newer
+  versions. Check the version inside the pod:
+
+    ```sh
+    kubectl exec -n conservices-den deploy/den-operator -- pg_dump --version
+    ```
+
+    It prints `pg_dump (PostgreSQL) 16.x`.
 
 **A backup fails with `AccessDenied` or `SignatureDoesNotMatch`**
 : The `BACKUP_S3_*` or `FILES_S3_*` keys are wrong or lack permissions

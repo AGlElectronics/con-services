@@ -44,7 +44,7 @@ HR, which does it for you). No module has its own password database. See
 
 ## 2. Den first, modules one by one
 
-An installation comes up in a fixed order: the shared platform (ingress,
+An installation comes up in a fixed order: the shared platform (Gateway,
 Keycloak, PostgreSQL, storage), then **Den**, then each module, one at a
 time, each in its own namespace and paired with Den before the next one
 starts.
@@ -119,20 +119,25 @@ module keeps working, on its last known brand, if Den is down. See
 
 ## 6. Kubernetes in production, Compose for development
 
-Con Services is deployed on **Kubernetes** from published images, with
-Kustomize manifests in `deploy/kubernetes/` (and Helm charts where a module
-has one). Docker Compose builds everything from source and is the
-**development** path. For a single server without Kubernetes there is a
-documented Docker production path.
+Con Services is deployed on **Kubernetes** from published images. A
+production cluster is managed with **Argo CD** from a Git repository
+(GitOps), which installs Den and the modules with the Helm charts in
+`deploy/charts/`. The Kustomize manifests in `deploy/kubernetes/` run the
+same images on a local cluster, for trials. Docker Compose builds
+everything from source and is the **development** path. For a single server
+without Kubernetes there is a documented Docker production path.
 
 **Why.** Kubernetes gives the suite what isolation needs: namespaces,
-network policies, Pod Security, restarts and rolling upgrades. Compose is
-the fastest way to work on the code.
+network policies, Pod Security, restarts and rolling upgrades. GitOps makes
+every change to a production cluster a reviewed commit that can be undone.
+Compose is the fastest way to work on the code.
 
-**For you.** Pick one of the four ways to run it in
-[Getting started](../getting-started/index.md#choose-your-path). Every
-change to a service, setting, port, probe or secret updates the manifests,
-the charts, `docker-compose.yml` and the docs together.
+**For you.** Pick one of the five ways to run it in
+[Getting started](../getting-started/index.md#choose-your-path); for
+production that is [Deploy with Argo CD](../deploy/index.md), and the local
+Kubernetes path is for trials. Every change to a service, setting, port,
+probe or secret updates the manifests, the charts, `docker-compose.yml` and
+the docs together.
 
 ## 7. Secrets live in a secret manager
 
@@ -151,18 +156,21 @@ it lists every secret, where it lives, who uses it and how to rotate it.
 
 ## 8. Managed storage and real load balancing at scale
 
-The in-cluster PostgreSQL and MinIO are there so a trial works out of the
-box. A production installation:
+The in-cluster PostgreSQL and S3 server (SeaweedFS) are there so a trial
+works out of the box. A production installation:
 
-- stores files in **managed S3-compatible object storage**: AWS S3 or
-  Hetzner Object Storage are the recommended choices (MinIO is
+- stores files in a **managed S3 service**. Any S3-compatible service
+  works, for example AWS S3, Hetzner Object Storage, Cloudflare R2 or
+  Backblaze B2. Object storage inside the cluster (SeaweedFS, MinIO,
+  Garage) is not for production (the bundled S3 server is
   [development only](https://github.com/AGlElectronics/den/blob/main/docs/adr/0003-minio-dev-only.md));
-- uses **managed PostgreSQL**, or one you operate with backups and
-  monitoring;
-- runs on a CNI that enforces network policies, with **Cilium** as the
-  preferred choice;
-- puts a **load balancer** (cloud or on-premises) in front of several
-  ingress controller replicas for large deployments.
+- uses **managed PostgreSQL**, or PostgreSQL with failover that you
+  operate (CloudNativePG) with backups and monitoring;
+- runs **Cilium** as its network plugin, which enforces the network
+  policies;
+- brings traffic in through a **Gateway** ([Gateway API](glossary.md#gateway-api))
+  with a load-balancer address (Cilium LB IPAM, or your cloud's load
+  balancer), spread over several nodes.
 
 **Why.** Your attendees' data has to survive a broken disk, and the
 schedule has to load when two thousand people open it at the same time.

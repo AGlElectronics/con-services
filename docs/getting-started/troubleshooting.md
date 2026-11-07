@@ -22,15 +22,96 @@ development stack, see
 **You see:** `Unable to connect to the server` or
 `The connection to the server localhost:6443 was refused`.
 
-**Fix:** start Docker Desktop and wait until it shows *Kubernetes running*.
-Check that kubectl talks to the right cluster:
+**Fix:** start Docker Desktop (Linux: Docker) and wait until it shows
+*Engine running*. Check that the cluster's container runs and that kubectl
+talks to the right cluster:
 
 ```sh
+docker ps --filter name=conservices-control-plane --format "{{.Names}} {{.Status}}"
 kubectl config current-context
 ```
 
-It should say `docker-desktop` (or your kind/k3d cluster). Switch with
-`kubectl config use-context docker-desktop`.
+The first line should say `conservices-control-plane Up …`; if it prints
+nothing, start it with `docker start conservices-control-plane`. The
+context should be `kind-conservices`. Switch with
+`kubectl config use-context kind-conservices`.
+
+## Cilium does not start on the kind cluster
+
+**You see:** after step 4c of the quickstart the node stays `NotReady`, or
+`kubectl get pods -n kube-system -l k8s-app=cilium` shows
+`CrashLoopBackOff`.
+
+**Fix:** read the agent's log:
+
+```sh
+kubectl logs -n kube-system daemonset/cilium --tail 30
+```
+
+- `unable to contact k8s api-server` or `dial tcp …:6443: i/o timeout`:
+  `k8sServiceHost` in `deploy/kubernetes/local-cluster/cilium-values.yaml`
+  must be the node's name, `conservices-control-plane`. If you changed the
+  cluster name in `kind-config.yaml`, change it there too and run
+  `helm upgrade cilium cilium/cilium --version 1.20.4 -n kube-system -f deploy/kubernetes/local-cluster/cilium-values.yaml`.
+- The cluster was created without `kind-config.yaml` (it then already has
+  a network plugin and kube-proxy). Delete it with
+  `kind delete cluster --name conservices` and start again at step 4a.
+
+## The Gateway is not programmed
+
+**You see:** `kubectl get gateway -n conservices-gateway` shows
+`PROGRAMMED False` or `Unknown`, and the browser cannot connect.
+
+**Fix:** read the Gateway's conditions:
+
+```sh
+kubectl describe gateway -n conservices-gateway public
+```
+
+- `GatewayClass "cilium" not found` or no status at all: Cilium's Gateway
+  support is off. Check `kubectl get gatewayclass`; if it is empty, the
+  Gateway API definitions were installed after Cilium. Restart the operator
+  with `kubectl -n kube-system rollout restart deployment/cilium-operator`.
+- `InvalidCertificateRef` or `secret "conservices-tls" not found`: the
+  certificate from step 5 is missing. Check
+  `kubectl get secret -n conservices-gateway conservices-tls`, redo step 5
+  and apply again.
+- The Gateway is `True` but nothing answers on port 443: Envoy could not
+  bind the port. Check `kubectl logs -n kube-system daemonset/cilium-envoy --tail 30`
+  for `Permission denied`; the `envoy.securityContext` settings in
+  `cilium-values.yaml` must be in place (`helm upgrade` as above).
+
+## The s3 storage pod is not ready
+
+**You see:** `s3-…` in `conservices-data` stays `0/1 Running` or
+`ContainerCreating`, or restarts. Den logs `check bucket`.
+
+The trial's file storage is [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
+(image `chrislusf/seaweedfs:4.52`), a stand-in for a laptop only;
+production uses a managed S3 service such as AWS S3, Hetzner Object
+Storage, Cloudflare R2 or Backblaze B2.
+
+**Fix:**
+
+- **`ContainerCreating` with `secret "s3-tls" not found`:** cert-manager has
+  not issued the certificate yet. Check
+  `kubectl get certificate -n conservices-data s3-tls`; it must say
+  `READY True` within a minute (see [Internal TLS](../operations/internal-tls.md)).
+- **`CreateContainerConfigError` with `secret "s3-secrets" not found`:** the
+  overlay's `secrets.yaml` was not applied. Apply the overlay again.
+- **Restarts roughly once every 60 days:** expected. SeaweedFS reads its
+  certificate only at start, so the liveness check restarts the pod when
+  cert-manager renews `s3-tls`.
+- **Anything else:** read `kubectl logs -n conservices-data deploy/s3`. The
+  last lines should include `Added admin identity from AWS environment variables`
+  and one line per bucket.
+
+!!! note "Coming from the MinIO trial"
+    Earlier versions ran MinIO here, whose images are no longer published
+    (`ImagePullBackOff` on `quay.io/minio/minio`). Applying the current
+    overlay starts `s3` instead; remove the old pieces with
+    `kubectl delete deployment,service,serviceaccount,networkpolicy,pvc -n conservices-data minio minio-data --ignore-not-found`
+    and `kubectl delete certificate,secret -n conservices-data minio-tls minio-secrets --ignore-not-found`.
 
 ## ImagePullBackOff or ErrImagePull
 
@@ -44,7 +125,8 @@ or `unauthorized`.
   against the published versions on the repository's *Packages* page. Tags
   look like `1.4.2-17`; there is no `latest`.
 - **No internet or a proxy.** The node must reach `ghcr.io` and `quay.io`.
-- **Rate limit** (`toomanyrequests`) for Docker Hub images (`postgres`):
+- **Rate limit** (`toomanyrequests`) for Docker Hub images (`postgres`,
+  `chrislusf/seaweedfs`):
   wait a few minutes; Kubernetes retries by itself.
 
 ## A pod is Pending
@@ -55,9 +137,9 @@ or `unauthorized`.
 **Fix:**
 
 - **Volume:** your cluster has no default *StorageClass* (the thing that
-  creates disks). Check with `kubectl get storageclass`; Docker Desktop has
-  `hostpath (default)`. On other clusters install one or set
-  `storageClassName` in `base/data/`.
+  creates disks). Check with `kubectl get storageclass`; the quickstart's
+  kind cluster has `standard (default)`. On other clusters install one or
+  set `storageClassName` in `base/data/`.
 - **Memory or CPU:** the cluster is too small. Give Docker Desktop more
   memory (Settings → Resources; 6 GB or more) and try again.
 
@@ -73,11 +155,11 @@ Look at the last line:
 
 | Last log line contains | Meaning | Fix |
 | --- | --- | --- |
-| `init oidc verifier: oidc discovery` | Den cannot reach `https://auth.conservices.test`. | Wait for Keycloak (see below). Then check the IP in `den-backend-local.yaml` (step 6 of the quickstart) and that `local/rootCA.pem` is mkcert's root certificate. |
-| `x509: certificate signed by unknown authority` | Den does not trust the certificate. | Redo step 5 of the quickstart; make sure the `local-ca` secret is mounted (`SSL_CERT_DIR`). |
+| `init oidc verifier: oidc discovery` | Den cannot reach `https://auth.conservices.test`. | Wait for Keycloak (see below). Inside the cluster that name points at the Service `keycloak-public`: `kubectl get service -n conservices-identity keycloak-public` must show `CLUSTER-IP 10.96.0.100`, the address in `den-backend-local.yaml`. |
+| `x509: certificate signed by unknown authority` or `certificate is valid for keycloak…, not auth.conservices.test` | Den does not trust Keycloak's certificate, or the certificate lacks the name. | Keycloak's internal certificate must list `auth.conservices.test`: `kubectl get certificate -n conservices-identity keycloak-tls -o jsonpath="{.spec.dnsNames}"`. After a change, delete the Secret `keycloak-tls` and restart Keycloak and Den ([Internal TLS](../operations/internal-tls.md#renewal)). |
 | `invalid config: ... is required` | A required setting is missing. | Compare with the [configuration reference](../modules/den/configuration.md). |
 | `open db` / `password authentication failed` | Wrong database password, or the database volume was created with other passwords. | See [The migration step failed](#den-backend-stays-in-init-the-migration-step-failed). |
-| `check bucket` / `create bucket` | Den cannot reach the S3 storage or the keys are wrong. | Check MinIO runs and the `S3_*` keys match `minio-secrets`. |
+| `check bucket` / `create bucket` | Den cannot reach the S3 storage or the keys are wrong. | Check the `s3` pod in `conservices-data` is ready and the `S3_*` keys match `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `s3-secrets` ([The s3 storage pod is not ready](#the-s3-storage-pod-is-not-ready)). |
 
 The operator logs `invalid operator config: ...` the same way; its
 settings are in the [operations guide](../operations/databases-and-backups.md#configuration-reference).
@@ -128,33 +210,45 @@ kubectl logs -n conservices-den deploy/den-backend -c migrate
   retry blindly; keep the log and open an issue. On a production system
   [roll back](../operations/versioning.md#rolling-back) the image tag.
 
-## The browser shows 404 Not Found (nginx)
+## The browser shows an empty page with 404
 
-**You see:** a plain *404 Not Found* page with *nginx* at the bottom.
+**You see:** a blank page, and the browser's developer tools show status
+*404* for the address.
 
-**Why:** the request reached the ingress controller, but no Ingress matches
-the address. Check:
+**Why:** the request reached the Gateway, but no HTTPRoute matches the
+address. Check:
 
 ```sh
-kubectl get ingress -A
+kubectl get httproute -A
 ```
 
-You should see `keycloak` with host `auth.conservices.test` and `den` with
-`den.conservices.test`, both with class `nginx`. If they are missing, the
-apply did not finish; run it again. If `ADDRESS` is empty, the ingress
-controller is not running (`kubectl get pods -n ingress-nginx`).
+You should see `keycloak` with `auth.conservices.test` and `den` with
+`den.conservices.test`. If they are missing, the apply did not finish; run
+it again. If they are there, check that the Gateway accepted them:
 
-A *503 Service Temporarily Unavailable* instead means the Ingress exists
-but no pod behind it is ready yet.
+```sh
+kubectl describe httproute -n conservices-den den
+```
+
+Under `Status → Parents` the conditions `Accepted` and `ResolvedRefs` must
+be `True`. `NotAllowedByListeners` means the route's namespace lacks the
+label `app.kubernetes.io/part-of=conservices`.
+
+On Keycloak's address, only `/realms/`, `/resources/` and (local trial)
+`/admin/` are routed; other paths give 404 on purpose.
+
+*no healthy upstream* (503) instead means the route exists but no pod
+behind it is ready yet.
 
 ## The browser cannot open the page at all
 
 **You see:** *This site can't be reached* or `ERR_NAME_NOT_RESOLVED`.
 
-**Fix:** the hosts entry from step 7 of the quickstart is missing. Check
+**Fix:** the hosts entry from step 6 of the quickstart is missing. Check
 with `ping den.conservices.test`; it should answer from `127.0.0.1`. Also
 check nothing else uses ports 80 or 443 on your computer (IIS, Apache,
-another proxy, or the Docker Compose stack's Caddy proxy).
+another proxy, or the Docker Compose stack's Caddy proxy), and that the
+Gateway is programmed ([The Gateway is not programmed](#the-gateway-is-not-programmed)).
 
 ## Certificate warnings
 
@@ -319,19 +413,28 @@ Standard. Something you added (a sidecar, a debug pod, a patched
 [Pod Security](../operations/network-policies.md#pod-security). For
 debugging, use `kubectl debug --profile=restricted`.
 
-## 502 Bad Gateway or 504 Gateway Time-out
+## 503 or "upstream connect error" from the Gateway
 
-**You see:** the ingress controller answers *502* or *504* for an address,
-although the pods are `Running`.
+**You see:** the browser shows *upstream connect error or disconnect/reset
+before headers*, *503*, or a gateway time-out for an address, although the
+pods are `Running`.
 
-**Why:** the ingress controller cannot reach the frontend pod, almost
-always because of a NetworkPolicy: the policies admit the controller from
-the namespace `ingress-nginx` only.
+**Why:** the Gateway cannot reach the web app pod or cannot complete TLS
+with it. Usually one of:
 
-**Fix:** check where your controller runs (`kubectl get pods -A | grep -i ingress`).
-If it is not `ingress-nginx`, change the namespace selector in the
-policies (Helm charts: `networkPolicy.ingressControllerNamespace`); see
-[Network policies: Troubleshooting](../operations/network-policies.md#troubleshooting).
+- **Network policy.** Cilium's Gateway reaches the web apps with Cilium's
+  reserved identity `ingress`, which only a `CiliumNetworkPolicy` with
+  `fromEntities: [ingress]` admits. Check it exists:
+  `kubectl get ciliumnetworkpolicy -A` should list
+  `den-web-from-gateway`, `keycloak-from-gateway` and one per module.
+- **TLS to the web app.** The `BackendTLSPolicy` must be accepted and point
+  at the ConfigMap `conservices-internal-ca`; see
+  [Internal TLS: Troubleshooting](../operations/internal-tls.md#troubleshooting).
+
+**Fix:** apply the overlay again so the missing object is created, then
+see [Network policies: Troubleshooting](../operations/network-policies.md#troubleshooting).
+With another gateway or ingress controller (for example Traefik) instead
+of Cilium, admit its namespace in the web apps' NetworkPolicies.
 
 ## Helm install or upgrade fails
 

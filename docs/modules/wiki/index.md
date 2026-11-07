@@ -75,7 +75,7 @@ spaces. See the [Admin guide](admin-guide.md).
 
 | Part | Technology | Runs as (Kubernetes) |
 | --- | --- | --- |
-| Backend | Go 1.25, chi, pgx, `coder/websocket`, zerolog | Deployment `wiki-backend`, **always one replica** |
+| Backend | Go 1.27, chi, pgx, `coder/websocket`, zerolog | Deployment `wiki-backend`, **always one replica** |
 | Migrations | Goose, SQL embedded in the binary | initContainer `migrate` in `wiki-backend` |
 | Frontend | React 19, Rsbuild, TanStack Router and Query, Tailwind, BlockNote and Yjs | Deployment `wiki-frontend` (nginx) |
 | Database | PostgreSQL 16, database `wiki` | shared server, or your own |
@@ -94,13 +94,12 @@ All three images use the same tag for a release (see
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/wiki-backend:<tag>` | `infra/Dockerfile.backend` | `/server`, listening on port 8080. |
 | `ghcr.io/aglelectronics/wiki-migrate:<tag>` | `infra/Dockerfile.migrate` | `/migrate`, a one-shot that applies database migrations and exits. |
-| `ghcr.io/aglelectronics/wiki-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (port 80 in the image; the Helm chart runs it on 8080). |
+| `ghcr.io/aglelectronics/wiki-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (non-root as UID 101, port 8080). |
 
-!!! note "The web app's sign-in address is built in"
-    The web app reads `VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` when
-    the image is **built**. For your own sign-in address, build
-    `wiki-frontend` with your values; see
-    [Configuration](configuration.md#frontend-build-settings).
+!!! note "The web app's sign-in address is a setting, not part of the image"
+    The published `wiki-frontend` image names no domain: the web app loads
+    its sign-in settings from `/config.json` when it starts. See
+    [Web app settings](configuration.md#web-app-settings-configjson).
 
 ## How Wiki fits the platform
 
@@ -122,16 +121,19 @@ and HR calls it. Den comes first; see
 
 | Posture | Use it for | Guide |
 | --- | --- | --- |
-| **Kubernetes platform** (recommended) | Production, next to Den and the other modules | [Setup, option 1](setup.md#option-1-kubernetes-platform-recommended) |
+| **Production cluster with Argo CD** (recommended for production) | Production: Den, Keycloak and every module on a cluster managed from Git | [Den and the modules](../../deploy/apps.md) |
+| **Kubernetes platform** | A cluster you run yourself, next to Den and the other modules; also the local trial cluster | [Setup, option 1](setup.md#option-1-kubernetes-platform-recommended) |
 | **Standalone on Kubernetes** | Only Wiki, with your own PostgreSQL, S3 and sign-in | [Setup, option 2](setup.md#option-2-standalone-on-kubernetes) |
 | **Production on Docker** | One server, no Kubernetes | [Setup, option 3](setup.md#option-3-production-on-docker) |
 | **Development on Docker** | Trying it out and development, never real data | [Setup, option 4](setup.md#option-4-development-on-docker) |
+
+A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only; production installations use the Argo CD path.
 
 In every posture the backend runs **one replica**; [why](setup.md#why-the-backend-must-stay-at-one-replica).
 
 ## In this section
 
-- [Setup](setup.md): install Wiki in each of the four ways.
+- [Setup](setup.md): install Wiki in each of the five ways.
 - [Admin guide](admin-guide.md): roles, spaces, sharing, share links,
   offboarding and the Den connection.
 - [Configuration](configuration.md): every environment variable.

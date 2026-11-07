@@ -22,7 +22,7 @@ Stash's paths start with **`/api`** (there is no `/v1` segment).
 | Where you call from | Base URL |
 | --- | --- |
 | A browser or script outside the cluster | `https://stash.example.org` (the web app's nginx forwards `/api/` to the backend) |
-| Another pod inside the cluster | `http://stash-backend.conservices-stash.svc.cluster.local:8080` |
+| Another pod inside the cluster | `https://stash-backend.conservices-stash.svc.cluster.local:8080` |
 
 All examples below use these shell variables:
 
@@ -876,7 +876,7 @@ curl -s -X POST $STASH/api/den/pair -H "Authorization: Bearer $TOKEN" \
 ```json
 {
   "paired": true,
-  "den_base_url": "http://den-backend.conservices-den.svc.cluster.local:8080",
+  "den_base_url": "https://den-backend.conservices-den.svc.cluster.local:8080",
   "module_id": "3d1f9b7e-4c2a-4e8b-a1f0-6b5c4d3e2a10",
   "paired_at": "2026-11-06T10:05:00Z",
   "synced_at": "2026-11-06T10:05:01Z"

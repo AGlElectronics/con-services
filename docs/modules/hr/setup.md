@@ -4,10 +4,13 @@ This page installs HR. Pick the posture that matches what you are building:
 
 | Posture | Database, sign-in | Den | Use it for |
 | --- | --- | --- | --- |
-| [Platform on Kubernetes](#recommended-install-into-the-platform) (recommended) | Shared platform services | Paired | Production |
+| [Production cluster with Argo CD](../../deploy/apps.md) (recommended for production) | CloudNativePG, Keycloak | Paired | Production: the whole suite on a cluster managed from Git |
+| [Platform on Kubernetes](#recommended-install-into-the-platform) | Shared platform services | Paired | A cluster you run yourself; also the local trial cluster |
 | [Standalone on Kubernetes](#standalone-on-kubernetes) | Your own | Optional | A people register on its own |
 | [Production with Docker](#production-with-docker) | Your own or the platform's | Optional | One server, no Kubernetes |
 | [Development with Docker](#development-with-docker) | Throwaway containers | Optional | Trying it out, coding. **Never production.** |
+
+The Argo CD path installs HR together with Den and the other modules; see [Den and the modules](../../deploy/apps.md). A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only.
 
 !!! info "Words used on this page"
     A **namespace** is a named section of a Kubernetes cluster. A **Helm
@@ -33,10 +36,13 @@ display name `HR`, your HR address, and **Create a database for it**
 ticked. Den shows the connection URL **once**:
 
 ```text
-postgres://hr:9a1e…77@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=disable
+postgres://hr:9a1e…77@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
 ```
 
-Copy it into your secret manager straight away.
+Copy it into your secret manager straight away. The `sslmode=verify-full`
+part makes HR connect with TLS and check the database's certificate
+against the platform's internal CA; the platform's PostgreSQL refuses
+connections without TLS.
 
 ### 2. Prepare Keycloak
 
@@ -56,10 +62,14 @@ imported realm file:
 
 ### 3. Create the namespace
 
+The `app.kubernetes.io/part-of` label lets trust-manager copy the internal
+CA into the namespace ([Internal TLS](#internal-tls)).
+
 ```sh
 kubectl create namespace conservices-hr
 kubectl label namespace conservices-hr \
   conservices.io/tier=module conservices.io/module=hr \
+  app.kubernetes.io/part-of=conservices \
   pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/warn=restricted
 ```
@@ -84,7 +94,7 @@ HR reads one Secret, `hr-secrets`:
 
 ```sh
 vault kv put secret/conservices/hr/backend \
-  DATABASE_URL='postgres://hr:change-me@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=disable' \
+  DATABASE_URL='postgres://hr:change-me@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
   KEYCLOAK_CLIENT_SECRET=change-me
 ```
 
@@ -103,7 +113,10 @@ hr-secrets   vault   1h                 SecretSynced   True
 ```
 
 Also create the TLS Secret `conservices-tls` in the namespace (cert-manager
-or `kubectl create secret tls`).
+or `kubectl create secret tls`). That is the public certificate browsers
+see; the certificates for traffic inside the cluster (`hr-backend-tls`,
+`hr-frontend-tls`) are requested from cert-manager by the chart
+([Internal TLS](#internal-tls)).
 
 ### 5. Open the network paths HR needs
 
@@ -114,7 +127,7 @@ let HR in. This is **not automated** yet:
 | --- | --- | --- |
 | Stash (`conservices-stash`) | ingress from `conservices-hr` backends on 8080 | Already in Stash's manifests and chart. |
 | Rally (`conservices-rally`) | the same | In Rally's chart (`allowFromNamespaces`). |
-| Keycloak (`conservices-identity`) | ingress from `conservices-hr` backends on 8080 | **Missing** from the platform manifests: add it yourself (below). |
+| Keycloak (`conservices-identity`) | ingress from `conservices-hr` backends on 8443 (Keycloak's HTTPS port) | **Missing** from the platform manifests: add it yourself (below). |
 | Learn, Wiki, Tasks | the same | Add when those modules are installed. |
 
 Keycloak rule (apply in `conservices-identity`):
@@ -139,7 +152,7 @@ spec:
             matchLabels:
               app.kubernetes.io/component: backend
       ports:
-        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
 ```
 
 More on cross-module rules: [Network policies](../../operations/network-policies.md#calls-between-modules).
@@ -153,7 +166,7 @@ image:
   backend: { tag: "1.0.0-1" }
   migrate: { tag: "1.0.0-1" }
   frontend: { tag: "1.0.0-1" }
-ingress:
+route:
   host: hr.example.org
 config:
   APP_BASE_URL: https://hr.example.org
@@ -161,10 +174,18 @@ config:
   OIDC_ISSUER_URL: https://auth.example.org/realms/conservices
   KEYCLOAK_SETUP_REDIRECT_URI: https://den.example.org/
   ROLE_CATALOG_SOURCES: >-
-    stash=http://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,events=http://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog
+    stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,events=https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog
 networkPolicy:
   moduleEgressNamespaces: [conservices-stash, conservices-rally]
 ```
+
+Every in-cluster address uses `https://`: the other modules' backends,
+Den (`https://den-backend.conservices-den.svc.cluster.local:8080`) and
+Keycloak's admin API
+(`https://keycloak.conservices-identity.svc.cluster.local:8443`). Internal
+TLS is on by default (`internalTLS.enabled: true`); the cluster needs
+cert-manager, trust-manager and the platform's internal CA. See
+[Internal TLS](#internal-tls).
 
 ```sh
 helm install hr deploy/charts/hr -n conservices-hr -f hr-values.yaml
@@ -205,12 +226,23 @@ The backend's log should **not** contain `using FakeIdP`; if it does,
 create real accounts.
 
 ```sh
-kubectl exec -n conservices-hr deploy/hr-frontend -- wget -qO- http://hr-backend:8080/readyz
+kubectl get certificate -n conservices-hr
+kubectl exec -n conservices-hr deploy/hr-frontend -- curl -s --cacert /etc/conservices-internal-ca/ca.crt https://hr-backend:8080/readyz
+```
+
+```text
+NAME              READY   SECRET            AGE
+hr-backend-tls    True    hr-backend-tls    40s
+hr-frontend-tls   True    hr-frontend-tls   40s
 ```
 
 ```json
 {"status":"ready","database":"ok"}
 ```
+
+The backend answers over HTTPS. `--cacert` makes `curl` check its certificate against the internal CA, which is mounted in the web app pod
+at `/etc/conservices-internal-ca`; nginx does the same check on every
+`/api/` request.
 
 ### 8. Pair HR with Den
 
@@ -258,7 +290,7 @@ what is specific to HR:
       backend: { tag: "1.0.0-1" }
       migrate: { tag: "1.0.0-1" }
       frontend: { tag: "1.0.0-1" }
-    ingress:
+    route:
       host: hr.example.org
     config:
       APP_BASE_URL: https://hr.example.org
@@ -283,12 +315,119 @@ what is specific to HR:
           ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 587 }]
     ```
 
-4. Namespace, secret and install as in steps 3, 4, 6 and 7.
+4. **Internal TLS** stays on by default and needs cert-manager,
+   trust-manager and an issuer in your cluster. Without them, turn it off
+   or bring your own certificates ([Without cert-manager](#without-cert-manager)).
+   For a managed database, end `DATABASE_URL` in
+   `?sslmode=verify-full&sslrootcert=<path to the provider's CA>` and mount
+   that CA file with `backend.extraVolumes` and `backend.extraVolumeMounts`.
+5. Namespace, secret and install as in steps 3, 4, 6 and 7.
 
 !!! warning "Backups are your job"
     Standalone, nothing backs HR up. Schedule an encrypted
     `pg_dump --format=custom` of the `hr` database and limit who can read
     it: it contains personal data.
+
+## Internal TLS
+
+On Kubernetes, HR encrypts the traffic **inside** the cluster as well, not
+only between browsers and the Gateway. It is on by default in
+the Helm chart. The shared how-to, including the platform setup and
+certificate rotation, is [Internal TLS](../../operations/internal-tls.md).
+
+What happens:
+
+- **cert-manager** (a Kubernetes add-on that issues and renews
+  certificates) issues `hr-backend-tls` and `hr-frontend-tls` from the
+  ClusterIssuer `conservices-internal-ca`. They last 90 days and are
+  renewed 30 days before they expire. Pods mount them at
+  `/etc/conservices-tls` (`tls.crt`, `tls.key`, `ca.crt`).
+- **trust-manager** copies the platform's internal CA certificate into the
+  ConfigMap `conservices-internal-ca` (key `ca.crt`) in every namespace
+  labelled `app.kubernetes.io/part-of: conservices`. Pods mount it at
+  `/etc/conservices-internal-ca/ca.crt`.
+- The **backend** serves HTTPS on port 8080 (`TLS_CERT_FILE`,
+  `TLS_KEY_FILE`) and trusts the internal CA when it calls PostgreSQL,
+  Keycloak, Den and the other modules (`SSL_CERT_DIR`). It re-reads its
+  certificate every minute, so a renewed one is used without a restart.
+- The **web app**'s nginx serves HTTPS on port 8080, forwards `/api/` to the
+  backend over HTTPS and checks the backend's certificate. It reloads every
+  six hours to pick up a renewed certificate. Its Service listens on port
+  443 (port name `https`).
+- **The gateway** talks HTTPS to the web app and checks its certificate (a `BackendTLSPolicy`; with the legacy Ingress, the ingress controller does it).
+
+Check it:
+
+```sh
+kubectl get certificate -n conservices-hr
+kubectl get configmap conservices-internal-ca -n conservices-hr
+kubectl logs -n conservices-hr deploy/hr-backend | grep "tls enabled"
+```
+
+Both certificates should be `READY True`, the ConfigMap should exist, and
+the backend's `tls enabled` log line carries the certificate's expiry date
+in `not_after`.
+
+### Chart values
+
+| Value | Default | What it does |
+| --- | --- | --- |
+| `internalTLS.enabled` | `true` | Turns internal TLS on or off for the backend, the web app and the Ingress. |
+| `internalTLS.createCertificates` | `true` | `true`: the chart asks cert-manager for the two certificates. `false`: you create the Secrets `hr-backend-tls` and `hr-frontend-tls` yourself (keys `tls.crt`, `tls.key`, `ca.crt`). |
+| `internalTLS.issuerRef` | ClusterIssuer `conservices-internal-ca` | The cert-manager issuer that signs them. |
+| `internalTLS.duration` | `2160h` (90 days) | Certificate lifetime. |
+| `internalTLS.renewBefore` | `720h` (30 days) | How long before expiry cert-manager renews. |
+| `internalTLS.caConfigMap` | `conservices-internal-ca` | ConfigMap (key `ca.crt`) with the CA the pods trust. |
+| `internalTLS.ingressNginxAnnotations` | `false` | Legacy, only with `ingress.enabled: true`: adds the ingress-nginx annotations for HTTPS to the web app (`backend-protocol: HTTPS`, `proxy-ssl-verify`). The Gateway API route uses a `BackendTLSPolicy` instead. ingress-nginx is no longer maintained; do not use it. |
+| `route.enabled`, `route.host`, `route.parentRefs`, `route.timeout` | `true`, `hr.conservices.test`, Gateway `public` in `conservices-gateway` (listener `https`), `60s` | Exposes the web app through the Gateway API: an `HTTPRoute` and, with internal TLS, a `BackendTLSPolicy` that makes the gateway check `hr-frontend`'s certificate. See [Exposing the web app](../../operations/helm.md#exposing-the-web-app-gateway-api). |
+| `frontend.config` | `{}` | The web app's `/config.json` (sign-in address, client id; see [Web app settings](configuration.md#web-app-settings-configjson)), written to the ConfigMap `<release>-frontend-config`. Keys left out come from `config.AUTH_MODE`, `config.OIDC_ISSUER_URL` and `config.OIDC_CLIENT_ID` (else `hr-spa`). |
+| `ingress.enabled` | `false` | Plain `Ingress` for another controller instead of the route. |
+| `ha.podDisruptionBudget`, `ha.topologySpread`, `priorityClassName` | `true`, `true`, `""` | PodDisruptionBudget and spreading over nodes for the web app (two replicas); see [High availability](../../operations/helm.md#high-availability). |
+| `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
+| `imagePullSecrets` | `[]` | Pull Secrets for private images on every pod, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
+| `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
+
+### Without cert-manager
+
+A standalone cluster without cert-manager has two choices.
+
+**Turn internal TLS off.** Everything inside the cluster is plain HTTP
+again, as in Docker Compose. Change the in-cluster `https://` addresses in
+`config:` back to `http://`, and use a database URL with an `sslmode` your
+database accepts:
+
+```yaml
+internalTLS:
+  enabled: false
+config:
+  # In-cluster addresses back to plain HTTP, for example:
+  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+  ROLE_CATALOG_SOURCES: stash=http://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
+```
+
+**Bring your own certificates.** Create the two Secrets with any tool
+(your own CA, a secret manager), each with `tls.crt`, `tls.key` and
+`ca.crt`, and a ConfigMap with your CA under the key `ca.crt`:
+
+```sh
+kubectl create secret generic hr-backend-tls -n conservices-hr \
+  --from-file=tls.crt=backend.crt --from-file=tls.key=backend.key --from-file=ca.crt=ca.crt
+kubectl create secret generic hr-frontend-tls -n conservices-hr \
+  --from-file=tls.crt=frontend.crt --from-file=tls.key=frontend.key --from-file=ca.crt=ca.crt
+kubectl create configmap my-internal-ca -n conservices-hr --from-file=ca.crt=ca.crt
+```
+
+```yaml
+internalTLS:
+  createCertificates: false
+  caConfigMap: my-internal-ca
+```
+
+The backend certificate must be valid for `hr-backend` and
+`hr-backend.conservices-hr.svc.cluster.local`, the web app's for
+`hr-frontend.conservices-hr.svc.cluster.local`. Replace them before they
+expire; the backend picks up new files within a minute, nginx within six
+hours.
 
 ## Production with Docker
 
@@ -300,20 +439,24 @@ it sets up the host, the proxy, Keycloak, Den and the hardened
 | --- | --- | --- | --- |
 | `hr-migrate` | `ghcr.io/aglelectronics/hr-migrate:<tag>` | once per upgrade, must exit 0 | `DATABASE_URL` |
 | `hr-backend` | `ghcr.io/aglelectronics/hr-backend:<tag>` | always, port 8080 | the environment below |
-| `hr-frontend` | your own build | always, port 80 | reaches the backend as `hr-backend:8080` |
+| `hr-frontend` | `ghcr.io/aglelectronics/hr-frontend:<tag>` | always, port 8080 | reaches the backend as `hr-backend:8080` |
 
-The web app reads its sign-in settings when it is **built**, so build your
-own with `--build-arg NGINX_CONF=nginx.stack.conf` (its nginx config
-proxies to `hr-backend:8080`; the default `nginx.conf` expects a service
-called `backend`):
+The published web app image names no domain. Give it two files next to
+the compose file: HR's `infra/nginx.stack.conf` as its nginx config (it
+forwards `/api/` to `hr-backend:8080`; the image's built-in config expects
+a service called `backend`) and its sign-in settings as `config.json`
+(keys: [Web app settings](configuration.md#web-app-settings-configjson)):
 
 ```sh
-docker build -f infra/Dockerfile.frontend \
-  --build-arg NGINX_CONF=nginx.stack.conf \
-  --build-arg VITE_AUTH_MODE=oidc \
-  --build-arg VITE_OIDC_AUTHORITY=https://auth.con.example.org/realms/conservices \
-  --build-arg VITE_OIDC_CLIENT_ID=hr-spa \
-  -t registry.example.org/conservices/hr-frontend:1.0.0-1 .
+mkdir hr-frontend
+cp ~/src/hr/infra/nginx.stack.conf hr-frontend/nginx.conf   # from a checkout of the release you run
+cat > hr-frontend/config.json <<'EOF'
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+  "oidcClientId": "hr-spa"
+}
+EOF
 ```
 
 1. Write the env file. There are no default passwords; replace every
@@ -368,16 +511,19 @@ docker build -f infra/Dockerfile.frontend \
           CORS_ALLOWED_ORIGINS: https://hr.con.example.org
 
       hr-frontend:
-        image: registry.example.org/conservices/hr-frontend:1.0.0-1   # your own build
-        restart: unless-stopped
+        image: ghcr.io/aglelectronics/hr-frontend:1.0.0-1
+        <<: *hardening
         networks: [internal]
+        volumes:
+          - ./hr-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+          - ./hr-frontend/config.json:/etc/conservices/config.json:ro
     ```
 
 3. Add the host to the `Caddyfile`:
 
     ```text
     hr.con.example.org {
-    	reverse_proxy hr-frontend:80
+    	reverse_proxy hr-frontend:8080
     }
     ```
 
@@ -410,8 +556,9 @@ See [Local development with Docker Compose](../../contributing/local-development
 
 **HR on its own** (from the `hr/` checkout). Its `.env.example` expects the
 suite's Keycloak on `localhost:8085`; for a quick start without Keycloak,
-set `AUTH_MODE=dev`, `VITE_AUTH_MODE=dev` and remove the `KEYCLOAK_*`
-lines in `.env` first:
+set `AUTH_MODE=dev` and remove the `KEYCLOAK_*` lines in `.env` first (the
+web app already runs in dev sign-in mode there: Compose mounts
+`infra/frontend-config/compose.json` as its `/config.json`):
 
 ```sh
 cp .env.example .env
@@ -430,7 +577,55 @@ Open <http://localhost:3003>.
 **The backend pod is stuck in `Init:CrashLoopBackOff`.** The migration
 failed. `kubectl logs -n conservices-hr deploy/hr-backend -c migrate` shows
 why, usually `DATABASE_URL is required` or `ping database: …` (wrong URL or
-the NetworkPolicy blocks PostgreSQL).
+the NetworkPolicy blocks PostgreSQL). For `no encryption`, see below.
+
+**The backend exits with `tls: TLS_CERT_FILE and TLS_KEY_FILE must be set
+together`.** Only one of the two is set, usually because one was added by
+hand to `config:` or `backend.extraEnv`. Remove it: the chart sets both
+while internal TLS is on, and neither while it is off.
+
+**A pod stays `ContainerCreating`.** It waits for a volume that does not
+exist yet: the Secret `hr-backend-tls` or `hr-frontend-tls` (made by
+cert-manager) or the ConfigMap `conservices-internal-ca` (made by
+trust-manager). `kubectl describe pod` shows `MountVolume.SetUp failed …
+not found` under Events. Check:
+
+```sh
+kubectl get certificate -n conservices-hr
+kubectl describe certificate hr-backend-tls -n conservices-hr
+kubectl get configmap conservices-internal-ca -n conservices-hr
+```
+
+A certificate that is not `READY True` means cert-manager or the
+ClusterIssuer `conservices-internal-ca` is missing; the events of
+`kubectl describe certificate` say which. A missing ConfigMap means
+trust-manager is not installed, or the namespace lacks the label:
+`kubectl label namespace conservices-hr app.kubernetes.io/part-of=conservices`.
+Without cert-manager, see [Without cert-manager](#without-cert-manager).
+
+**The web app answers `502 Bad Gateway` and its log shows `upstream SSL
+certificate verify error`.** nginx could not check the backend's
+certificate. Either the backend serves plain HTTP (its log has no
+`tls enabled` line), or its certificate was signed by a CA other than the
+one in `conservices-internal-ca` (with your own certificates: put the right
+CA in the ConfigMap named by `internalTLS.caConfigMap`). See the error with
+`kubectl logs -n conservices-hr deploy/hr-frontend`.
+
+**Calls to Keycloak, Den or other modules fail with `x509: certificate
+signed by unknown authority`.** The backend does not trust the internal
+CA: `SSL_CERT_DIR` is missing, or a value in `config:` replaced it with
+another folder. It must include `/etc/conservices-internal-ca`; separate
+several folders with `:`. Check with
+`kubectl get configmap hr-config -n conservices-hr -o yaml`.
+
+**The migration fails with `no pg_hba.conf entry for host "…", user "hr",
+database "hr", no encryption`.** `DATABASE_URL` still ends in
+`sslmode=disable`, and the platform's PostgreSQL accepts only TLS. Change
+the end to
+`?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt` in
+your secret manager, then
+`kubectl rollout restart -n conservices-hr deploy/hr-backend`. For a
+managed database use `sslmode=verify-full&sslrootcert=<path to the provider's CA>`.
 
 **`invalid config: S3_ENDPOINT is required when any S3_* var is set`.** As
 soon as one `S3_*` value is set, all four (`S3_ENDPOINT`, `S3_BUCKET`,
@@ -446,8 +641,9 @@ way round).
 `GET /api/me` shows the groups HR saw.
 
 **Completing an onboarding fails with a Keycloak error or times out.** HR
-cannot reach Keycloak's admin API. Check `KEYCLOAK_BASE_URL`, the client
-secret, and the Keycloak ingress rule from step 5.
+cannot reach Keycloak's admin API. Check `KEYCLOAK_BASE_URL` (on the
+platform `https://keycloak.conservices-identity.svc.cluster.local:8443`),
+the client secret, and the Keycloak ingress rule from step 5.
 
 **"HR's Keycloak service account is not allowed to … (needs manage-users)".**
 In Keycloak, open the `hr-provisioner` client → **Service account roles**

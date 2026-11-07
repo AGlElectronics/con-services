@@ -5,10 +5,13 @@ are building:
 
 | Posture | Database, storage, sign-in | Den | Use it for |
 | --- | --- | --- | --- |
-| [Platform on Kubernetes](#recommended-install-into-the-platform) (recommended) | Shared platform services | Paired | Production |
+| [Production cluster with Argo CD](../../deploy/apps.md) (recommended for production) | CloudNativePG, Keycloak, managed S3 | Paired | Production: the whole suite on a cluster managed from Git |
+| [Platform on Kubernetes](#recommended-install-into-the-platform) | Shared platform services | Paired | A cluster you run yourself; also the local trial cluster |
 | [Standalone on Kubernetes](#standalone-on-kubernetes) | Your own | Optional | A CfP and schedule tool on its own |
 | [Production with Docker](#production-with-docker) | Your own or the platform's | Optional | One server, no Kubernetes |
 | [Development with Docker](#development-with-docker) | Throwaway containers | Optional | Trying it out, coding. **Never production.** |
+
+The Argo CD path installs Rally together with Den and the other modules; see [Den and the modules](../../deploy/apps.md). A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only.
 
 !!! info "Words used on this page"
     A **namespace** is a named section of a Kubernetes cluster. A **Helm
@@ -43,10 +46,13 @@ In Den: **Admin console → Modules → New module** with short name
 database for it** ticked. Den shows the connection URL **once**:
 
 ```text
-postgres://events:4c2b…19@postgres.conservices-data.svc.cluster.local:5432/events?sslmode=disable
+postgres://events:4c2b…19@postgres.conservices-data.svc.cluster.local:5432/events?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
 ```
 
-Copy it into your secret manager straight away.
+Copy it into your secret manager straight away. The `sslmode=verify-full`
+part makes Rally connect with TLS and check the database's certificate
+against the platform's internal CA; the platform's PostgreSQL refuses
+connections without TLS.
 
 ### 2. Prepare Keycloak
 
@@ -72,10 +78,14 @@ import the `conservices` realm, so this step is **not automated**:
 
 ### 3. Create the namespace
 
+The `app.kubernetes.io/part-of` label lets trust-manager copy the internal
+CA into the namespace ([Internal TLS](#internal-tls)).
+
 ```sh
 kubectl create namespace conservices-rally
 kubectl label namespace conservices-rally \
   conservices.io/tier=module conservices.io/module=rally \
+  app.kubernetes.io/part-of=conservices \
   pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/warn=restricted
 ```
@@ -98,7 +108,7 @@ Rally reads one Secret, `rally-secrets`:
 
 ```sh
 vault kv put secret/conservices/rally/backend \
-  DATABASE_URL='postgres://events:change-me@postgres.conservices-data.svc.cluster.local:5432/events?sslmode=disable' \
+  DATABASE_URL='postgres://events:change-me@postgres.conservices-data.svc.cluster.local:5432/events?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
   S3_ACCESS_KEY_ID=change-me \
   S3_SECRET_ACCESS_KEY=change-me
 ```
@@ -119,7 +129,10 @@ rally-secrets   vault   1h                 SecretSynced   True
 
 Also create the TLS Secret `conservices-tls` in the namespace (cert-manager
 or `kubectl create secret tls`). It must cover the staff host and, if you
-run it, the submission host.
+run it, the submission host. That is the public certificate browsers see;
+the certificates for traffic inside the cluster (`rally-backend-tls`,
+`rally-frontend-tls`) are requested from cert-manager by the chart
+([Internal TLS](#internal-tls)).
 
 ### 5. Create the access configuration
 
@@ -138,28 +151,21 @@ configmap/rally-access-config created
 The file grants roles in the organisation `demo-org`. Keep that until you
 have renamed it ([Admin guide](admin-guide.md#organisations-and-editions)).
 
-### 6. Build the submission site { #build-the-submission-site }
+### 6. Decide on the submission site { #build-the-submission-site }
 
 Skip this if you do not want the public submission site. It is the same
-frontend source built with `RALLY_APP=submit`; no image is published for
-it. Build it from the `Rally/` checkout:
+frontend source built with `RALLY_APP=submit` and published as
+`ghcr.io/aglelectronics/rally-submit` with the same tag as the other Rally
+images. Like the staff app it names no domain: the chart gives it its own
+`/config.json` (`submit.config`), filled in from
+`config.ATTENDEE_OIDC_ISSUER_URL`, `config.ATTENDEE_OIDC_CLIENT_ID` and
+`config.PUBLIC_API_BUILTIN_KEY`. So step 7 only needs `submit.enabled: true`
+and those settings.
 
-```sh
-docker build -f infra/Dockerfile.frontend \
-  --build-arg RALLY_APP=submit \
-  --build-arg VITE_AUTH_MODE=oidc \
-  --build-arg VITE_OIDC_AUTHORITY=https://auth.example.org/realms/attendees \
-  --build-arg VITE_OIDC_CLIENT_ID=rally-submit \
-  --build-arg VITE_PRODUCT_NAME="Event submissions" \
-  --build-arg VITE_PUBLIC_SCHEDULE_KEY=change-me-programme-key \
-  -t registry.example.org/rally-submit:1.0.0-1 .
-docker push registry.example.org/rally-submit:1.0.0-1
-```
-
-`VITE_PUBLIC_SCHEDULE_KEY` must equal the backend's
-`PUBLIC_API_BUILTIN_KEY` (step 7). It is compiled into the site and visible
-to every visitor, so it is **not** a secret: it only lets you rotate the
-key and see its use.
+`PUBLIC_API_BUILTIN_KEY` becomes the site's `publicScheduleKey`, the key
+its Programme page sends to the public schedule API. Every visitor can read
+it, so it is **not** a secret: it only lets you rotate the key and see its
+use.
 
 ### 7. Write your values and install the chart
 
@@ -170,11 +176,10 @@ image:
   backend: { tag: "1.0.0-1" }
   migrate: { tag: "1.0.0-1" }
   frontend: { tag: "1.0.0-1" }
-ingress:
+route:
   host: events.example.org
 submit:
-  enabled: true
-  image: { repository: registry.example.org/rally-submit, tag: "1.0.0-1" }
+  enabled: true   # image ghcr.io/aglelectronics/rally-submit, tag of image.frontend
   host: submit.example.org
 config:
   APP_BASE_URL: https://events.example.org
@@ -188,6 +193,19 @@ config:
 `S3_PUBLIC_BASE_URL` is the address **browsers** use to reach the S3
 storage; Rally rewrites its signed links to it. If it is wrong, uploads
 fail in the browser while everything else works.
+
+The chart's defaults already point at the platform services over HTTPS
+(`S3_ENDPOINT: https://s3.conservices-data.svc.cluster.local:9000`,
+`DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080`),
+and internal TLS is on (`internalTLS.enabled: true`). The cluster needs
+cert-manager, trust-manager and the platform's internal CA; see
+[Internal TLS](#internal-tls).
+
+With `submit.enabled: true` the chart creates two HTTPRoutes: `rally` for
+the staff app and `rally-submit` for the submission site. Each web app has
+its own internal certificate (`rally-frontend-tls`, `rally-submit-tls`)
+and its own `BackendTLSPolicy`, so the Gateway checks each one
+separately.
 
 ```sh
 helm install rally deploy/charts/rally -n conservices-rally -f rally-values.yaml
@@ -230,12 +248,23 @@ rally-submit-6b8d7c9f5-c4ndw      1/1     Running    0          17s
 
 ```sh
 kubectl logs -n conservices-rally deploy/rally-backend -c migrate
-kubectl exec -n conservices-rally deploy/rally-frontend -- wget -qO- http://rally-backend:8080/api/health
+kubectl get certificate -n conservices-rally
+kubectl exec -n conservices-rally deploy/rally-frontend -- curl -s --cacert /etc/conservices-internal-ca/ca.crt https://rally-backend:8080/api/health
+```
+
+```text
+NAME                 READY   SECRET               AGE
+rally-backend-tls    True    rally-backend-tls    40s
+rally-frontend-tls   True    rally-frontend-tls   40s
 ```
 
 ```json
 {"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":42}
 ```
+
+The backend answers over HTTPS. `--cacert` makes `curl` check its certificate against the internal CA, which is mounted in the web app pod
+at `/etc/conservices-internal-ca`; nginx does the same check on every
+`/api/` request.
 
 ### 10. Pair Rally with Den
 
@@ -289,7 +318,7 @@ what is specific to Rally:
       backend: { tag: "1.0.0-1" }
       migrate: { tag: "1.0.0-1" }
       frontend: { tag: "1.0.0-1" }
-    ingress:
+    route:
       host: events.example.org
     config:
       APP_BASE_URL: https://events.example.org
@@ -320,13 +349,110 @@ what is specific to Rally:
     Leave `S3_PUBLIC_BASE_URL` empty when `S3_ENDPOINT` is already reachable
     from browsers.
 
-5. Namespace, secret, access configuration and install as in steps 3, 4, 5,
+5. **Internal TLS** stays on by default and needs cert-manager,
+   trust-manager and an issuer in your cluster. Without them, turn it off
+   or bring your own certificates ([Without cert-manager](#without-cert-manager)).
+   For a managed database, end `DATABASE_URL` in
+   `?sslmode=verify-full&sslrootcert=<path to the provider's CA>` and mount
+   that CA file with `backend.extraVolumes` and `backend.extraVolumeMounts`.
+6. Namespace, secret, access configuration and install as in steps 3, 4, 5,
    7 and 9.
 
 !!! warning "Backups are your job"
     Standalone, nothing backs Rally up. Schedule an encrypted
     `pg_dump --format=custom` of the `events` database and a copy of the
     bucket.
+
+## Internal TLS
+
+On Kubernetes, Rally encrypts the traffic **inside** the cluster as well,
+not only between browsers and the Gateway. It is on by default
+in the Helm chart. The shared how-to, including the platform setup and
+certificate rotation, is [Internal TLS](../../operations/internal-tls.md).
+
+What happens:
+
+- **cert-manager** (a Kubernetes add-on that issues and renews
+  certificates) issues `rally-backend-tls` and `rally-frontend-tls` from
+  the ClusterIssuer `conservices-internal-ca`. They last 90 days and are
+  renewed 30 days before they expire. Pods mount them at
+  `/etc/conservices-tls` (`tls.crt`, `tls.key`, `ca.crt`).
+- **trust-manager** copies the platform's internal CA certificate into the
+  ConfigMap `conservices-internal-ca` (key `ca.crt`) in every namespace
+  labelled `app.kubernetes.io/part-of: conservices`. Pods mount it at
+  `/etc/conservices-internal-ca/ca.crt`.
+- The **backend** serves HTTPS on port 8080 (`TLS_CERT_FILE`,
+  `TLS_KEY_FILE`) and trusts the internal CA when it calls PostgreSQL,
+  the S3 server and Den (`SSL_CERT_DIR`). It re-reads its certificate every
+  minute, so a renewed one is used without a restart.
+- The **web app**'s nginx serves HTTPS on port 8080, forwards `/api/` to the
+  backend over HTTPS and checks the backend's certificate. It reloads every
+  six hours to pick up a renewed certificate. Its Service listens on port
+  443 (port name `https`).
+- **The gateway** talks HTTPS to the web app and checks its certificate (a `BackendTLSPolicy`; with the legacy Ingress, the ingress controller does it).
+
+Check it:
+
+```sh
+kubectl get certificate -n conservices-rally
+kubectl get configmap conservices-internal-ca -n conservices-rally
+kubectl logs -n conservices-rally deploy/rally-backend | grep "tls enabled"
+```
+
+Both certificates should be `READY True`, the ConfigMap should exist, and
+the backend's `tls enabled` log line carries the certificate's expiry date
+in `not_after`. The chart values are listed in
+[Configuration → Helm values](configuration.md#helm-values).
+
+### Without cert-manager
+
+A standalone cluster without cert-manager has two choices.
+
+**Turn internal TLS off.** Everything inside the cluster is plain HTTP
+again, as in Docker Compose. Change the in-cluster `https://` addresses in
+`config:` back to `http://`, and use a database URL with an `sslmode` your
+database accepts:
+
+```yaml
+internalTLS:
+  enabled: false
+config:
+  # The chart defaults, changed back to plain HTTP:
+  S3_ENDPOINT: http://s3.conservices-data.svc.cluster.local:9000
+  DEN_INTERNAL_URL: http://den-backend.conservices-den.svc.cluster.local:8080
+```
+
+**Bring your own certificates.** Create the two Secrets with any tool
+(your own CA, a secret manager), each with `tls.crt`, `tls.key` and
+`ca.crt`, and a ConfigMap with your CA under the key `ca.crt`:
+
+```sh
+kubectl create secret generic rally-backend-tls -n conservices-rally \
+  --from-file=tls.crt=backend.crt --from-file=tls.key=backend.key --from-file=ca.crt=ca.crt
+kubectl create secret generic rally-frontend-tls -n conservices-rally \
+  --from-file=tls.crt=frontend.crt --from-file=tls.key=frontend.key --from-file=ca.crt=ca.crt
+kubectl create configmap my-internal-ca -n conservices-rally --from-file=ca.crt=ca.crt
+```
+
+```yaml
+internalTLS:
+  createCertificates: false
+  caConfigMap: my-internal-ca
+```
+
+The backend certificate must be valid for `rally-backend` and
+`rally-backend.conservices-rally.svc.cluster.local`, the web app's for
+`rally-frontend.conservices-rally.svc.cluster.local`. Replace them before
+they expire; the backend picks up new files within a minute, nginx within
+six hours. The `BackendTLSPolicy` that the Gateway API route renders checks
+the web app's certificate against `internalTLS.caConfigMap` and
+`rally-frontend.conservices-rally.svc.cluster.local` (and `rally-submit…`
+for the submission site), so those names must be in your certificates.
+With the legacy Ingress (`ingress.enabled: true`), configure your
+controller to use HTTPS to port 443 of `rally-frontend` and check its
+certificate, for example Traefik as in
+[Other ingress controllers](../../operations/internal-tls.md#other-ingress-controllers).
+ingress-nginx is no longer maintained; do not use it.
 
 ## Production with Docker
 
@@ -339,25 +465,38 @@ needs these containers:
 | --- | --- | --- | --- |
 | `events-migrate` | `ghcr.io/aglelectronics/rally-migrate:<tag>` | once per upgrade, must exit 0 | `DATABASE_URL` |
 | `events-backend` | `ghcr.io/aglelectronics/rally-backend:<tag>` | always, port 8080 | the environment below, the access configuration |
-| `events-frontend` | your build of the staff app | always, port 80 | reaches the backend as `events-backend:8080` |
-| `events-submit` (optional) | your build of the submission site ([step 6](#build-the-submission-site)) | always, port 80 | the same |
+| `events-frontend` | `ghcr.io/aglelectronics/rally-frontend:<tag>` | always, port 8080 | reaches the backend as `events-backend:8080` |
+| `events-submit` (optional) | `ghcr.io/aglelectronics/rally-submit:<tag>` | always, port 8080 | the same |
 
-Both web apps must be **your own builds**: they read their sign-in
-settings when they are built. Build them with
-`--build-arg NGINX_CONF=nginx.stack.conf`, whose nginx configuration
-proxies to `events-backend:8080` (the default `nginx.conf` expects a
-service called `backend`):
+The published web app images name no domain. Give each two files next to
+the compose file: Rally's `infra/nginx.stack.conf` as its nginx config (it
+forwards `/api/` to `events-backend:8080`; the images' built-in config
+expects a service called `backend`) and its sign-in settings as
+`config.json` (keys: [Web app settings](configuration.md#web-app-settings-configjson)):
 
 ```sh
-docker build -f infra/Dockerfile.frontend \
-  --build-arg NGINX_CONF=nginx.stack.conf \
-  --build-arg VITE_AUTH_MODE=oidc \
-  --build-arg VITE_OIDC_AUTHORITY=https://auth.con.example.org/realms/conservices \
-  --build-arg VITE_OIDC_CLIENT_ID=events-spa \
-  -t registry.example.org/conservices/rally-frontend:1.0.0-1 .
+mkdir rally-web
+cp ~/src/Rally/infra/nginx.stack.conf rally-web/nginx.conf   # from a checkout of the release you run
+cat > rally-web/staff.json <<'EOF'
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+  "oidcClientId": "events-spa"
+}
+EOF
+cat > rally-web/submit.json <<'EOF'
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/attendees",
+  "oidcClientId": "rally-submit",
+  "productName": "Event submissions",
+  "publicScheduleKey": "change-me-programme-key"
+}
+EOF
 ```
 
-For the submission site add the same `NGINX_CONF` argument to step 6.
+`publicScheduleKey` must equal the backend's `PUBLIC_API_BUILTIN_KEY`
+below.
 
 1. Create the attendee realm in Keycloak (step 2 above): put
    `realm-attendees.json` into the `./realm` import folder, or import it in
@@ -417,14 +556,20 @@ For the submission site add the same `NGINX_CONF` argument to step 6.
           - ./rally/access-config.toml:/etc/rally/access-config.toml:ro
 
       events-frontend:
-        image: registry.example.org/conservices/rally-frontend:1.0.0-1   # your own build
-        restart: unless-stopped
+        image: ghcr.io/aglelectronics/rally-frontend:1.0.0-1
+        <<: *hardening
         networks: [internal]
+        volumes:
+          - ./rally-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+          - ./rally-web/staff.json:/etc/conservices/config.json:ro
 
       events-submit:
-        image: registry.example.org/conservices/rally-submit:1.0.0-1     # your own build
-        restart: unless-stopped
+        image: ghcr.io/aglelectronics/rally-submit:1.0.0-1
+        <<: *hardening
         networks: [internal]
+        volumes:
+          - ./rally-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+          - ./rally-web/submit.json:/etc/conservices/config.json:ro
     ```
 
     With managed S3 reachable from browsers, leave `S3_PUBLIC_BASE_URL`
@@ -434,11 +579,11 @@ For the submission site add the same `NGINX_CONF` argument to step 6.
 
     ```text
     events.con.example.org {
-    	reverse_proxy events-frontend:80
+    	reverse_proxy events-frontend:8080
     }
 
     submit.con.example.org {
-    	reverse_proxy events-submit:80
+    	reverse_proxy events-submit:8080
     }
     ```
 
@@ -477,7 +622,7 @@ The public schedule is switched on, and the programme key is
 [Local development with Docker Compose](../../contributing/local-development.md).
 
 **Rally on its own** (from the `Rally/` checkout), with its own PostgreSQL
-and MinIO and `AUTH_MODE=dev` (no sign-in; everyone is `dev-admin`):
+and S3 server (SeaweedFS, `localhost:9020`) and `AUTH_MODE=dev` (no sign-in; everyone is `dev-admin`):
 
 ```sh
 docker compose -f infra/docker-compose.yml up --build
@@ -496,6 +641,55 @@ Open <http://localhost:3002>.
 **The backend pod is stuck in `Init:CrashLoopBackOff`.** The migration
 failed. `kubectl logs -n conservices-rally deploy/rally-backend -c migrate`
 shows why: a wrong `DATABASE_URL`, or the NetworkPolicy blocks PostgreSQL.
+For `no encryption`, see below.
+
+**The backend exits with `tls: TLS_CERT_FILE and TLS_KEY_FILE must be set
+together`.** Only one of the two is set, usually because one was added by
+hand to `config:` or `backend.extraEnv`. Remove it: the chart sets both
+while internal TLS is on, and neither while it is off.
+
+**A pod stays `ContainerCreating`.** It waits for a volume that does not
+exist yet: the Secret `rally-backend-tls` or `rally-frontend-tls` (made by
+cert-manager) or the ConfigMap `conservices-internal-ca` (made by
+trust-manager). `kubectl describe pod` shows `MountVolume.SetUp failed …
+not found` under Events. Check:
+
+```sh
+kubectl get certificate -n conservices-rally
+kubectl describe certificate rally-backend-tls -n conservices-rally
+kubectl get configmap conservices-internal-ca -n conservices-rally
+```
+
+A certificate that is not `READY True` means cert-manager or the
+ClusterIssuer `conservices-internal-ca` is missing; the events of
+`kubectl describe certificate` say which. A missing ConfigMap means
+trust-manager is not installed, or the namespace lacks the label:
+`kubectl label namespace conservices-rally app.kubernetes.io/part-of=conservices`.
+Without cert-manager, see [Without cert-manager](#without-cert-manager).
+
+**The web app answers `502 Bad Gateway` and its log shows `upstream SSL
+certificate verify error`.** nginx could not check the backend's
+certificate. Either the backend serves plain HTTP (its log has no
+`tls enabled` line), or its certificate was signed by a CA other than the
+one in `conservices-internal-ca` (with your own certificates: put the right
+CA in the ConfigMap named by `internalTLS.caConfigMap`). See the error with
+`kubectl logs -n conservices-rally deploy/rally-frontend`.
+
+**Calls to Den, storage or the database fail with `x509: certificate signed
+by unknown authority`.** The backend does not trust the internal CA:
+`SSL_CERT_DIR` is missing, or a value in `config:` replaced it with another
+folder. It must include `/etc/conservices-internal-ca`; separate several
+folders with `:`. Check with
+`kubectl get configmap rally-config -n conservices-rally -o yaml`.
+
+**The migration fails with `no pg_hba.conf entry for host "…", user
+"events", database "events", no encryption`.** `DATABASE_URL` still ends in
+`sslmode=disable`, and the platform's PostgreSQL accepts only TLS. Change
+the end to
+`?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt` in
+your secret manager, then
+`kubectl rollout restart -n conservices-rally deploy/rally-backend`. For a
+managed database use `sslmode=verify-full&sslrootcert=<path to the provider's CA>`.
 
 **`invalid config: S3_ENDPOINT is required when S3_ENABLED=true`** (or the
 same for `S3_BUCKET` and the keys). Set all four, or `S3_ENABLED=false`.
@@ -510,7 +704,7 @@ bindings point at an organisation slug that does not exist. Check
 `GET /api/v1/me`: `memberships` and `permissions` must not be empty.
 
 **Uploading a file fails in the browser; the network tab shows a failed
-request to `minio…` or an internal address.** `S3_PUBLIC_BASE_URL` is
+request to `s3:9000`, `s3.conservices-data…` or another internal address.** `S3_PUBLIC_BASE_URL` is
 missing or wrong. It must be the S3 address as browsers see it.
 
 **The website gets 404 from `/api/public/v1/schedules`.** The public
@@ -521,15 +715,16 @@ when paired, otherwise `PUBLIC_SCHEDULE_ENABLED`.
 revoked one. Create a key under **Schedule → Setup** and send it as
 `Authorization: Bearer <key>` (or `?key=` for calendar feeds).
 
-**The submission site's Programme page shows nothing.** Its
-`VITE_PUBLIC_SCHEDULE_KEY` differs from the backend's
-`PUBLIC_API_BUILTIN_KEY`, or the public schedule is switched off.
+**The submission site's Programme page shows nothing.** The
+`publicScheduleKey` in its `/config.json` differs from the backend's
+`PUBLIC_API_BUILTIN_KEY`, or the public schedule is switched off. Compare
+`curl -s https://submit.example.org/config.json` with the backend setting.
 
 **Announcements are "sent" but nothing appears in Telegram.**
 `TELEGRAM_BOT_TOKEN` is empty (dry run), or the NetworkPolicy blocks
 `api.telegram.org`: add an `extraEgress` rule for port 443.
 
 **HR shows Events with "error" in the access step.** HR cannot reach
-`http://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog`.
+`https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog`.
 Rally's chart already allows `conservices-hr`; check HR's egress rule and
 `ROLE_CATALOG_SOURCES`.

@@ -18,7 +18,7 @@ module (tokens, error shape, ids, timestamps) are on
 | What | Value |
 | --- | --- |
 | Base address (browser, scripts) | The Learn address, for example `https://learn.example.org`. nginx forwards `/api/`, `/livez` and `/readyz` to the backend. |
-| Base address (inside the cluster) | `http://learn-backend.conservices-learn.svc.cluster.local:8080` |
+| Base address (inside the cluster) | `https://learn-backend.conservices-learn.svc.cluster.local:8080` |
 | Version prefix | `/api/v1` for the app; `/api/…` without `v1` for the cross-module contracts (catalogs, holdings, portal, public verify). |
 | Request bodies | JSON, `Content-Type: application/json`. **Unknown fields are rejected** with `400`. The question import is the one `multipart/form-data` route. |
 | Ids | UUIDs. A malformed id answers `400` `invalid <name> id: …`. |
@@ -180,7 +180,7 @@ binding.
 Anyone. Every qualification HR can require for a role.
 
 ```sh
-curl -s http://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog
+curl -s --cacert /etc/conservices-internal-ca/ca.crt https://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog
 ```
 
 ```json
@@ -208,7 +208,7 @@ granting, HR asks Learn which **valid** qualifications the people hold.
   never expires).
 
 ```sh
-curl -s "http://learn-backend.conservices-learn.svc.cluster.local:8080/api/internal/holdings?subjects=6f1d2a40-…,9a2b7c11-…" \
+curl -s --cacert /etc/conservices-internal-ca/ca.crt "https://learn-backend.conservices-learn.svc.cluster.local:8080/api/internal/holdings?subjects=6f1d2a40-…,9a2b7c11-…" \
   -H "Authorization: Bearer change-me"
 ```
 

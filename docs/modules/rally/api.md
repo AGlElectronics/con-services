@@ -42,7 +42,7 @@ SUBMIT=https://submit.conservices.test    # submission site (same API)
 | From | Address |
 | --- | --- |
 | Your computer, scripts, the web apps | `https://events.conservices.test` or `https://submit.conservices.test` (your own domains in a real installation) |
-| Inside the cluster | `http://rally-backend.conservices-rally.svc.cluster.local:8080`, only from namespaces the [network policies](../../operations/network-policies.md) allow |
+| Inside the cluster | `https://rally-backend.conservices-rally.svc.cluster.local:8080`, only from namespaces the [network policies](../../operations/network-policies.md) allow |
 
 Inside the platform Rally is called **Events**: its Den slug, database,
 Keycloak client (`events-spa`) and groups use `events`.
@@ -206,12 +206,15 @@ The Den pairing endpoints use their own codes (`pairing_failed`,
 
 ### `GET /livez`, `GET /readyz`
 
-Kubernetes probes; not routed through the ingress. **Access:** public.
+Kubernetes probes; not routed through the Gateway. **Access:** public.
 
 ```sh
 kubectl -n conservices-rally port-forward deploy/rally-backend 8080:8080
-curl -s http://localhost:8080/readyz
+curl -sk https://localhost:8080/readyz
 ```
+
+The backend serves HTTPS with a certificate for its service name, not for
+`localhost`, so `-k` skips the name check for this local test only.
 
 ```json
 {"status":"ok","database":"ok"}

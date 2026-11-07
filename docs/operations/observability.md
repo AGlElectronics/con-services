@@ -9,7 +9,7 @@ real problems (a pod crash-looping, a backup that did not run, a full disk).
     logs**. No Con Services component exposes Prometheus metrics yet (there
     is no `/metrics` endpoint). Monitoring therefore uses Kubernetes'
     own metrics, the health endpoints, the logs, and the metrics of the
-    pieces around Con Services (ingress controller, PostgreSQL, CNI).
+    pieces around Con Services (the Gateway, PostgreSQL, Cilium).
 
 ## Health endpoints
 
@@ -48,7 +48,7 @@ the module's own namespace, through its frontend pod, which the network
 policies allow to reach the backend:
 
 ```sh
-kubectl exec -n conservices-hr deploy/hr-frontend -- wget -qO- http://hr-backend:8080/readyz
+kubectl exec -n conservices-hr deploy/hr-frontend -- curl -s --cacert /etc/conservices-internal-ca/ca.crt https://hr-backend:8080/readyz
 ```
 
 ## Logs
@@ -119,13 +119,13 @@ Helm chart you get most of this out of the box.
 | --- | --- | --- |
 | **kube-state-metrics** | Pod restarts, pods not ready, Deployments with fewer ready replicas than wanted. | Part of kube-prometheus-stack. |
 | **kubelet / cAdvisor** | CPU and memory per container, compared with the limits; volume usage. | Part of kube-prometheus-stack. |
-| **Ingress controller** | Requests, `5xx` rate and latency per host (`den.`, `auth.`, each module). | ingress-nginx: `controller.metrics.enabled=true` and a ServiceMonitor; other controllers have their own. |
+| **Gateway (Cilium Envoy)** | Requests, `5xx` rate and latency per host (`den.`, `auth.`, each module). | Cilium's Helm values `envoy.prometheus.enabled=true` (with `envoy.prometheus.serviceMonitor.enabled=true` for the Prometheus Operator); Hubble's `httpV2` metrics also give per-route numbers. |
 | **Blackbox exporter** | Whether `https://<host>/api/health` answers `200` from outside, and when the TLS certificate expires. | [prometheus-blackbox-exporter](https://github.com/prometheus/blackbox_exporter) with an HTTP probe per published address. |
 | **PostgreSQL** | Connections per database, database size, replication lag. | Your provider's monitoring, CloudNativePG's built-in metrics, or [postgres_exporter](https://github.com/prometheus-community/postgres_exporter). |
 | **Keycloak** | Logins, failed logins, sessions. | Set `KC_METRICS_ENABLED=true`; metrics appear on port 9000 at `/metrics`. Needs a NetworkPolicy rule (below). |
 | **Cilium / Hubble** | Dropped connections per namespace: the first sign of a missing policy rule. | Cilium's Helm values `prometheus.enabled=true`, `hubble.metrics.enabled={dns,drop,flow}`. |
 
-Probing the published addresses through the ingress controller needs no
+Probing the published addresses through the Gateway needs no
 change to the Con Services network policies. Scraping a pod **directly**
 (Keycloak's port 9000, for example) does, because every namespace denies
 incoming traffic by default. Add an ingress rule for your monitoring

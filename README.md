@@ -50,7 +50,7 @@ deploy/kubernetes/   reference Kustomize (Den + shared data/identity + Stash exa
 deploy/charts/       one Helm chart per module (stubs → production-ready over time)
 ```
 
-Prefer **Cilium** as CNI, a **load balancer** in front of ingress for large installs, and **AWS S3 or Hetzner Object Storage** instead of in-cluster MinIO.
+Prefer **Cilium** as CNI, a **load balancer** in front of ingress for large installs, and **AWS S3 or Hetzner Object Storage** instead of in-cluster object storage.
 
 Full procedures: [Operations](https://aglelectronics.github.io/con-services/operations/) · [Production](https://aglelectronics.github.io/con-services/operations/production/).
 
@@ -67,7 +67,7 @@ This Compose file is the **quick local stack**. It uses well-known development p
 docker compose --profile den --profile events --profile learn --profile desk --profile tasks --profile wiki up --build -d
 ```
 
-Without extra profiles you get Postgres, MinIO, Keycloak, Stash, HR and Finance. First boot can take several minutes (image builds + Keycloak realm import).
+Without extra profiles you get Postgres, an S3 server (SeaweedFS), Keycloak, Stash, HR and Finance. First boot can take several minutes (image builds + Keycloak realm import).
 
 ### HTTPS hostnames (optional)
 
@@ -96,7 +96,7 @@ Direct `localhost` ports still work; sign-in always goes through `auth.conservic
 | App user `admin` | `adminadmin` | Broad admin groups across modules |
 | `alice` / `bob` | `alicealice` / `bobbob` | Narrower roles for testing |
 
-Postgres (`postgres` / `postgres`), MinIO (`conservices` / `conservicesdev`) and every `*-dev-*` token in Compose are **local defaults**. Treat them as public examples.
+Postgres (`postgres` / `postgres`), the S3 server (`conservices` / `conservicesdev`) and every `*-dev-*` token in Compose are **local defaults**. Treat them as public examples.
 
 More detail (ports, smoke scripts, pairing, backups): [Local development](https://aglelectronics.github.io/con-services/contributing/local-development/).
 
@@ -104,7 +104,7 @@ More detail (ports, smoke scripts, pairing, backups): [Local development](https:
 
 ```powershell
 docker compose down
-# wipe volumes (fresh databases / MinIO):
+# wipe volumes (fresh databases / S3 buckets):
 docker compose down -v
 ```
 
@@ -115,7 +115,7 @@ docker compose down -v
 ```text
 docs/                 MkDocs site (published to GitHub Pages)
 deploy/               Kubernetes manifests and Helm charts
-infra/                Keycloak realm/theme, Caddy, Postgres/MinIO helpers
+infra/                Keycloak realm/theme, Caddy, Postgres helpers
 scripts/              Smoke tests and local DNS setup
 docker-compose.yml    Development stack
 ```

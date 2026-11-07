@@ -385,8 +385,11 @@ To call `/readyz` from your computer, forward the backend's port first:
 
 ```sh
 kubectl -n conservices-den port-forward svc/den-backend 8080:8080
-curl -s http://localhost:8080/readyz
+curl -sk https://localhost:8080/readyz
 ```
+
+The backend serves HTTPS with a certificate for its service name, not for
+`localhost`, so `-k` skips the name check for this local test only.
 
 Which module has which endpoint today: Den, Rally, Wiki, Learn, Desk and
 Tasks have all three; HR and Finance have `/livez` and `/readyz`; Stash has
@@ -477,7 +480,7 @@ HR's pods may reach this address, so the example shows what HR sends rather
 than something to run from your computer; the token is a placeholder:
 
 ```sh
-curl -s -X POST http://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded \
+curl -s --cacert /etc/conservices-internal-ca/ca.crt -X POST https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded \
   -H "Authorization: Bearer change-me-wiki-service-token" \
   -H "Content-Type: application/json" \
   -d '{"subject":"6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60","username":"bob"}'

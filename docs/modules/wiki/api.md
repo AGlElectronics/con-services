@@ -27,7 +27,7 @@ what is specific to Wiki.
 | Where you call from | Base URL |
 | --- | --- |
 | A browser or script outside the cluster | `https://wiki.example.org` (the web app's nginx forwards `/api/` to the backend) |
-| Another pod inside the cluster | `http://wiki-backend.conservices-wiki.svc.cluster.local:8080` |
+| Another pod inside the cluster | `https://wiki-backend.conservices-wiki.svc.cluster.local:8080` |
 | Docker Compose development | `http://localhost:<frontend port>` (see [Setup](setup.md#option-4-development-on-docker)) |
 
 All examples below use these shell variables:
@@ -1034,8 +1034,8 @@ admins, who can export it; it is deleted automatically after
 repeat, or a subject Wiki never saw, also answers `204`.
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' -X POST \
-  http://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded \
+curl -s --cacert /etc/conservices-internal-ca/ca.crt -o /dev/null -w '%{http_code}\n' -X POST \
+  https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded \
   -H "Authorization: Bearer change-me" -H "Content-Type: application/json" \
   -d '{"subject":"6f1d2a7e-1c8b-4f0e-9d55-8c1b2f9a0e11","username":"bob"}'
 ```

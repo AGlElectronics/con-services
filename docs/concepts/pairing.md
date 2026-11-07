@@ -97,11 +97,14 @@ redeeming it, and uses that address for every later call to Den.
 On Kubernetes, modules set:
 
 ```text
-DEN_INTERNAL_URL=http://den-backend.conservices-den.svc.cluster.local:8080
+DEN_INTERNAL_URL=https://den-backend.conservices-den.svc.cluster.local:8080
 ```
 
 The network policies allow exactly this path, from any module backend to
-Den's backend on port 8080. In the Docker Compose development stack the
+Den's backend on port 8080, over TLS: the module checks Den's certificate
+against the internal certificate authority before it sends the pairing
+token or its credential ([Internal TLS](../operations/internal-tls.md)).
+In the Docker Compose development stack the
 value is `http://den-backend:8080`.
 
 ## What a paired module receives
@@ -223,7 +226,7 @@ curl -s -X POST https://wiki.conservices.test/api/v1/den/pair \
 ```json
 {
   "paired": true,
-  "den_base_url": "http://den-backend.conservices-den.svc.cluster.local:8080",
+  "den_base_url": "https://den-backend.conservices-den.svc.cluster.local:8080",
   "module_id": "5d0c1b9e-3f7a-4c2e-9b1d-8a6f2e4c7d10",
   "paired_at": "2026-11-06T10:15:02Z",
   "synced_at": "2026-11-06T10:15:02Z"

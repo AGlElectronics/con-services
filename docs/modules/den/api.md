@@ -20,7 +20,7 @@ on [Authentication](../../concepts/authentication.md).
 ## Basics
 
 **Base address and routing.** The API is served under Den's own web
-address: the ingress sends the request to `den-frontend`, whose nginx
+address: the Gateway sends the request to `den-frontend`, whose nginx
 passes everything under `/api/` on to `den-backend`. All examples use the
 address of the [local example installation](../../getting-started/den-quickstart.md);
 `$DEN` stands for it:
@@ -32,7 +32,7 @@ DEN=https://den.conservices.test
 | From | Address |
 | --- | --- |
 | Your computer, scripts, the web app | `https://den.conservices.test` (your own domain in a real installation) |
-| Paired modules, inside the cluster | `http://den-backend.conservices-den.svc.cluster.local:8080`, only paths the [network policies](../../operations/network-policies.md) allow |
+| Paired modules, inside the cluster | `https://den-backend.conservices-den.svc.cluster.local:8080`, only paths the [network policies](../../operations/network-policies.md) allow |
 | Docker Compose development stack | `http://localhost:8090` |
 
 Paths are grouped by caller: `/api/v1/…` for people, `/api/v1/integrations/…`
@@ -190,8 +190,11 @@ address. To try them from your computer, forward the port first:
 
 ```sh
 kubectl port-forward -n conservices-den deploy/den-backend 8090:8080
-curl http://localhost:8090/livez
+curl -sk https://localhost:8090/livez
 ```
+
+The backend serves HTTPS with a certificate for its service name, not for
+`localhost`, so `-k` skips the name check for this local test only.
 
 `/api/health` works through the web address.
 
@@ -201,8 +204,11 @@ Is the process running? Never touches the database. **Auth:** none.
 Used by the liveness probe.
 
 ```sh
-curl http://localhost:8090/livez
+curl -sk https://localhost:8090/livez
 ```
+
+The backend serves HTTPS with a certificate for its service name, not for
+`localhost`, so `-k` skips the name check for this local test only.
 
 ```json
 { "status": "ok", "version": "dev", "uptime_sec": 5321 }
@@ -214,7 +220,7 @@ Can Den serve traffic? Pings the database (2-second limit). **Auth:** none.
 Used by the readiness probe.
 
 ```sh
-curl http://localhost:8090/readyz
+curl -sk https://localhost:8090/readyz
 ```
 
 ```json
@@ -466,7 +472,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
     "name": "hr",
     "username": "hr",
     "password": "<generated, shown once>",
-    "database_url": "postgres://hr:<password>@postgres:5432/hr?sslmode=disable"
+    "database_url": "postgres://hr:<password>@postgres:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt"
   }
 }
 ```
@@ -865,7 +871,7 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/operations/status
   "reachable": true,
   "managed_databases": true,
   "backups_enabled": true,
-  "target": "http://minio:9000/conservices-backups",
+  "target": "http://s3:9000/conservices-backups",
   "recipients": ["age1…"],
   "file_buckets": ["den-data-dev", "hr-data-dev"],
   "timezone": "Europe/Vienna",

@@ -20,12 +20,22 @@ ghcr.io/aglelectronics/<module>-<component>:<tag>
 | --- | --- |
 | Den | `den-backend` (also contains `/den-migrate`), `den-frontend`, `den-operator` |
 | Stash | `stash-backend`, `stash-frontend` |
+| Rally | `rally-backend`, `rally-migrate`, `rally-frontend`, `rally-submit` (the public submission site) |
 | Other modules | `<module>-backend`, `<module>-frontend`, and where the module has a separate migration step, `<module>-migrate` (see `deploy/kubernetes/modules/README.md`) |
 
 All images of one module share the same tag for a release: Den `1.2.0-1`
 means `den-backend:1.2.0-1`, `den-frontend:1.2.0-1` and
 `den-operator:1.2.0-1`, built from the same commit. Never mix tags within a
 module.
+
+The images are built, scanned, published, signed with cosign and given an
+SBOM by CI when a module's version tag is pushed; an existing tag is never
+overwritten. How to cut a release and how to verify a signature: see
+[CI and releases](../contributing/ci.md).
+
+While a module's repository is private, its images are private packages on
+GHCR and the cluster needs a pull secret for `ghcr.io`; see
+[Den and the modules](../deploy/apps.md).
 
 ## What a tag means
 
@@ -236,3 +246,4 @@ Decide quickly, and tell people to stop using the module while you do.
 - [Installing modules with Helm](helm.md#roll-back): `helm rollback`.
 - [Databases, backups and restore](databases-and-backups.md#restore): restoring before a rollback.
 - [Changelogs](../contributing/changelog.md): how releases are described.
+- [CI and releases](../contributing/ci.md): how images are built, signed and published.

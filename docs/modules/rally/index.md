@@ -66,16 +66,19 @@ flowchart LR
 
 | Posture | When | Guide |
 | --- | --- | --- |
-| **Full platform on Kubernetes** (recommended) | Production, next to Den, Keycloak and the other modules. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
+| **Production cluster with Argo CD** (recommended for production) | Production: Den, Keycloak and every module on a cluster managed from Git. | [Den and the modules](../../deploy/apps.md) |
+| Full platform on Kubernetes | A cluster you run yourself, next to Den, Keycloak and the other modules; also the local trial cluster. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
 | Standalone on Kubernetes | A CfP and schedule tool with your own database, storage and identity provider. | [Setup: standalone](setup.md#standalone-on-kubernetes) |
 | Production with Docker | A single server without Kubernetes. | [Setup: Docker](setup.md#production-with-docker) |
 | Development with Docker | Trying Rally or working on its code. Not for production. | [Setup: development](setup.md#development-with-docker) |
+
+A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only; production installations use the Argo CD path.
 
 ## How Rally is built
 
 | Part | Technology | Runs as |
 | --- | --- | --- |
-| Backend | Go 1.25, chi, pgx | Deployment `rally-backend` (`/server`, port 8080) |
+| Backend | Go 1.27, chi, pgx | Deployment `rally-backend` (`/server`, port 8080) |
 | Migrations | Goose, separate binary | initContainer `migrate` in `rally-backend` (`rally-migrate` image). The server **never** migrates (ADR-0003). |
 | Staff app | React 19, Rsbuild, TanStack Router and Query, Tailwind | Deployment `rally-frontend` (nginx) |
 | Submission site | Same code, built with `RALLY_APP=submit` | Deployment `rally-submit` (nginx), optional |
@@ -88,8 +91,8 @@ flowchart LR
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/rally-backend:<tag>` | `infra/Dockerfile.backend` | API server `/server`, port 8080. |
 | `ghcr.io/aglelectronics/rally-migrate:<tag>` | `infra/Dockerfile.migrate` | One-shot migrator `/migrate`; needs only `DATABASE_URL`. |
-| `ghcr.io/aglelectronics/rally-frontend:<tag>` | `infra/Dockerfile.frontend` | Staff app on nginx (port 80 in the image; the chart mounts a config on 8080). |
-| no published name yet | `infra/Dockerfile.frontend` with `--build-arg RALLY_APP=submit` | Submission site. Build and name it yourself (see [Setup](setup.md#build-the-submission-site)). |
+| `ghcr.io/aglelectronics/rally-frontend:<tag>` | `infra/Dockerfile.frontend` | Staff app on nginx (non-root as UID 101, port 8080; the chart mounts its own config). |
+| `ghcr.io/aglelectronics/rally-submit:<tag>` | `infra/Dockerfile.frontend` with `--build-arg RALLY_APP=submit` | Submission site. The published image is built with the example sign-in settings (realm `attendees`, client `rally-submit`); for your own domain, build it yourself (see [Setup](setup.md#build-the-submission-site) and [CI and releases](../../contributing/ci.md#frontend-images-and-sign-in-settings)). |
 
 Use the same tag for all of them ([Versions and upgrades](../../operations/versioning.md)).
 No Rally release has been published yet; build the images yourself until

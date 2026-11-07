@@ -6,13 +6,13 @@ stack that builds every module from your local checkouts and runs them with
 a local HTTPS proxy. This page explains how to use it.
 
 !!! warning "Development only"
-    The Compose stack uses fixed, public passwords, MinIO, Mailpit and a dev
-    realm. It is never a way to run Con Services for real.
+    The Compose stack uses fixed, public passwords, a local S3 server,
+    Mailpit and a dev realm. It is never a way to run Con Services for real.
 
 ## What it contains
 
 Everything is defined in the root `docker-compose.yml`. Shared services
-(PostgreSQL, MinIO, Keycloak, the Caddy proxy, Mailpit, Adminer) have no
+(PostgreSQL, the S3 server, Keycloak, the Caddy proxy, Mailpit, Adminer) have no
 profile and are always available. Each module's services sit in a
 **profile** named after the module (`den`, `events`, `learn`, `desk`,
 `tasks`, `wiki`); Stash, HR and Finance currently have no profile.
@@ -24,23 +24,75 @@ profile and are always available. Each module's services sit in a
 | Den web app | <https://den.conservices.test>, direct <http://localhost:3001> |
 | Den API | direct <http://localhost:8090> |
 | PostgreSQL 16 | `localhost:5432` |
-| MinIO | API `localhost:9000`, console <http://localhost:9001> |
+| S3 storage (SeaweedFS, service `s3`) | <https://s3.conservices.test>, direct `http://localhost:9000` (S3 API only, no web console) |
 | Mailpit | <https://mail.conservices.test>, direct <http://localhost:8025> |
 | Adminer | <https://db.conservices.test>, direct <http://localhost:8095> |
 
+## The workspace
+
+Con Services is spread over several Git repositories. You work in one
+folder, the **workspace**: a checkout of the root repository `con-services`
+with the other repositories cloned into subfolders of the same name.
+
+```text
+con-services/              root repository: charts, manifests, docs, Compose stack
+├── den/                   AGlElectronics/den
+├── hr/  Rally/  stash/    AGlElectronics/hr, Rally, stash
+├── finance/  wiki/  desk/ AGlElectronics/finance, wiki, desk
+├── learn/  tasks/         AGlElectronics/learn, tasks
+└── con-services-gitops/   AGlElectronics/con-services-gitops (Argo CD template)
+```
+
+Each subfolder is its own repository with its own history; the root
+repository ignores them (`.gitignore`), so a commit in `den/` never shows up
+in `con-services`. Commit and push in the folder you changed.
+
+`scripts/workspace.ps1` (Windows) and `scripts/workspace.sh` (macOS, Linux)
+manage all of them at once:
+
+| Command | What it does |
+| --- | --- |
+| `clone` | Clones every repository that is missing. Private modules need access to them; the script warns and continues when a clone fails. |
+| `status` | Shows branch, number of uncommitted files and commits ahead/behind for every repository. |
+| `pull` | Fast-forwards every repository without uncommitted changes; skips the others. |
+
+```powershell
+./scripts/workspace.ps1 status
+```
+
+You should see one line per repository:
+
+```text
+Repo                Branch Dirty Ahead Behind
+con-services        main       0 0     0
+den                 main       2 0     0
+...
+```
+
 ## Run Den from source
 
-1. Install Docker Desktop and Git, then clone the root repository and Den
-   into it:
+1. Install Docker Desktop and Git, then clone the root repository and the
+   other repositories into it:
 
-    ```sh
-    git clone https://github.com/AGlElectronics/con-services.git
-    cd con-services
-    git clone https://github.com/AGlElectronics/den.git den
-    ```
+    === "Windows"
 
-    Other modules go into folders of the same name (`hr`, `Rally`, `stash`,
-    …) in the same way.
+        ```powershell
+        git clone https://github.com/AGlElectronics/con-services.git
+        cd con-services
+        ./scripts/workspace.ps1 clone
+        ```
+
+    === "macOS / Linux"
+
+        ```sh
+        git clone https://github.com/AGlElectronics/con-services.git
+        cd con-services
+        scripts/workspace.sh clone
+        ```
+
+    You should see `ok` or a clone message for each repository. To work on
+    Den alone, `git clone https://github.com/AGlElectronics/den.git den`
+    inside `con-services` is enough.
 
 2. Copy the example settings file (no changes needed):
 
@@ -64,8 +116,8 @@ profile and are always available. Each module's services sit in a
 
     Naming the services keeps Compose from building modules you have not
     cloned. At the end you should see `conservices-den-backend Started`;
-    `minio-init`, `proxy-ca` and `den-migrate` show `Exited`, which is
-    correct for one-off helpers.
+    `proxy-ca` and `den-migrate` show `Exited`, which is correct for
+    one-off helpers.
 
 4. Check Den is ready:
 
@@ -110,6 +162,70 @@ profile and are always available. Each module's services sit in a
 Den's migrations run in the one-off `den-migrate` service on every `up`.
 After `down -v` the proxy creates a new certificate, so trust it again.
 
+## Object storage (S3)
+
+Modules keep files (uploads, branding images, backups) in **S3-compatible
+object storage**: a service that stores files in *buckets* and speaks the
+Amazon S3 API. In production that is a managed service such as AWS S3 or
+Hetzner Object Storage. For development the Compose stack runs
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) (image
+`chrislusf/seaweedfs:4.52`) as the service `s3`, in its single-process
+`mini` mode.
+
+- **Keys (DEV ONLY, public):** access key `conservices`, secret key
+  `conservicesdev`.
+- **Buckets:** created when the container starts, from the `-bucket=` list
+  in `docker-compose.yml`: `stash-data-dev`, `den-data-dev`,
+  `events-data-dev`, `hr-data-dev`, `finance-data-dev`, `learn-data-dev`,
+  `wiki-data-dev`, `tasks-data-dev` and `conservices-backups`. The service
+  only reports `healthy` once they exist, and backends wait for that.
+- **Addresses:** backends use `http://s3:9000` with path-style requests.
+  Browsers get presigned links on `https://s3.conservices.test` (set by
+  `S3_PUBLIC_BASE_URL`); the Caddy proxy forwards them with the original
+  `Host` so the signatures stay valid.
+- **No web console.** Use any S3 client instead. With the AWS CLI in Docker:
+
+    ```sh
+    docker run --rm --network conservices_default \
+      -e AWS_ACCESS_KEY_ID=conservices -e AWS_SECRET_ACCESS_KEY=conservicesdev \
+      -e AWS_DEFAULT_REGION=us-east-1 \
+      amazon/aws-cli:2.31.30 --endpoint-url http://s3:9000 s3 ls
+    ```
+
+    ```text
+    2026-11-07 15:35:00 conservices-backups
+    2026-11-07 15:35:00 den-data-dev
+    2026-11-07 15:35:00 events-data-dev
+    ...
+    ```
+
+To add a bucket for a new module, append it to the `-bucket=` list of the
+`s3` service and run `docker compose up -d s3`.
+
+### Moving from MinIO
+
+Earlier versions of this stack used MinIO (service `minio`, volume
+`conservices_conservices-minio-data`, console on port 9001). MinIO no longer
+publishes community images, so it was replaced. The keys and bucket names
+are unchanged, but the data is not copied over. After pulling this change:
+
+1. Only if you need old uploads: MinIO keeps objects in its own format,
+   so export them through the old container *while it still runs*:
+
+    ```sh
+    docker run --rm --network conservices_default -v "$PWD/minio-export:/out" \
+      -e AWS_ACCESS_KEY_ID=conservices -e AWS_SECRET_ACCESS_KEY=conservicesdev \
+      -e AWS_DEFAULT_REGION=us-east-1 \
+      amazon/aws-cli:2.31.30 --endpoint-url http://minio:9000 s3 sync s3://den-data-dev /out/den-data-dev
+    ```
+
+    Repeat for each bucket you need. Later, upload the folder with the same
+    command against `http://s3:9000` and the source and target swapped.
+2. Remove the old container and start the new server:
+   `docker compose up -d --remove-orphans s3`
+   (or `docker rm -f conservices-minio` first).
+3. Remove the old volume: `docker volume rm conservices_conservices-minio-data`.
+
 ## Keeping Compose and Kubernetes in step
 
 The Compose file is the quickest way to see which settings each module
@@ -121,7 +237,7 @@ change (see [Contributing](index.md)).
 
 **`Bind for 0.0.0.0:5432 failed: port is already allocated`.** Another
 program uses the port (often a locally installed PostgreSQL, IIS or a
-Kubernetes ingress controller on 80/443). Find it with
+local kind cluster from the quickstart on 80/443). Find it with
 `Get-NetTCPConnection -LocalPort 5432 -State Listen` (Windows) or
 `sudo lsof -i :5432`, and stop it.
 
@@ -137,6 +253,30 @@ ready or was recreated. Run `docker compose --profile den restart den-backend`.
 `docker compose --profile den logs den-migrate`. `password authentication
 failed` usually means a database volume from an older setup; on a dev
 machine `docker compose --profile den down -v` starts fresh.
+
+**`Bind for 0.0.0.0:9000 failed` after pulling the S3 change.** The old
+`conservices-minio` container still holds port 9000. Run
+`docker rm -f conservices-minio`, then the `up` command again.
+
+**`dependency failed to start: container conservices-s3 is unhealthy`.** A
+bucket from the `-bucket=` list was not created. Read
+`docker compose logs s3`; a `permission denied` on `/data` means the volume
+was created by another image, so remove `conservices_conservices-s3-data`
+(dev data only) and start again.
+
+**Uploads fail in the browser with `SignatureDoesNotMatch` or a CORS
+error.** The browser must use `https://s3.conservices.test` through the
+proxy, not `localhost:9000`. Check `S3_PUBLIC_BASE_URL` on the backend and
+that the hosts entry from step 5 exists.
+
+**`workspace.ps1 clone` says `could not clone <module> (no access?)`.**
+Some module repositories are private. Ask a maintainer for access, or
+sign in with `gh auth login` so Git uses your GitHub account, then run
+`clone` again; repositories that already exist are skipped.
+
+**`workspace.ps1 pull` says `could not fast-forward`.** You have local
+commits that are not on GitHub, and GitHub has new commits too. Go into
+that folder and run `git pull --rebase`, then resolve any conflicts.
 
 **Certificate warnings or "Can't reach the login server".** Redo step 5 and
 restart the browser. The proxy's certificates last 30 days; after long

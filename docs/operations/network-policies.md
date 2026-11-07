@@ -18,11 +18,11 @@ cluster actually enforces it.
 
 ```mermaid
 flowchart TB
-    subgraph ing [ingress-nginx]
-        ic[ingress controller]
+    subgraph gw [Cilium gateway · identity ingress]
+        ic[Gateway public · Envoy]
     end
     subgraph id [conservices-identity · tier platform]
-        kc[keycloak]
+        kc[keycloak / keycloak-public]
     end
     subgraph den [conservices-den · tier platform]
         fe[den-frontend] --> be[den-backend]
@@ -30,7 +30,7 @@ flowchart TB
     end
     subgraph data [conservices-data · tier data]
         pg[(postgres)]
-        s3[(minio)]
+        s3[(s3)]
     end
     subgraph stash [conservices-stash · tier module]
         sfe[stash-frontend] --> sbe[stash-backend]
@@ -42,9 +42,8 @@ flowchart TB
     ic --> fe
     ic --> sfe
     ic --> kc
-    be --> kc
-    be -->|OIDC via public issuer| ic
-    sbe -->|OIDC via public issuer| ic
+    be -->|OIDC, admin API| kc
+    sbe -->|OIDC via keycloak-public| kc
     be --> pg
     be --> s3
     op --> pg
@@ -58,8 +57,9 @@ flowchart TB
 
 | Namespace | Labels | Contains |
 | --- | --- | --- |
+| `conservices-gateway` | `app.kubernetes.io/part-of: conservices` | The Gateway `public` and its certificate. No pods: Cilium's Envoy runs in `kube-system`. |
 | `conservices-identity` | `conservices.io/tier: platform` | Keycloak. |
-| `conservices-data` | `conservices.io/tier: data` | PostgreSQL and MinIO (only when you run them in the cluster). |
+| `conservices-data` | `conservices.io/tier: data` | PostgreSQL, and the S3 server `s3` (SeaweedFS) for a local trial (production: CloudNativePG, and a managed S3 service outside the cluster). |
 | `conservices-den` | `conservices.io/tier: platform` | `den-backend`, `den-frontend`, `den-operator`. |
 | `conservices-<module>` | `conservices.io/tier: module`, `conservices.io/module: <module>` | One module's backend and frontend, for example `conservices-stash`. |
 
@@ -67,7 +67,7 @@ All of them also carry `pod-security.kubernetes.io/enforce: restricted` and
 `pod-security.kubernetes.io/warn: restricted` (see [Pod Security](#pod-security)).
 
 The policies select pods by two labels that every Con Services pod has:
-`app.kubernetes.io/name` (`den`, `stash`, `keycloak`, `postgres`, `minio`)
+`app.kubernetes.io/name` (`den`, `stash`, `keycloak`, `postgres`, `s3`)
 and `app.kubernetes.io/component` (`backend`, `frontend`, `operator`, …).
 Platform policies admit *any* module with one rule: pods labelled
 `app.kubernetes.io/component: backend` in a namespace labelled
@@ -80,32 +80,78 @@ Everything not in this table is blocked. "Module backend" means a pod with
 `app.kubernetes.io/component: backend` in a namespace with
 `conservices.io/tier: module`.
 
-| From | To | Port | Why |
-| --- | --- | --- | --- |
-| every pod | `kube-dns` in `kube-system` | 53 UDP/TCP | Looking up service names. |
-| ingress controller (`ingress-nginx`) | `den-frontend` | 8080 | Serving Den's web app and passing `/api/` on. |
-| ingress controller | `stash-frontend` (each module frontend) | 8080 | Serving the module's web app. |
-| ingress controller | `keycloak` | 8080 | The sign-in pages at `auth.<domain>`. |
-| `den-frontend` | `den-backend` | 8080 | nginx proxies `/api/` to the backend. |
-| `stash-frontend` | `stash-backend` | 8080 | nginx proxies `/api/` to the backend. |
-| `den-backend` | ingress controller | 443 | OIDC discovery and signing keys through the public issuer address (`https://auth.<domain>`). |
-| module backend | ingress controller | 443 | The same, for the module. |
-| `den-backend` | `keycloak` | 8080 | Keycloak admin API for [Keycloak sync](../modules/den/admin-guide.md#keycloak-sync). |
-| `den-backend` | `den-operator` | 8080 | Backups and module databases (bearer `OPERATOR_TOKEN`). |
-| `den-backend` | `postgres` | 5432 | Den's own database (also the `migrate` initContainer). |
-| `den-backend` | `minio` | 9000 | Den's bucket (branding assets). |
-| `den-operator` | `postgres` | 5432 | Admin login: create and drop module databases, `pg_dump` for backups. |
-| `den-operator` | `minio` | 9000 | Writing backups; copying module buckets into backups. |
-| `keycloak` | `postgres` | 5432 | Keycloak's own database. |
-| module backend | `den-backend` | 8080 | [Pairing](../concepts/pairing.md), the bundle every minute, user preferences. |
-| module backend | `postgres` | 5432 | The module's own database. |
-| module backend | `minio` | 9000 | The module's own bucket. |
-| HR backend (`conservices-hr`) | `stash-backend` | 8080 | HR reads `GET /api/role-catalog` (see below). |
+Two deployment shapes exist, and both bring traffic in through the
+**Cilium Gateway API** and reach the OIDC issuer in-cluster through the
+Service `keycloak-public`. They differ in the data services: the
+**Kustomize manifests** (`deploy/kubernetes/`, local trial) select the
+in-cluster `postgres` and `s3` pods; the **Helm charts** (Den and every
+module, used by the [Argo CD path](../deploy/index.md)) select CloudNativePG
+and, optionally, an external S3 service. The "Shape" column says which rows
+belong to which.
+
+| From | To | Port | Shape | Why |
+| --- | --- | --- | --- | --- |
+| every pod | `kube-dns` in `kube-system` | 53 UDP/TCP | both | Looking up service names. |
+| Cilium gateway (reserved identity `ingress`) | `den-frontend`, each module frontend, `rally-submit` | 8080 (Service port 443) | both | Serving the web apps. Allowed by the `CiliumNetworkPolicy` `<name>-web-from-gateway` (`fromEntities: [ingress]`); a Kubernetes NetworkPolicy cannot select this identity. |
+| Cilium gateway (reserved identity `ingress`) | `keycloak` in `conservices-identity` | 8443 (Service `keycloak-public` port 443) | Kustomize (`keycloak-from-gateway`); GitOps repository (`keycloak-gateway`) | The sign-in pages at `auth.<domain>`. |
+| another ingress controller (for example Traefik) | each web app | 8080 | Helm with `ingress.enabled` only | Legacy path for clusters without the Gateway API; admits `networkPolicy.ingressControllerNamespace`. |
+| `den-frontend` | `den-backend` | 8080 | both | nginx proxies `/api/` to the backend. |
+| `stash-frontend` | `stash-backend` | 8080 | both | nginx proxies `/api/` to the backend. |
+| `den-backend`, module backend | Keycloak pods in `conservices-identity`, through the Service `keycloak-public` | 8443 (Service port 443) | both (Helm: `networkPolicy.oidc`) | OIDC discovery and signing keys. Pods resolve `auth.<domain>` to `keycloak-public` (production: a CoreDNS rewrite; local trial: `hostAliases` to its fixed address `10.96.0.100`). Keycloak's policy admits Den's backend and every module backend on 8443. Kustomize selects `app.kubernetes.io/name: keycloak`; the charts select `app: keycloak`, which both the Keycloak Operator and the Kustomize Keycloak set. |
+| module backend | ingress controller | 443 | Helm with `oidcViaIngressController` only | Legacy: OIDC through an ingress controller. |
+| `den-backend`, `den-operator`, module backend | CloudNativePG pods (`cnpg.io/cluster: conservices-pg`) in `conservices-data` | 5432 | Helm (`networkPolicy.data.postgres`) | Own database (Den's operator: admin login). |
+| `den-backend`, `den-operator`, module backend with a bucket | Garage pods (`app.kubernetes.io/name: garage`) in `conservices-data` | 3900 | Helm (`networkPolicy.data.s3`) | Buckets, through Garage's TLS sidecar. |
+| `den-backend`, `den-operator`, module backend | external S3 (for example `*.your-objectstorage.com`) | 443 | Helm, only when `networkPolicy.data.s3.external` is set | Buckets at a managed S3 provider. Cilium: the `CiliumNetworkPolicy` `<name>-external-s3` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `external.cidrs`. Checked against public CAs, not the internal CA. |
+| `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for [Keycloak sync](../modules/den/admin-guide.md#keycloak-sync). |
+| `den-backend` | `den-operator` | 8080 | both | Backups and module databases (bearer `OPERATOR_TOKEN`). |
+| `den-backend` | `postgres` | 5432 | Kustomize | Den's own database (also the `migrate` initContainer). |
+| `den-backend` | `s3` | 9000 | Kustomize | Den's bucket (branding assets). |
+| `den-operator` | `postgres` | 5432 | Kustomize | Admin login: create and drop module databases, `pg_dump` for backups. |
+| `den-operator` | `s3` | 9000 | Kustomize | Writing backups; copying module buckets into backups. |
+| `keycloak` | `postgres` | 5432 | Kustomize | Keycloak's own database. |
+| module backend | `den-backend` | 8080 | both | [Pairing](../concepts/pairing.md), the bundle every minute, user preferences. |
+| module backend | `postgres` | 5432 | Kustomize | The module's own database. |
+| module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
+| HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
+| HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
+
+Rules in *other* namespaces that these flows need (Keycloak admitting the
+backends on 8443, CloudNativePG admitting them on 5432, an in-cluster S3
+service, if you run one, on its port) belong to the platform's own
+policies, not to the module charts.
+
+### Platform flows in the GitOps reference
+
+The [GitOps reference deployment](../deploy/index.md) adds these policies
+for the platform namespaces (`components/platform-namespaces`,
+`charts/postgres` and `charts/keycloak` in `con-services-gitops`; the S3
+host names come from `s3.fqdns` and `s3.backup.fqdns` in `cluster.yaml`). Both
+namespaces start from a default deny with only DNS allowed.
+
+| From | To | Port | Policy | Why |
+| --- | --- | --- | --- | --- |
+| module namespaces (`conservices.io/tier: module`), `conservices-den`, `conservices-identity` | PostgreSQL pods (`conservices.io/postgres: "true"`) | 5432 | NetworkPolicy `conservices-pg` | Applications, Den's operator and Keycloak reach their databases. |
+| PostgreSQL pods | PostgreSQL pods | 5432, 8000 | `conservices-pg` | Streaming replication and the instance manager's status API. |
+| CloudNativePG operator (`cnpg-system`) | PostgreSQL pods | 8000, 5432 | `conservices-pg` | Status checks, switchovers, managing roles and databases. |
+| PostgreSQL pods | Kubernetes API (`toEntities: kube-apiserver`) | 6443 | CiliumNetworkPolicy `conservices-pg-kube-apiserver` | The instance manager watches its `Cluster` object. |
+| PostgreSQL pods | external S3 by host name | 443 | CiliumNetworkPolicy `conservices-pg-s3` | WAL archive and base backups ([Data](../deploy/data.md#network-policy-for-s3)). |
+| Cilium gateway (reserved identity `ingress`) | Keycloak pods | 8443 | CiliumNetworkPolicy in `conservices-identity` (`fromEntities: [ingress]`) | `auth.<domain>` (public) and `auth-admin.<domain>` (internal Gateway). |
+| `den-backend`, module backends | Keycloak pods | 8443 | NetworkPolicy in `conservices-identity` | OIDC, Den's Keycloak sync, HR and Learn provisioning. |
+| Keycloak pods | Keycloak pods | 7800, 57800 | NetworkPolicy in `conservices-identity` | Shared session cache between the instances. |
+| Keycloak operator | Keycloak pods; Kubernetes API | 8443, 9000; 6443 | NetworkPolicy and CiliumNetworkPolicy in `conservices-identity` | Health checks and managing the StatefulSet and realm imports. |
+| Keycloak pods | PostgreSQL pods | 5432 | NetworkPolicy in `conservices-identity` | Keycloak's database. |
+| Keycloak pods | internet outside the private ranges | 587, 465 | NetworkPolicy in `conservices-identity` | Password-reset and verification mail through your SMTP provider. |
 
 Not listed, so blocked: one module calling another (except the documented
 integrations below), the operator being reached by anything but
-`den-backend`, any pod reaching the internet, and the ingress controller
-reaching backends directly.
+`den-backend`, any pod reaching the internet (except external S3 when you
+allow it), and the gateway reaching backends directly.
+
+Every flow in this table except DNS is encrypted with TLS and checked against
+the internal certificate authority (external S3: against public CAs); see
+[Internal TLS](internal-tls.md).
+cert-manager and trust-manager need no flows of their own: they only talk to
+the Kubernetes API, which NetworkPolicies do not cover.
 
 ## Calls between modules
 
@@ -119,10 +165,10 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Planned with HR and Learn manifests. |
 | HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
-| HR, Learn | Keycloak admin API | creating accounts, reading groups | Planned: needs egress to `keycloak:8080` and an ingress rule on Keycloak. |
+| HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
 
 Calls that come from the **browser**, not from a pod, go through the
-ingress controller and need no policy: Den's portal fetching
+Gateway and need no policy of their own: Den's portal fetching
 `/api/portal/todos` from each module, and Den's web app calling Learn's API.
 
 Example: HR's egress rule to call Stash (goes into `conservices-hr`):
@@ -184,10 +230,20 @@ without fixed addresses (S3, a hosted identity provider), either allow
 `0.0.0.0/0` on port 443 for the pods that need it, or use your CNI's
 DNS-aware policies (Cilium `toFQDNs`, Calico `domains`).
 
-For managed S3 (AWS S3 or Hetzner Object Storage, as recommended in
-[Production](production.md#object-storage-use-managed-s3)), allow port 443
+For managed S3 (recommended in
+[Production](production.md#object-storage-use-managed-s3); any
+S3-compatible service works, for example AWS S3, Hetzner Object Storage,
+Cloudflare R2 or Backblaze B2), allow port 443
 to the provider: with Cilium, a `toFQDNs` rule for the endpoint host;
 otherwise an `ipBlock` for the provider's ranges.
+
+With the Helm charts you do not write this policy yourself: set
+`networkPolicy.data.s3.external.fqdns` (Cilium) or
+`networkPolicy.data.s3.external.cidrs` (any CNI), and the chart renders the
+`<module>-external-s3` CiliumNetworkPolicy or `ipBlock` rule for the
+backend (Den: backend and operator). See
+[External S3 in the Helm guide](helm.md#external-s3-hetzner-object-storage).
+The example below is what the chart renders, for Kustomize installs.
 
 ### Example: managed S3 by host name with Cilium
 
@@ -232,12 +288,30 @@ When you deploy a module (by hand, with Kustomize or with its
 
 1. Label its namespace `conservices.io/tier=module` and
    `conservices.io/module=<module>`. The platform policies (Den,
-   PostgreSQL, MinIO) then admit its backend without any change on their
+   PostgreSQL, the S3 server) then admit its backend without any change on their
    side.
-2. Make sure its own namespace has `default-deny`, DNS, ingress-controller →
-   frontend, frontend → backend, and backend → Den / data / issuer rules.
-   The Helm charts and `modules/stash/networkpolicies.yaml` contain exactly
-   these.
+2. Make sure its own namespace has `default-deny`, DNS, gateway →
+   frontend, frontend → backend, and backend → Den / data / Keycloak
+   rules. The Helm charts and `modules/stash/networkpolicies.yaml` contain
+   exactly these. With Cilium's Gateway API the gateway rule must be a
+   `CiliumNetworkPolicy` with `fromEntities: [ingress]`:
+
+    ```yaml
+    apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata:
+      name: stash-web-from-gateway
+      namespace: conservices-stash
+    spec:
+      endpointSelector:
+        matchLabels:
+          app.kubernetes.io/name: stash
+          app.kubernetes.io/component: frontend
+      ingress:
+        - fromEntities: ["ingress"]
+          toPorts:
+            - ports: [{ port: "8080", protocol: TCP }]
+    ```
 3. For each [integration with another module](#calls-between-modules), add
    the egress rule in the caller's namespace **and** the ingress rule in the
    target's namespace.
@@ -248,8 +322,8 @@ When you deploy a module (by hand, with Kustomize or with its
    if you added a new kind of connection.
 
 With an external identity provider, also replace the rules that allow
-backends to reach the ingress controller on port 443 with egress to the
-provider.
+backends to reach Keycloak (Helm: `networkPolicy.oidc.inCluster: false`)
+with egress on port 443 to the provider.
 
 ## Checking that your cluster enforces policies
 
@@ -261,24 +335,35 @@ by Kubernetes itself.
     there, it adds DNS-aware egress rules (`toFQDNs`) for external services,
     and its **Hubble** observability shows every allowed and dropped flow,
     for example `hubble observe --namespace conservices-den --verdict DROPPED`.
-    Any CNI that enforces Kubernetes NetworkPolicy works too (Calico,
-    Antrea, k3s' built-in policy controller).
+    Cilium also runs the Gateway, and the manifests and charts include
+    `CiliumNetworkPolicy` objects for it, so Con Services expects Cilium.
+    The local trial's kind cluster and the [Argo CD path](../deploy/index.md)
+    both use it. On another CNI that enforces NetworkPolicy (Calico,
+    Antrea), you also need another Gateway API implementation or ingress
+    controller, and must remove the Cilium objects and admit that
+    controller's namespace instead.
 
 **Docker Desktop's built-in Kubernetes and kind's default plugin may accept
 the policies but not enforce them**, so everything still works there even
-when a rule is missing. Whatever the cluster, verify enforcement yourself
-with the test below, and test on a cluster like your production one.
+when a rule is missing. The quickstart's kind cluster replaces kind's
+plugin with Cilium and therefore enforces them. Whatever the cluster,
+verify enforcement yourself with the test below, and test on a cluster like
+your production one.
 
 To test, start a throwaway pod in the `default` namespace and try to reach
 Den's operator, which only `den-backend` may reach:
 
 ```sh
-kubectl run np-test --rm -it --restart=Never --image=busybox:1.36 -n default -- wget -qO- -T 3 http://den-operator.conservices-den.svc.cluster.local:8080/livez
+kubectl run np-test --rm -it --restart=Never --image=curlimages/curl:8.11.1 -n default -- curl -sk -o /dev/null -w "%{http_code}\n" --max-time 3 https://den-operator.conservices-den.svc.cluster.local:8080/livez
 ```
 
-- **Enforced:** after three seconds, `wget: download timed out`.
-- **Not enforced:** it returns at once without an error (the operator
-  answers `/livez` with an empty `204`), and the pod exits normally.
+- **Enforced:** after three seconds it prints `000` (curl gave up: the
+  connection was dropped).
+- **Not enforced:** it prints `204` at once (the operator answers `/livez`
+  with an empty `204`).
+
+`-k` skips the certificate check because this test is only about whether
+the connection gets through.
 
 Then check that an **allowed** path still works, from Den's backend to the
 operator. The backend image has no shell, so use an ephemeral debug
@@ -286,27 +371,34 @@ container that joins its pod (it meets the restricted Pod Security rules
 because it runs as the pod's user):
 
 ```sh
-kubectl debug -n conservices-den deploy/den-backend -it --image=busybox:1.36 --profile=restricted -- wget -qO- -S -T 3 http://den-operator:8080/livez
+kubectl debug -n conservices-den deploy/den-backend -it --image=curlimages/curl:8.11.1 --profile=restricted -- curl -sk -o /dev/null -w "%{http_code}\n" --max-time 3 https://den-operator:8080/livez
 ```
 
 ```text
-  HTTP/1.1 204 No Content
+204
 ```
 
 ### Installing Cilium
 
 On a new cluster, install Cilium **before** anything else, because the CNI
-is chosen when the cluster's networking starts. Managed clusters often offer
-it directly (GKE Dataplane V2, AKS with Azure CNI powered by Cilium, EKS
-add-on); otherwise, with Helm:
+is chosen when the cluster's networking starts. The production procedure
+(k3s with Cilium replacing kube-proxy, WireGuard, the Gateway API and LB
+IPAM) is in [Deploy with Argo CD: the cluster](../deploy/cluster.md); the
+local trial's settings are in
+[the quickstart](../getting-started/den-quickstart.md#4c-cilium). The short
+version, with Helm:
 
 1. Install the Cilium command-line tool from
    <https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/>.
-2. Install Cilium with Hubble turned on:
+2. Install the Gateway API definitions, then Cilium with the Gateway API
+   and Hubble turned on (the Gateway API needs Cilium's kube-proxy
+   replacement; see the pages above for the cluster-specific values):
 
     ```sh
+    kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
     helm repo add cilium https://helm.cilium.io
-    helm install cilium cilium/cilium --version 1.16.5 -n kube-system \
+    helm install cilium cilium/cilium --version 1.20.4 -n kube-system \
+      --set kubeProxyReplacement=true --set gatewayAPI.enabled=true \
       --set hubble.relay.enabled=true --set hubble.ui.enabled=true
     ```
 
@@ -338,8 +430,9 @@ add-on); otherwise, with Helm:
     ```
 
 Pin the Cilium version like any other image and follow Cilium's upgrade
-guide; Con Services only relies on standard NetworkPolicy plus, optionally,
-`CiliumNetworkPolicy` for `toFQDNs`.
+guide; Con Services relies on standard NetworkPolicy, Cilium's Gateway API,
+and `CiliumNetworkPolicy` for the gateway (`fromEntities: [ingress]`) and
+for `toFQDNs`.
 
 ## Pod Security
 
@@ -382,14 +475,14 @@ storage keys or the database admin password.
 | Namespace | Secret | Contains |
 | --- | --- | --- |
 | `conservices-identity` | `keycloak-secrets` | Keycloak's database password, the bootstrap admin login. |
-| `conservices-identity`, `conservices-den`, `conservices-<module>` | `conservices-tls` | The HTTPS certificate for that namespace's Ingress. |
+| `conservices-gateway` | `conservices-tls` (local trial), `wildcard-tls` (GitOps repository) | The public HTTPS certificate the Gateway presents to browsers. |
 | `conservices-data` | `postgres-secrets` | PostgreSQL superuser password, initial `den` and `keycloak` passwords. |
-| `conservices-data` | `minio-secrets` | MinIO root login. |
+| `conservices-data` | `s3-secrets` | Admin key of the trial S3 server (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). |
 | `conservices-den` | `den-secrets` | Den's database URL, S3 keys, Keycloak client secret, operator token. |
 | `conservices-den` | `den-operator-secrets` | Operator token, PostgreSQL **admin** URL, backup and file-copy S3 keys. |
 | `conservices-stash` | `stash-secrets` | Stash's database URL (from Den) and S3 keys. |
 
-The example overlay uses one MinIO root login for everything for
+The example overlay uses one S3 admin key for everything for
 simplicity. In production give each module its own storage keys limited to
 its bucket.
 
@@ -404,16 +497,33 @@ ingress at the target), and that the namespace and pod labels match. See
 cluster does not enforce policies, so a missing rule went unnoticed. Use the
 test above on both clusters.
 
-**The ingress controller lives in another namespace:** the policies admit
-`kubernetes.io/metadata.name: ingress-nginx`. Change that selector in your
-overlay if your controller runs elsewhere, for example `kube-system` for
-k3s' Traefik. Symptom: every site returns *502 Bad Gateway* or *504
-Gateway Time-out* although the pods are ready.
+**You use another gateway or ingress controller instead of Cilium's:** the
+`CiliumNetworkPolicy` objects only admit Cilium's Envoy. Admit your
+controller's namespace in the web apps' policies instead (Helm:
+`networkPolicy.gateway.namespace`, or `networkPolicy.ingressControllerNamespace`
+with `ingress.enabled`; Kustomize: an ingress rule in an overlay), for
+example `kube-system` for k3s' Traefik. Symptom: every site returns *502*,
+*503* or a gateway time-out although the pods are ready.
+
+**With Cilium's Gateway API every site gives `connection reset` or a
+gateway timeout although the pods are ready:** the gateway's Envoy arrives
+with Cilium's reserved identity `ingress`, which no Kubernetes
+NetworkPolicy can admit, so `default-deny` drops it. Check that the
+`CiliumNetworkPolicy` `<name>-web-from-gateway` exists in the namespace
+(`kubectl get cnp -n conservices-stash`); Hubble shows the drops with
+`hubble observe --namespace conservices-stash --verdict DROPPED --from-identity 8`.
 
 **Den's backend crashes with `oidc discovery … i/o timeout` after you moved
-to an external identity provider:** the backend may only reach the issuer
-through the in-cluster ingress controller. Add egress on port 443 to the
-provider (an `ipBlock`, or a `toFQDNs` rule with Cilium).
+to an external identity provider:** the backend may only reach Keycloak
+inside the cluster. Add egress on port 443 to the provider (an `ipBlock`,
+or a `toFQDNs` rule with Cilium).
+
+**Den's backend crashes with `oidc discovery … i/o timeout` with the
+in-cluster Keycloak:** check that `auth.<domain>` resolves to
+`keycloak-public` inside the cluster (production: the CoreDNS rewrite;
+local trial: `kubectl get service -n conservices-identity keycloak-public`
+must show `10.96.0.100`), and that Keycloak's policy admits the backend
+(`kubectl describe networkpolicy -n conservices-identity keycloak`).
 
 **A `toFQDNs` rule allows nothing:** Cilium did not see the DNS answer.
 The `CiliumNetworkPolicy` must contain the DNS rule shown in

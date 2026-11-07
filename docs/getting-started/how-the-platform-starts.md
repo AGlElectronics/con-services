@@ -74,16 +74,22 @@ the Kubernetes manifests:
 
 ## Step 1: Deploy the platform
 
-The platform is everything a module depends on. It lives in three
+The platform is everything a module depends on. It lives in these
 namespaces:
 
 | Namespace | Runs |
 | --- | --- |
+| `conservices-gateway` | The Gateway `public`: the entry point for every web address, holding the HTTPS certificate. Each app attaches an `HTTPRoute` to it. |
 | `conservices-identity` | Keycloak, the sign-in server. |
-| `conservices-data` | PostgreSQL and MinIO. *Only for local trials*; in production use managed PostgreSQL and managed S3 such as AWS S3 or Hetzner Object Storage (see [Production](../operations/production.md#object-storage-use-managed-s3)). |
+| `conservices-data` | PostgreSQL and the S3 server `s3` (SeaweedFS). *Only for local trials*; in production use CloudNativePG or managed PostgreSQL, and a managed S3 service (any S3-compatible one works, for example AWS S3, Hetzner Object Storage, Cloudflare R2 or Backblaze B2; see [Production](../operations/production.md#object-storage-use-managed-s3)). |
 | `conservices-den` | Den's backend, web app and operator. |
 
-One command creates all of them:
+The cluster needs **Cilium** with its Gateway API support, **cert-manager**
+and **trust-manager** first: Cilium runs the Gateway and enforces the
+network rules, and the other two make the certificates that encrypt every
+connection between these parts (see
+[Internal TLS](../operations/internal-tls.md#set-it-up), and step 4 of the
+[quickstart](den-quickstart.md)). Then one command creates all of them:
 
 ```sh
 kubectl apply -k deploy/kubernetes/overlays/example
@@ -92,7 +98,10 @@ kubectl apply -k deploy/kubernetes/overlays/example
 Behind that command, in this order (Kubernetes retries until each
 dependency is up):
 
-1. PostgreSQL starts and, on its very first start, creates two databases
+1. cert-manager issues a certificate for every server (PostgreSQL, the S3
+   server, Keycloak, Den), and trust-manager copies the internal certificate
+   authority into each namespace. Pods wait until their certificate exists.
+2. PostgreSQL starts and, on its very first start, creates two databases
    with their own logins: `den` and `keycloak`. Nothing else.
 2. Keycloak starts and imports the `conservices` realm (users, groups and the
    sign-in clients of every module) from `infra/keycloak/realm-conservices.json`.
@@ -105,14 +114,15 @@ dependency is up):
 
 The [quickstart](den-quickstart.md) shows the exact output to expect.
 
-!!! info "Before step 1 in production"
-    A production cluster needs two things the local one does not: a **load
-    balancer** in front of the ingress controller (cloud or on-prem), and a
-    network plugin that **enforces NetworkPolicy**. We recommend Cilium; any
-    enforcing CNI works, but check it with the
-    [enforcement test](../operations/network-policies.md#checking-that-your-cluster-enforces-policies),
-    because some local setups such as Docker Desktop do not enforce
-    policies. See [Production and security](../operations/production.md#the-production-shape).
+!!! info "In production"
+    This page uses the local trial's commands. A production cluster runs
+    the same steps through Argo CD from a Git repository, with a load
+    balancer address for the Gateway, PostgreSQL with failover and a
+    managed S3 service; follow [Deploy with Argo CD](../deploy/index.md).
+    Whatever the cluster, its network plugin must **enforce
+    NetworkPolicy**; check it with the
+    [enforcement test](../operations/network-policies.md#checking-that-your-cluster-enforces-policies).
+    See [Production and security](../operations/production.md#the-production-shape).
 
 ## Step 2: Check that Den is ready
 
@@ -178,7 +188,7 @@ new login `stash` with a random password, and makes sure no other login can
 connect to it. Den shows the connection URL **once**:
 
 ```text
-postgres://stash:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=disable
+postgres://stash:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
 ```
 
 Copy it now. The address in it is PostgreSQL's in-cluster name
@@ -197,7 +207,7 @@ metadata:
   namespace: conservices-stash
 type: Opaque
 stringData:
-  DATABASE_URL: postgres://stash:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=disable
+  DATABASE_URL: postgres://stash:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
   S3_ACCESS_KEY_ID: conservices
   S3_SECRET_ACCESS_KEY: conservicesdev
 ```
@@ -210,13 +220,16 @@ stringData:
 
 Storage: Stash creates its bucket (`stash-data`) itself when it first
 starts, with the storage keys in the same secret. The example overlay uses
-the local MinIO keys; in production give each module its own keys that can
+the local S3 server's keys; in production give each module its own keys that can
 only reach its own bucket. The bucket is already listed in the platform
 overlay's `FILES_S3_BUCKETS`, so it is included in backups.
 
-Follow the remaining preparation in the overlay's header comment (copy the
-certificate files and `stash/infra/access-config.toml` into `local/`, set
-the ingress controller IP), then apply:
+Follow the remaining preparation in the overlay's header comment (copy
+`rootCA.pem` from the platform overlay's `local/` folder and
+`stash/infra/access-config.toml` into the Stash overlay's `local/`). The
+HTTPS certificate is not needed again: Stash's `HTTPRoute` attaches to the
+same Gateway, which already holds the `*.conservices.test` certificate.
+Then apply:
 
 ```sh
 kubectl apply -k deploy/kubernetes/overlays/example-stash
@@ -246,7 +259,7 @@ open <https://stash.conservices.test>.
 2. In Stash (signed in as a Stash admin, for example `admin`): **Settings →
    Den connection**, paste the URL and confirm.
 3. Stash's backend swaps the public address for its `DEN_INTERNAL_URL`
-   (`http://den-backend.conservices-den.svc.cluster.local:8080`), redeems
+   (`https://den-backend.conservices-den.svc.cluster.local:8080`), redeems
    the token and stores the module credential it gets back.
 4. Den's Modules page now shows Stash as **paired**. Within a minute Stash
    shows Den's brand, and Den's portal home lists Stash under **Your

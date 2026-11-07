@@ -69,7 +69,7 @@ the Den connection; `tasks-creator` may create spaces. See the
 
 | Part | Technology | Runs as (Kubernetes) |
 | --- | --- | --- |
-| Backend | Go 1.25, chi, pgx, zerolog | Deployment `tasks-backend`, **one replica** |
+| Backend | Go 1.27, chi, pgx, zerolog | Deployment `tasks-backend`, **one replica** |
 | Migrations | Goose, SQL embedded in the binary | initContainer `migrate` in `tasks-backend` |
 | Frontend | React 19, Rsbuild, TanStack Router and Query, Tailwind | Deployment `tasks-frontend` (nginx) |
 | Database | PostgreSQL 16, database `tasks` | shared server, or your own |
@@ -81,12 +81,13 @@ the Den connection; `tasks-creator` may create spaces. See the
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/tasks-backend:<tag>` | `infra/Dockerfile.backend` | `/server`, port 8080. |
 | `ghcr.io/aglelectronics/tasks-migrate:<tag>` | `infra/Dockerfile.migrate` | `/migrate`, applies database migrations and exits. |
-| `ghcr.io/aglelectronics/tasks-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (port 80 in the image; the Helm chart runs it on 8080). |
+| `ghcr.io/aglelectronics/tasks-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (non-root as UID 101, port 8080). |
 
 All three use the same tag, `MAJOR.MINOR.PATCH-BUILD` (see
 [Versions and upgrades](../../operations/versioning.md)). The web app's
-sign-in address is built into the frontend image; see
-[Configuration](configuration.md#frontend-build-settings).
+sign-in address is not part of the frontend image: the web app reads it
+from `/config.json`; see
+[Web app settings](configuration.md#web-app-settings-configjson).
 
 ## How Tasks fits the platform
 
@@ -102,16 +103,19 @@ comes first: [How the platform starts](../../getting-started/how-the-platform-st
 
 | Posture | Use it for | Guide |
 | --- | --- | --- |
-| **Kubernetes platform** (recommended) | Production, next to Den | [Setup, option 1](setup.md#option-1-kubernetes-platform-recommended) |
+| **Production cluster with Argo CD** (recommended for production) | Production: Den, Keycloak and every module on a cluster managed from Git | [Den and the modules](../../deploy/apps.md) |
+| **Kubernetes platform** | A cluster you run yourself, next to Den; also the local trial cluster | [Setup, option 1](setup.md#option-1-kubernetes-platform-recommended) |
 | **Standalone on Kubernetes** | Only Tasks, your own PostgreSQL, S3 and sign-in | [Setup, option 2](setup.md#option-2-standalone-on-kubernetes) |
 | **Production on Docker** | One server, no Kubernetes | [Setup, option 3](setup.md#option-3-production-on-docker) |
 | **Development on Docker** | Trying it out; never real data | [Setup, option 4](setup.md#option-4-development-on-docker) |
+
+A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only; production installations use the Argo CD path.
 
 The backend always runs **one replica**; [why](setup.md#why-the-backend-runs-one-replica).
 
 ## In this section
 
-- [Setup](setup.md): install Tasks in each of the four ways.
+- [Setup](setup.md): install Tasks in each of the five ways.
 - [Admin guide](admin-guide.md): roles, sharing, statuses, automations,
   trash and the Den connection.
 - [Configuration](configuration.md): every environment variable.

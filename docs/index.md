@@ -61,8 +61,9 @@ Con Services replaces the patchwork with one suite you run yourself:
 4. **APIs, never shared databases.** Modules call each other over HTTP;
    there is no shared PostgreSQL database.
 5. **Secrets live in a secret manager** in every real installation.
-6. **Production grade at scale**: Cilium for network policy, a load
-   balancer in front, managed S3 storage (AWS S3 or Hetzner Object Storage).
+6. **Production grade at scale**: Cilium for network policy and the
+   Gateway in front, managed S3 storage (any S3-compatible service works:
+   AWS S3, Hetzner Object Storage, Cloudflare R2, Backblaze B2, ...).
 7. **Pinned versions**: every image tag is an exact
    `MAJOR.MINOR.PATCH-BUILD`, never `latest`.
 
@@ -89,11 +90,12 @@ charts, the Keycloak sign-in configuration, the development stack, scripts
 and this documentation) live in the
 [con-services](https://github.com/AGlElectronics/con-services) repository.
 
-## Four ways to run it
+## Ways to run it
 
 | You want to… | Path | Start here |
 | --- | --- | --- |
-| Run the **whole suite**, for real or as a local trial | **Full platform on Kubernetes** (recommended) | [How the platform starts](getting-started/how-the-platform-starts.md), then [Run Den on Kubernetes](getting-started/den-quickstart.md) |
+| Run the **whole suite in production** | **Production cluster with Argo CD** (recommended) | [Deploy with Argo CD](deploy/index.md): k3s, Cilium, Longhorn, OpenBao, PostgreSQL with failover, managed S3, highly available |
+| **Try the whole suite** on a local cluster | **Full platform on Kubernetes** | [How the platform starts](getting-started/how-the-platform-starts.md), then [Run Den on Kubernetes](getting-started/den-quickstart.md) |
 | Run **one module** without Den | **Standalone module on Kubernetes** | [Run one module on Kubernetes](getting-started/standalone-kubernetes.md) |
 | Run the suite on **one server without Kubernetes** | **Full stack on Docker** | [Full stack on Docker](operations/docker-production.md) |
 | **Work on the code** | **Docker Compose for development** | [Local development](contributing/local-development.md) |
@@ -114,10 +116,12 @@ and this documentation) live in the
     takes you from an empty computer to a working Den on a local cluster
     that you can sign in to.
 
--   **Planning an installation?**
+-   **Planning a production installation?**
 
-    Read [How the platform starts](getting-started/how-the-platform-starts.md),
-    then [Running on Kubernetes](operations/running.md),
+    Follow [Deploy with Argo CD](deploy/index.md), the tested reference
+    setup. Background: [How the platform starts](getting-started/how-the-platform-starts.md),
+    [High availability](deploy/high-availability.md),
+    [Running on Kubernetes](operations/running.md),
     [Secrets](operations/secrets.md) and
     [Production and security](operations/production.md).
 
@@ -146,8 +150,10 @@ API reference.
 
 Be aware of where things stand:
 
-- **Kustomize manifests** are complete for Den and Stash. Every module
-  except Den also has a Helm chart in `deploy/charts/`. See
+- **Helm charts** exist for Den and every module in `deploy/charts/`; the
+  [GitOps reference repository](https://github.com/AGlElectronics/con-services-gitops)
+  installs them with Argo CD. **Kustomize manifests** are complete for Den
+  and Stash. See
   [`deploy/kubernetes/modules/README.md`](https://github.com/AGlElectronics/con-services/blob/main/deploy/kubernetes/modules/README.md).
 - **Some bring-up steps are manual today**, such as pairing a module with
   Den. [How the platform starts](getting-started/how-the-platform-starts.md)

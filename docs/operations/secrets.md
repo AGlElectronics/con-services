@@ -73,6 +73,22 @@ gives you:
 - access rules per application and per namespace;
 - rotation without editing manifests.
 
+### Which secret manager to use
+
+- **Self-hosted cluster (your own servers or VMs): OpenBao.** OpenBao is the
+  open-source, Linux Foundation fork of HashiCorp Vault; it runs inside the
+  cluster, and the commands and ESO configuration on this page work with it
+  unchanged (`bao` instead of `vault`). The
+  [GitOps reference deployment](../deploy/index.md) installs it with three
+  replicas and connects ESO through a ClusterSecretStore named `openbao`.
+  Setup, unsealing, rotation and backups:
+  [Secrets with OpenBao](../deploy/secrets-openbao.md).
+- **Managed cluster in a cloud: that cloud's secret manager** (AWS Secrets
+  Manager, Azure Key Vault, Google Secret Manager), which needs no
+  unsealing or backups from you. See [Other providers](#other-providers).
+- **An existing Vault or OpenBao** in your organisation: use it, with a
+  SecretStore per namespace as below.
+
 ## Inventory
 
 **Platform** (manifests in `deploy/kubernetes/base/`):
@@ -81,7 +97,7 @@ gives you:
 | --- | --- | --- | --- | --- |
 | `POSTGRES_PASSWORD` | `postgres-secrets` | `conservices-data` | PostgreSQL | Superuser. Also inside `PG_ADMIN_URL`. In-cluster PostgreSQL only. |
 | `DEN_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD` | `postgres-secrets` | `conservices-data` | PostgreSQL first start | Create the `den` and `keycloak` logins. Only read when the volume is first initialised. |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | `minio-secrets` | `conservices-data` | MinIO | In-cluster MinIO only (dev). |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `s3-secrets` | `conservices-data` | S3 server `s3` (SeaweedFS) | Admin key of the in-cluster trial S3 server only (dev); it must equal the `S3_*`, `BACKUP_S3_*` and `FILES_S3_*` keys the backends and the operator use. Rotate: change it in your secret manager and in those module secrets, then `kubectl rollout restart -n conservices-data deployment/s3` and restart the backends. The `production-external-secrets` example reads it from the Vault path `conservices/data/s3`. Replaces `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` in `minio-secrets`. |
 | `KC_DB_PASSWORD` | `keycloak-secrets` | `conservices-identity` | Keycloak | = `KEYCLOAK_DB_PASSWORD`. |
 | `KC_BOOTSTRAP_ADMIN_USERNAME`, `KC_BOOTSTRAP_ADMIN_PASSWORD` | `keycloak-secrets` | `conservices-identity` | Keycloak | Temporary admin of the master realm, used on first start. Replace it with a real admin account, then remove it. |
 | `DATABASE_URL` | `den-secrets` | `conservices-den` | Den backend and migrate | Contains Den's database password. |
@@ -93,13 +109,50 @@ gives you:
 | `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY` | `den-operator-secrets` | `conservices-den` | Den operator | Read access to every module bucket in `FILES_S3_BUCKETS`. |
 | age **secret** key | none | **offline** | people restoring a backup | Never in the cluster. The cluster only has the public key (`BACKUP_AGE_RECIPIENTS`, not secret). See [The encryption key](databases-and-backups.md#the-encryption-key). |
 | TLS private key | `conservices-tls` | each namespace with an Ingress | ingress controller | Normally managed by cert-manager. |
+| Internal CA private key (`tls.key`) | `conservices-internal-ca` | `cert-manager` | cert-manager (`ClusterIssuer/conservices-internal-ca`) | Signs every internal certificate. Created by cert-manager inside the cluster, never in your secret manager. Back it up with the cluster; rotate only if leaked, as in [Rotating the internal CA](internal-tls.md#rotating-the-internal-ca). |
+| Service TLS keys (`tls.key`, `tls.crt`, `ca.crt`) | `postgres-tls`, `s3-tls`, `keycloak-tls`, `den-backend-tls`, `den-operator-tls`, `den-frontend-tls`, `<module>-backend-tls`, `<module>-frontend-tls` | the service's namespace | that service | Created and renewed by cert-manager every 60 days. Rotate now by deleting the Secret; cert-manager issues a new key in seconds. See [Internal TLS](internal-tls.md#renewal). |
+| `api-token` | `cloudflare-api-token` (from OpenBao `kv/infra/cloudflare` through the `ExternalSecret` of the same name) | `cert-manager` | cert-manager (Let's Encrypt DNS-01) | GitOps reference only. A Cloudflare API token limited to **Zone: DNS: Edit** and **Zone: Zone: Read** on one zone. Rotate by creating a new token in Cloudflare, `bao kv patch`, then revoking the old one. See [DNS and certificates](../deploy/dns-and-certificates.md). |
+| OpenBao unseal keys (5, any 3 unseal) and root token | none | **offline** | OpenBao operators | GitOps reference only. Never in the cluster or in Git. Losing 3 keys loses every secret in OpenBao. Revoke the root token after setup; replace keys with `bao operator rekey`. See [Secrets with OpenBao](../deploy/secrets-openbao.md#4-put-the-init-file-away-and-revoke-the-root-token). |
+| OpenBao TLS key (`tls.key`, `tls.crt`, `ca.crt`) | `openbao-tls` | `openbao` | OpenBao | GitOps reference only. Issued by the internal CA, renewed by cert-manager; OpenBao reloads it on `SIGHUP` ([how](../deploy/secrets-openbao.md#openbaos-own-certificate-and-keys)). |
+| `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (from OpenBao `kv/infra/github-arc` through the `ExternalSecret` of the same name) | `arc-runners` | Actions Runner Controller (self-hosted CI runners) | Optional; only with [self-hosted runners](../deploy/self-hosted-runners.md). The GitHub App can register runners for the organisation, nothing else. Written by `bootstrap/scripts/openbao-seed.sh` in con-services-gitops. |
+
+**GitOps reference: OpenBao paths of the platform.** In
+[con-services-gitops](../deploy/index.md) every secret below is read from
+OpenBao (KV v2 mounted at `kv`) by External Secrets.
+`bootstrap/scripts/openbao-seed.sh` generates the random ones and asks for
+the provider credentials, only for the modules and options enabled in
+`cluster.yaml`; it never prints a value and keeps existing entries.
+`--rotate` replaces only the entries marked *rotatable*.
+
+| OpenBao path | Keys | Becomes (Secret, namespace) | Used by | Source, rotation |
+| --- | --- | --- | --- | --- |
+| `kv/conservices/postgres/superuser` | `username` (`postgres`), `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` | CloudNativePG, Den operator | generated; rotatable (CNPG applies the new password) |
+| `kv/conservices/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); `DATABASE_URL` of the application; `keycloak-db` | CloudNativePG, each application | generated; rotatable, then restart the application |
+| `kv/conservices/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | Barman Cloud plugin (WAL archive, base backups) | your S3 provider; rotate there, then `bao kv put` |
+| `kv/conservices/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
+| `kv/conservices/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, backup bucket only |
+| `kv/conservices/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, read-only on the module buckets |
+| `kv/conservices/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
+| `kv/conservices/service-tokens/<module>` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
+| `kv/conservices/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
+| `kv/conservices/keycloak/bootstrap-admin` | `username` (`temp-admin`), `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
+| `kv/conservices/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR, Learn | Keycloak, Den, HR, Learn | generated; to rotate, regenerate in Keycloak, then `bao kv patch` |
+| `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; asked for by the seed script |
+| `kv/infra/ghcr` | `username`, `token` | `ghcr-pull` (`kubernetes.io/dockerconfigjson`) in every application namespace | image pulls | optional, only with `images.pullSecret.enabled: true` (private images); GitHub personal access token with **only `read:packages`**; see [Private images](../deploy/apps.md#private-images-the-ghcr-pull-secret) |
+| `kv/infra/cloudflare` | `api-token` | `cloudflare-api-token` (`cert-manager`) | cert-manager (Let's Encrypt DNS-01) | optional, only with `acme.dns01.provider: cloudflare`; see [DNS and certificates](../deploy/dns-and-certificates.md) |
+| `kv/infra/github-arc` | `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (`arc-runners`) | Actions Runner Controller | optional, only with `arc.enabled: true`; see [Self-hosted runners](../deploy/self-hosted-runners.md) |
+
+The age **public** key for Den's backups (`BACKUP_AGE_RECIPIENTS`) is not
+secret and lives in `cluster.yaml` (`den.backupAgeRecipients`).
 
 **S3 keys in production** come from your managed object storage, AWS S3
 (IAM user or role with a per-bucket policy) or Hetzner Object Storage
 (S3 credentials per project), which are the recommended choices; see
 [Production](production.md#object-storage-use-managed-s3). Create one key
-set per bucket so a leaked module key exposes only that module's files. The
-`MINIO_ROOT_*` login exists only for the in-cluster trial MinIO.
+set per bucket so a leaked module key exposes only that module's files, and
+keep the backup keys separate from the application keys
+([Buckets and keys](../deploy/data.md#buckets-and-keys)). The
+`s3-secrets` key exists only for the in-cluster trial S3 server.
 
 **Keycloak client secrets** are stored in Keycloak's database, and the test
 realm file `infra/keycloak/realm-conservices.json` contains **public dev
@@ -134,10 +187,46 @@ Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
 
+### OpenBao paths of the GitOps reference
+
+In the [GitOps reference deployment](../deploy/index.md) every secret above
+comes from one OpenBao entry (KV version 2, mounted at `kv/`), read by
+External Secrets through the ClusterSecretStore `openbao`. Several
+Kubernetes Secrets read the same entry, so the two sides of a shared value
+can never disagree. `bootstrap/scripts/openbao-seed.sh` generates the random
+values (32 bytes, hex) and asks for the ones that come from a provider,
+only for what `cluster.yaml` enables; it never prints a value and keeps
+existing entries.
+
+| OpenBao path | Keys | Kubernetes Secrets (namespace) | Source | Rotate |
+| --- | --- | --- | --- | --- |
+| `kv/conservices/postgres/superuser` | `username`, `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` (`conservices-den`) | generated | `openbao-seed.sh --rotate` (rotates every rotatable entry at once); CloudNativePG changes the password, restart `den-operator` |
+| `kv/conservices/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); the `DATABASE_URL` of the module; `keycloak-db` (`conservices-identity`) | generated | `--rotate`; then restart the module |
+| `kv/conservices/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | `--rotate`; restart both Den deployments |
+| `kv/conservices/service-tokens/learn`, `.../wiki`, `.../tasks` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | `--rotate`; restart HR and the module |
+| `kv/conservices/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
+| `kv/conservices/keycloak/bootstrap-admin` | `username`, `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
+| `kv/conservices/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (first realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR and Learn | generated | regenerate in the Keycloak admin console, then `bao kv patch kv/conservices/keycloak/clients <client>=-` and restart the module |
+| `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` (first realm import only) | your mail provider | at the provider, then in Keycloak: **Realm settings → Email** |
+| `kv/conservices/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |
+| `kv/conservices/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | S3 provider, **read-only** on all module buckets | as above |
+| `kv/conservices/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | S3 provider, own key for the Den backup bucket | as above |
+| `kv/conservices/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | S3 provider, own key for the PostgreSQL backup bucket | as above; CloudNativePG picks up the new key by itself |
+| `kv/infra/ghcr` (only with `images.pullSecret.enabled`) | `username`, `token` | `ghcr-pull` (type `kubernetes.io/dockerconfigjson`) in every Den and module namespace | a GitHub classic token with **only `read:packages`** | new token, `bao kv patch kv/infra/ghcr token=-`, revoke the old one ([Private images](../deploy/apps.md#private-images-the-ghcr-pull-secret)) |
+| `kv/infra/cloudflare` (only with `acme.dns01.provider: cloudflare`) | `api-token` | `cloudflare-api-token` (`cert-manager`) | a Cloudflare API token limited to one zone | new token in Cloudflare, `bao kv patch kv/infra/cloudflare api-token=-`, revoke the old one |
+| `kv/infra/github-arc` (only with `arc.enabled`) | `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (`arc-runners`) | the GitHub App of the runners | [Rotate the GitHub App key](../deploy/self-hosted-runners.md#rotate-the-github-app-key) |
+
+External Secrets refreshes every Secret hourly. To apply a rotated value
+at once, run
+`kubectl annotate externalsecret -n <namespace> <name> force-sync=$(date +%s) --overwrite`,
+then restart the workload (environment variables are read at start).
+
 !!! note "Not a secret: Rally's `PUBLIC_API_BUILTIN_KEY`"
-    This key is compiled into the public event submission site
-    (`VITE_PUBLIC_SCHEDULE_KEY`), so every visitor can see it. Treat it as an
-    identifier for rate limiting and revocation, not as a secret.
+    The public event submission site hands this key to every visitor (it is
+    `publicScheduleKey` in the site's `/config.json`; the Helm chart copies
+    it there). Treat it as an identifier for rate limiting and revocation,
+    not as a secret. The same goes for everything else in a web app's
+    `/config.json`: the file is public, so never put a secret in it.
 
 ## How the manifests are organised
 
@@ -174,6 +263,11 @@ ordinary Kubernetes Secrets, which the pods use unchanged.
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
       KEYCLOAK_CLIENT_SECRET=change-me OPERATOR_TOKEN=change-me
     ```
+
+    The [GitOps reference deployment](../deploy/secrets-openbao.md) mounts
+    KV version 2 at `kv/`, not `secret/`, and keeps the platform entries
+    under `kv/conservices/...` (for example `kv/conservices/postgres/superuser`).
+    Use `path: kv` in the store there.
 
 3. Give each namespace its own read-only access. In Vault, a policy and a
    Kubernetes-auth role per namespace:
@@ -402,7 +496,13 @@ for rotation and auditing.
   ([details](network-policies.md#service-accounts-and-kubernetes-api-access)).
 - **One store per namespace.** Use namespaced `SecretStore`s, not one
   cluster-wide store, so a module namespace can never read the operator's
-  superuser login.
+  superuser login. The GitOps reference deployment uses one
+  ClusterSecretStore `openbao` for simplicity, which any namespace can use
+  for any entry under `kv/`. There, limit who may create `ExternalSecret`
+  objects with RBAC, and restrict the store to the namespaces that need it
+  with its `spec.conditions` (`namespaceSelector` or `namespaces`), or
+  switch to per-namespace stores as described above
+  ([trade-off](../deploy/secrets-openbao.md#how-it-is-set-up)).
 - **Keep secrets out of logs and tickets.** Den shows a module's database
   password and pairing tokens exactly once; copy them straight into the
   secret manager.
@@ -491,6 +591,7 @@ On PowerShell, replace `$(date +%s)` with
 | `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
 | Backup age key | Add the new public key to `BACKUP_AGE_RECIPIENTS` and restart the operator. Only new backups use it; **keep the old secret key** as long as backups made with it are kept. | None. |
 | Keycloak bootstrap admin | Create a permanent admin in the master realm, then remove the bootstrap one and its secret. | None. |
+| GitHub App key for the CI runners (`kv/infra/github-arc`) | GitHub → organisation **Settings → Developer settings → GitHub Apps → the app → Generate a private key**; write it with `bao kv patch kv/infra/github-arc github_app_private_key=@<new key>.pem`; ESO refreshes `arc-github-app` within an hour (or `kubectl annotate externalsecret -n arc-runners arc-github-app force-sync=$(date +%s) --overwrite`); restart the listener (`kubectl delete pod -n arc-systems -l app.kubernetes.io/component=runner-scale-set-listener`); then delete the old key on GitHub. See [Self-hosted runners](../deploy/self-hosted-runners.md#rotate-the-github-app-key). | Queued jobs wait until the listener is back (seconds). |
 
 ## Troubleshooting
 

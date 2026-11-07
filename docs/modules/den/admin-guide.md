@@ -105,7 +105,7 @@ If you ticked **Create a database for it**, Den shows a yellow box with the
 new database's connection URL, **once**:
 
 ```text
-postgres://hr:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=disable
+postgres://hr:3f9c…e1@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
 ```
 
 The host in it is the operator's `MODULE_DB_HOST` (on Kubernetes, the

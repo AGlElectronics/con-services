@@ -85,16 +85,19 @@ flowchart LR
 
 | Posture | When | Guide |
 | --- | --- | --- |
-| **Full platform on Kubernetes** (recommended) | Production, next to Den and the other modules. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
+| **Production cluster with Argo CD** (recommended for production) | Production: Den, Keycloak and every module on a cluster managed from Git. | [Den and the modules](../../deploy/apps.md) |
+| Full platform on Kubernetes | A cluster you run yourself, next to Den and the other modules; also the local trial cluster. | [Setup: platform](setup.md#recommended-install-into-the-platform) |
 | Standalone on Kubernetes | You only want inventory, with your own database, storage and sign-in. | [Setup: standalone](setup.md#standalone-on-kubernetes) |
 | Production with Docker | A single server without Kubernetes. | [Setup: Docker](setup.md#production-with-docker) |
 | Development with Docker | Trying Stash or working on its code. Not for production. | [Setup: development](setup.md#development-with-docker) |
+
+A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstart.md)) is for trials only; production installations use the Argo CD path.
 
 ## How Stash is built
 
 | Part | Technology | Runs as |
 | --- | --- | --- |
-| Backend | Go 1.25, chi, pgx, sqlc, Goose migrations embedded in the binary | Deployment `stash-backend` (`/server`, port 8080) |
+| Backend | Go 1.27, chi, pgx, sqlc, Goose migrations embedded in the binary | Deployment `stash-backend` (`/server`, port 8080) |
 | Frontend | React 19, Rsbuild, TanStack Router and Query, Tailwind, PWA | Deployment `stash-frontend` (nginx) |
 | Database | PostgreSQL 16 | shared server, database `stash` |
 | File storage | S3-compatible bucket (item photos, Lost & Found photos, attachments) | shared server, bucket `stash-data` |
@@ -107,19 +110,19 @@ run exactly one backend replica.
 | Image | Built from | Contains |
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/stash-backend:<tag>` | `infra/Dockerfile.backend` | The API server `/server`, listening on 8080. |
-| `ghcr.io/aglelectronics/stash-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (port 80 in the image; the Kubernetes manifests mount a config that listens on 8080). |
+| `ghcr.io/aglelectronics/stash-frontend:<tag>` | `infra/Dockerfile.frontend` | The web app served by nginx (non-root as UID 101, port 8080; the Kubernetes manifests mount their own config). |
 
 Tags have the form `MAJOR.MINOR.PATCH-BUILD`, for example `1.0.0-1`; see
 [Versions and upgrades](../../operations/versioning.md).
 
-!!! note "The web app's sign-in settings are built in"
-    `VITE_AUTH_MODE`, `VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` are
-    read when the frontend image is **built**. For your own domain, build
-    the image with your values; see [Configuration](configuration.md#frontend-build-settings).
+!!! note "The web app's sign-in settings are not part of the image"
+    The published `stash-frontend` image names no domain: the web app loads
+    its sign-in settings from `/config.json` when it starts. See
+    [Web app settings](configuration.md#web-app-settings-configjson).
 
 ## In this section
 
-- [Setup](setup.md): install Stash in each of the four postures.
+- [Setup](setup.md): install Stash in each of the five postures.
 - [Admin guide](admin-guide.md): roles, settings, Den connection, everyday admin tasks.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.

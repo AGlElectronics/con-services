@@ -21,7 +21,7 @@ this page only repeats what is specific to Tasks.
 | Where you call from | Base URL |
 | --- | --- |
 | A browser or script outside the cluster | `https://tasks.example.org` (the web app's nginx forwards `/api/` to the backend) |
-| Another pod inside the cluster | `http://tasks-backend.conservices-tasks.svc.cluster.local:8080` |
+| Another pod inside the cluster | `https://tasks-backend.conservices-tasks.svc.cluster.local:8080` |
 
 All examples below use these shell variables:
 
@@ -869,7 +869,7 @@ calls only keep the space name in sync and answer `200`; lists, statuses
 and extra grants stay in the department's hands. Safe to repeat.
 
 ```sh
-curl -s -X POST http://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments \
+curl -s --cacert /etc/conservices-internal-ca/ca.crt -X POST https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments \
   -H "Authorization: Bearer change-me" -H "Content-Type: application/json" \
   -d '{"id":"7a0c1e2f-3b4d-4c5e-8f6a-7b8c9d0e1f2a","slug":"front-of-house","name":"Front of House","group":"dept-front-of-house"}'
 ```

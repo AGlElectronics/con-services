@@ -154,12 +154,27 @@ nav:
           - Admin guide: modules/tasks/admin-guide.md
           - Configuration: modules/tasks/configuration.md
           - API reference: modules/tasks/api.md
+  - Deploy with Argo CD:
+      - deploy/index.md
+      - Prerequisites: deploy/prerequisites.md
+      - Kubernetes distributions: deploy/distributions.md
+      - Argo CD and cluster.yaml: deploy/argocd.md
+      - DNS and certificates: deploy/dns-and-certificates.md
+      - Secrets with OpenBao: deploy/secrets-openbao.md
+      - Data (PostgreSQL, S3): deploy/data.md
+      - Identity (Keycloak): deploy/identity.md
+      - Den and the modules: deploy/apps.md
+      - Sizing and resources: deploy/sizing.md
+      - High availability: deploy/high-availability.md
+      - "Example: a k3s cluster": deploy/cluster.md
+      - Self-hosted CI runners: deploy/self-hosted-runners.md
   - Operations:
       - operations/index.md
       - Running on Kubernetes: operations/running.md
       - Installing modules with Helm: operations/helm.md
       - Versions and upgrades: operations/versioning.md
       - Network policies and isolation: operations/network-policies.md
+      - Internal TLS: operations/internal-tls.md
       - Secrets: operations/secrets.md
       - Databases, backups and restore: operations/databases-and-backups.md
       - Disaster recovery: operations/disaster-recovery.md
@@ -171,3 +186,4 @@ nav:
       - Documentation standards: contributing/documentation-standards.md
       - Local development with Docker Compose: contributing/local-development.md
       - Changelogs: contributing/changelog.md
+      - CI and releases: contributing/ci.md

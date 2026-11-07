@@ -20,11 +20,15 @@ Even on its own, a module depends on three services. You provide them:
 | Needs | Example | Notes |
 | --- | --- | --- |
 | A **PostgreSQL** database and login for the module alone | A managed PostgreSQL 16 database, or a [CloudNativePG](https://cloudnative-pg.io) cluster | Without Den, nobody creates it for you: create the database and a login that owns it. |
-| An **S3-compatible bucket** and keys for it | AWS S3 or Hetzner Object Storage | Stash creates its bucket on first start if the keys allow it. |
+| An **S3-compatible bucket** and keys for it | A managed S3 service: any S3-compatible one works, for example AWS S3, Hetzner Object Storage, Cloudflare R2 or Backblaze B2 | Stash creates its bucket on first start if the keys allow it. Do not run object storage inside the cluster for real data. |
 | An **OpenID Connect** sign-in server | Keycloak, or your existing identity provider | A public client for the module's web app (Stash: `stash-spa`) with your module address as redirect URI, and groups matching the module's access config. |
 
-You also need an ingress controller and a TLS certificate for the module's
-address, as for any web app on Kubernetes.
+You also need a way in for browsers: a **Gateway** (Gateway API) with a TLS
+certificate for the module's address. We use Cilium's Gateway API; the
+chart attaches an `HTTPRoute` to the Gateway you name. If your cluster only
+has an ingress controller (for example Traefik), the chart can render a
+plain `Ingress` instead; see
+[Installing modules with Helm](../operations/helm.md#exposing-the-web-app-gateway-api).
 
 !!! warning "Backups are your job"
     Den's operator backs up the whole suite. **A standalone module is not
@@ -77,9 +81,10 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
 
 === "Helm chart"
 
-    The chart in `deploy/charts/stash` (a first version, `0.1.0`) never
+    The chart in `deploy/charts/stash` (a first version, `0.2.0`) never
     creates Secrets or the namespace; it uses what you made in steps 1–3.
-    Write your settings into a values file:
+    Write your settings into a values file (`route.parentRefs` names your
+    Gateway and its HTTPS listener):
 
     ```yaml
     # my-stash.yaml
@@ -94,19 +99,25 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
       S3_BUCKET: example-stash
       S3_REGION: fsn1
       DEN_INTERNAL_URL: ""          # no Den
-    ingress:
+    route:
       host: stash.example.org
-      tlsSecretName: stash-tls
+      parentRefs:
+        - { name: public, namespace: conservices-gateway, sectionName: https }
     networkPolicy:
       den:  { enabled: false }      # no Den
-      data: { enabled: false }      # no in-cluster PostgreSQL/MinIO
+      data: { enabled: false }      # no in-cluster PostgreSQL/S3
+      oidc: { inCluster: false }    # identity provider outside the cluster
       allowFromNamespaces: []
       extraEgress:
         - to: [{ ipBlock: { cidr: 10.20.0.0/24 } }]   # your database subnet
           ports: [{ protocol: TCP, port: 5432 }]
-        - to: [{ ipBlock: { cidr: 0.0.0.0/0 } }]      # managed S3 over HTTPS
+        - to: [{ ipBlock: { cidr: 0.0.0.0/0 } }]      # managed S3 and the identity provider over HTTPS
           ports: [{ protocol: TCP, port: 443 }]
     ```
+
+    The chart also renders a `CiliumNetworkPolicy` that lets Cilium's
+    Gateway reach the web app. On another network plugin set
+    `networkPolicy.gateway.cilium: false`.
 
     ```sh
     helm install stash deploy/charts/stash -n conservices-stash -f my-stash.yaml
@@ -116,21 +127,46 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
 
     Make an overlay on top of `deploy/kubernetes/modules/stash`, like
     `deploy/kubernetes/overlays/example-stash`, and change the `stash-config`
-    values with `behavior: merge` (same keys as in the Helm example). Remove
-    the `stash-backend` egress rules to `conservices-den` and
-    `conservices-data` and add rules for your database and S3 instead (see
+    values with `behavior: merge` (same keys as in the Helm example), and
+    patch the `HTTPRoute` `stash` with your host name. Remove the
+    `stash-backend` egress rules to `conservices-den`, `conservices-data`
+    and `conservices-identity` and add rules for your database, S3 and
+    identity provider instead (see
     [Network policies](../operations/network-policies.md#external-services)).
 
     ```sh
     kubectl apply -k deploy/kubernetes/overlays/my-stash
     ```
 
-!!! note "The web app's sign-in address is built into the image"
-    Like Den's, Stash's frontend image reads `VITE_OIDC_AUTHORITY` and
-    `VITE_OIDC_CLIENT_ID` at **build** time. The published image is built
-    for the example installation (`https://auth.conservices.test`). For your
-    own identity provider, build `stash-frontend` with your values and point
-    the image at your registry.
+!!! note "The web app's sign-in address comes from `/config.json`"
+    The published `stash-frontend` image names no domain. Its sign-in
+    address and client id come from the ConfigMap `stash-frontend-config`
+    (file `deploy/kubernetes/modules/stash/frontend-config.json`), which
+    nginx serves as `/config.json`. For your own identity provider, replace
+    it in your overlay:
+
+    ```yaml
+    configMapGenerator:
+      - name: stash-frontend-config
+        namespace: conservices-stash
+        behavior: replace
+        files:
+          - config.json=stash-frontend-config.json
+    ```
+
+    with `stash-frontend-config.json` next to the overlay's
+    `kustomization.yaml`:
+
+    ```json
+    {
+      "authMode": "oidc",
+      "oidcAuthority": "https://auth.example.org/realms/conservices",
+      "oidcClientId": "stash-spa"
+    }
+    ```
+
+    The keys are listed under
+    [Web app settings](../modules/stash/configuration.md#web-app-settings-configjson).
 
 ## Step 5: Check that it runs
 
@@ -153,7 +189,7 @@ of the groups from the access config.
 
 When you later deploy the platform ([How the platform starts](how-the-platform-starts.md)):
 
-1. Set `DEN_INTERNAL_URL=http://den-backend.conservices-den.svc.cluster.local:8080`
+1. Set `DEN_INTERNAL_URL=https://den-backend.conservices-den.svc.cluster.local:8080`
    and turn the Den network policy rules back on.
 2. In Den, add the module with **New module** (without *Create a database*,
    because the database already exists).
@@ -203,9 +239,9 @@ kubectl logs -n conservices-stash deploy/stash-backend --tail 30
   provider and set `S3_BUCKET` to its name.
 
 **The web app redirects to `auth.conservices.test`**
-: You are using the published frontend image, built for the example
-  installation. Build `stash-frontend` with your own `VITE_OIDC_AUTHORITY`
-  (see the note in step 4).
+: The ConfigMap `stash-frontend-config` still holds the example address.
+  Replace it in your overlay (see the note in step 4) and check with
+  `curl -s https://stash.example.org/config.json`.
 
 **Signed in, but no access**
 : Your account is not in a group named in the access config. Check the
