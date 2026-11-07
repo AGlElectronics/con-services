@@ -1,0 +1,12 @@
+# Weekly updates of the actions used by this repository's workflows,
+# including the shared module pipeline (module-ci.yml). Actions are pinned to
+# commit SHAs; Dependabot updates the SHA and the version comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,187 @@
+# Validates this repository's deployment files and docs on every change:
+# Helm charts, Kustomize trees, Trivy misconfiguration scan, the docs site
+# and the workflow files themselves.
+# Docs: https://aglelectronics.github.io/con-services/contributing/ci/
+name: Deploy validate
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  KUBERNETES_VERSION: "1.33.0"
+  KUBECONFORM_VERSION: v0.8.0
+  HELM_VERSION: v4.0.0
+  TRIVY_VERSION: v0.76.2
+  ACTIONLINT_VERSION: 1.7.12
+  # Placeholder tag for charts that require one (hr, rally); never pulled.
+  CI_IMAGE_TAG: 1.0.0-1
+
+jobs:
+  manifests:
+    name: Helm and Kustomize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}"
+          curl -fsSLO --retry 3 "$base/kubeconform-linux-amd64.tar.gz"
+          curl -fsSLO --retry 3 "$base/CHECKSUMS"
+          grep ' kubeconform-linux-amd64.tar.gz$' CHECKSUMS | sha256sum -c -
+          tar -xzf kubeconform-linux-amd64.tar.gz kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Helm lint and template
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rendered"
+          mkdir -p "$out"
+          for chart in deploy/charts/*/; do
+            name="$(basename "$chart")"
+            args=()
+            case "$name" in
+              hr|rally)
+                args=(--set "image.backend.tag=$CI_IMAGE_TAG" --set "image.frontend.tag=$CI_IMAGE_TAG" --set "image.migrate.tag=$CI_IMAGE_TAG")
+                ;;
+            esac
+            echo "::group::$name"
+            helm lint --strict "$chart" "${args[@]}"
+            helm template "$name" "$chart" "${args[@]}" > "$out/helm-$name.yaml"
+            if [ "$name" = "rally" ]; then
+              helm template "$name" "$chart" "${args[@]}" --set submit.enabled=true \
+                --set submit.image.repository=ghcr.io/aglelectronics/rally-submit \
+                --set "submit.image.tag=$CI_IMAGE_TAG" > "$out/helm-$name-submit.yaml"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Kustomize build
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rendered"
+          for dir in deploy/kubernetes/base deploy/kubernetes/modules/*/ deploy/kubernetes/overlays/*/; do
+            dir="${dir%/}"
+            # Example overlays read gitignored local/ files (certificates,
+            # copies of infra/); empty stand-ins are enough to render.
+            grep -oE 'local/[A-Za-z0-9._/-]+' "$dir/kustomization.yaml" | sort -u | while read -r f; do
+              mkdir -p "$(dirname "$dir/$f")"
+              [ -e "$dir/$f" ] || echo "ci-stub" > "$dir/$f"
+            done
+            echo "kubectl kustomize $dir"
+            kubectl kustomize "$dir" > "$out/kustomize-$(echo "${dir#deploy/kubernetes/}" | tr '/' '-').yaml"
+          done
+
+      - name: Validate rendered manifests (kubeconform)
+        run: |
+          kubeconform -strict -summary -output text \
+            -kubernetes-version "$KUBERNETES_VERSION" \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            "$RUNNER_TEMP/rendered"
+
+  trivy-config:
+    name: Trivy (deploy misconfiguration)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Use .trivyignore.yaml if present
+        run: |
+          if [ -f .trivyignore.yaml ]; then echo "TRIVY_IGNOREFILE=.trivyignore.yaml" >> "$GITHUB_ENV"; fi
+
+      - name: Scan (SARIF for code scanning)
+        id: sarif
+        run: trivy config --quiet --format sarif --output "$RUNNER_TEMP/trivy-deploy.sarif" deploy/
+
+      - name: Upload SARIF
+        if: always() && steps.sarif.outcome == 'success'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/trivy-deploy.sarif
+          category: trivy-deploy
+
+      - name: Gate on HIGH and CRITICAL findings
+        run: trivy config --quiet --severity HIGH,CRITICAL --exit-code 1 deploy/
+
+  docs:
+    name: Docs (mkdocs --strict)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - run: pip install -r docs/requirements.txt
+      - run: mkdocs build --strict
+
+  actionlint:
+    name: Workflow lint (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: actionlint (with shellcheck)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          file="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO --retry 3 "$base/$file"
+          curl -fsSLO --retry 3 "$base/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          grep " $file\$" "actionlint_${ACTIONLINT_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$file" actionlint
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/actionlint" -color

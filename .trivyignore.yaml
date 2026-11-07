@@ -1,0 +1,36 @@
+# Accepted Trivy findings for this repository (used by deploy-validate.yml).
+# Every entry needs a reason and an expiry date; see docs/contributing/ci.md
+# "When Trivy fails".
+misconfigurations:
+  # kube-vip announces the API server address on the node's network: it needs
+  # host networking, NET_ADMIN/NET_RAW and runs as a static pod.
+  - id: KSV-0009
+    paths: ["k3s/kube-vip.yaml"]
+    statement: kube-vip needs host networking to announce the virtual IP
+    expired_at: 2027-11-01
+  - id: KSV-0056
+    paths: ["k3s/kube-vip.yaml"]
+    statement: kube-vip manages the virtual IP on the node's network
+    expired_at: 2027-11-01
+  - id: KSV-0119
+    paths: ["k3s/kube-vip.yaml"]
+    statement: kube-vip sends ARP announcements, which need NET_RAW
+    expired_at: 2027-11-01
+  - id: KSV-0014
+    paths: ["k3s/kube-vip.yaml"]
+    statement: upstream kube-vip static pod manifest
+    expired_at: 2027-11-01
+  - id: KSV-0118
+    paths: ["k3s/kube-vip.yaml"]
+    statement: upstream kube-vip static pod manifest
+    expired_at: 2027-11-01
+  # Strategic-merge patches: Trivy scans the fragment alone, without the
+  # security context the base Deployment already sets.
+  - id: KSV-0014
+    paths: ["kubernetes/overlays/*/*-local.yaml"]
+    statement: patch fragment; the base Deployment sets readOnlyRootFilesystem
+    expired_at: 2027-11-01
+  - id: KSV-0118
+    paths: ["kubernetes/overlays/*/*-local.yaml"]
+    statement: patch fragment; the base Deployment sets the security context
+    expired_at: 2027-11-01

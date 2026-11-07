@@ -1,0 +1,798 @@
+# Reusable CI and release pipeline for every Con Services module.
+#
+# Each module repository calls this workflow from its own
+# .github/workflows/ci.yml, pinned to a tag of this repository (ci-v1, ...).
+# Docs: https://aglelectronics.github.io/con-services/contributing/ci/
+#
+# Without `push`, it runs the checks (Go, frontend, Trivy, image policy).
+# With `push`, it then publishes the images to GHCR with the tag
+# MAJOR.MINOR.PATCH-BUILD, signs them with cosign (keyless) and attaches a
+# CycloneDX SBOM attestation. Existing tags are never overwritten.
+#
+# The defaults fit the self-hosted runners (Actions Runner Controller) from
+# con-services-gitops: runner pods with a rootless BuildKit sidecar on
+# 127.0.0.1:1234 and a PostgreSQL sidecar on 127.0.0.1:5432, no Docker daemon.
+# For GitHub-hosted runners pass: runner: ubuntu-24.04, buildkit-endpoint: "",
+# test-database-mode: service.
+name: Module CI
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: Image name prefix, for example "den" or "rally" (images are <registry>/<namespace>/<module>-<image>).
+        type: string
+        required: true
+      images:
+        description: >-
+          JSON array of images. Fields: name (required), dockerfile (required,
+          relative to the repository root), context (default "."),
+          build-args (array of "KEY=value"; "{version}" is replaced by the image
+          tag), shell-less (bool, default false: fail if a shell is present),
+          allow-root (bool, default false: allow an image whose User is root).
+        type: string
+        required: true
+      runner:
+        description: Runner label for every job (the ARC scale set name, or a GitHub-hosted label such as ubuntu-24.04).
+        type: string
+        default: arc-conservices
+      arm64:
+        description: Also publish linux/arm64, built with QEMU emulation on the same runner. Default publishes linux/amd64 only.
+        type: boolean
+        default: false
+      push:
+        description: Publish, sign and attest the images. Needs a vX.Y.Z tag or the version input.
+        type: boolean
+        default: false
+      version:
+        description: Rebuild an already tagged version (X.Y.Z, tag vX.Y.Z must exist). Empty uses the pushed tag.
+        type: string
+        default: ""
+      go-dir:
+        description: Folder with go.mod. Empty skips the Go job.
+        type: string
+        default: backend
+      frontend-dir:
+        description: Folder with package.json. Empty skips the frontend job.
+        type: string
+        default: frontend
+      buildkit-endpoint:
+        description: BuildKit address. The default is the rootless BuildKit sidecar of the ARC runner pods. Empty starts a local docker-container builder (needs Docker, as on GitHub-hosted runners).
+        type: string
+        default: tcp://127.0.0.1:1234
+      buildkit-driver-opts:
+        description: Extra buildx driver options for a remote builder (for example cacert=/certs/ca.pem,cert=/certs/cert.pem,key=/certs/key.pem).
+        type: string
+        default: ""
+      test-database-env:
+        description: >-
+          Name of the variable the Go tests read for a disposable PostgreSQL
+          URL (for example DEN_TEST_DATABASE_URL). Empty: database tests skip
+          themselves. Tests then run one package at a time.
+        type: string
+        default: ""
+      test-database-mode:
+        description: >-
+          Where that PostgreSQL comes from: "sidecar" (already listening on
+          127.0.0.1:5432 as user ci, the ARC runner pods' postgres sidecar) or
+          "service" (start a postgres:16 service container; needs Docker).
+        type: string
+        default: sidecar
+      registry:
+        type: string
+        default: ghcr.io
+      image-namespace:
+        description: Registry namespace (lowercase).
+        type: string
+        default: aglelectronics
+      upload-sarif:
+        description: Upload Trivy results to GitHub code scanning. Failed uploads (private repository without GitHub Advanced Security) do not fail the run.
+        type: boolean
+        default: true
+      sqlc-version:
+        type: string
+        default: v1.30.0
+      golangci-lint-version:
+        type: string
+        default: v2.15.0
+      govulncheck-version:
+        type: string
+        default: v1.1.4
+      trivy-version:
+        type: string
+        default: v0.76.2
+      node-version:
+        type: string
+        default: "22"
+    outputs:
+      tag:
+        description: The published image tag (empty without push).
+        value: ${{ jobs.release-prepare.outputs.tag }}
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_SEVERITY_GATE: HIGH,CRITICAL
+
+jobs:
+  setup:
+    name: Plan
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      ref: ${{ steps.plan.outputs.ref }}
+      version: ${{ steps.plan.outputs.version }}
+      images: ${{ steps.plan.outputs.images }}
+      platforms: ${{ steps.plan.outputs.platforms }}
+    steps:
+      - name: Work out version, ref and images
+        id: plan
+        env:
+          IMAGES: ${{ inputs.images }}
+          ARM64: ${{ inputs.arm64 }}
+          PUSH: ${{ inputs.push }}
+          INPUT_VERSION: ${{ inputs.version }}
+          TEST_DATABASE_MODE: ${{ inputs.test-database-mode }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          version=""
+          ref="$SHA"
+          if [ -n "$INPUT_VERSION" ]; then
+            version="${INPUT_VERSION#v}"
+            ref="refs/tags/v${version}"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            version="${REF_NAME#v}"
+          fi
+          if [ -n "$version" ] && ! [[ "$version" =~ $semver ]]; then
+            echo "::error::Version '$version' is not MAJOR.MINOR.PATCH. Release tags look like v1.2.3 (no pre-release suffix)."
+            exit 1
+          fi
+          if [ "$PUSH" = "true" ] && [ -z "$version" ]; then
+            echo "::error::Publishing needs a version: push a tag vX.Y.Z or pass the version input."
+            exit 1
+          fi
+          case "$TEST_DATABASE_MODE" in
+            sidecar|service) ;;
+            *) echo "::error::test-database-mode must be sidecar or service"; exit 1 ;;
+          esac
+
+          images="$(jq -ce '
+            if type != "array" or length == 0 then error("images must be a non-empty JSON array") else . end
+            | map(
+                if (.name // "") == "" or (.dockerfile // "") == "" then error("every image needs name and dockerfile") else . end
+                | {
+                    name,
+                    dockerfile,
+                    context: (.context // "."),
+                    build_args: ((."build-args" // []) | join("\n")),
+                    shell_less: (."shell-less" // false),
+                    allow_root: (."allow-root" // false)
+                  })
+            | if (map(.name) | unique | length) != length then error("image names must be unique") else . end
+          ' <<<"$IMAGES")"
+
+          platforms="linux/amd64"
+          if [ "$ARM64" = "true" ]; then platforms="linux/amd64,linux/arm64"; fi
+
+          {
+            echo "ref=$ref"
+            echo "version=$version"
+            echo "images=$images"
+            echo "platforms=$platforms"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version: ${version:-none (checks only)}  Ref: $ref  Platforms: $platforms"
+          jq . <<<"$images"
+
+  go:
+    name: Go
+    needs: setup
+    if: inputs.go-dir != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # An empty image skips the service container (sidecar mode, or no database tests).
+        image: ${{ inputs.test-database-env != '' && inputs.test-database-mode == 'service' && 'postgres:16-alpine' || '' }}
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.go-dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ inputs.go-dir }}/go.mod
+          cache-dependency-path: ${{ inputs.go-dir }}/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted (run 'gofmt -w .' in ${PWD##*/}):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Generate sqlc code
+        if: hashFiles(format('{0}/sqlc.yaml', inputs.go-dir), format('{0}/sqlc.yml', inputs.go-dir)) != ''
+        env:
+          SQLC_VERSION: ${{ inputs.sqlc-version }}
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/sqlc"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 "https://github.com/sqlc-dev/sqlc/releases/download/${SQLC_VERSION}/sqlc_${SQLC_VERSION#v}_linux_${arch}.tar.gz" | tar -xz -C "$dir" sqlc
+          "$dir/sqlc" generate
+
+      - name: go mod verify
+        run: go mod verify
+
+      - name: go vet
+        run: go vet ./...
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ inputs.golangci-lint-version }}
+          working-directory: ${{ inputs.go-dir }}
+          args: --timeout=10m
+
+      - name: go test -race
+        env:
+          TEST_DATABASE_ENV: ${{ inputs.test-database-env }}
+        run: |
+          set -euo pipefail
+          if ! command -v gcc >/dev/null; then
+            echo "::error::go test -race needs a C compiler. Use the ghcr.io/aglelectronics/ci-runner image for the ARC runner pods (docs: deploy/self-hosted-runners)."
+            exit 1
+          fi
+          extra=()
+          if [ -n "$TEST_DATABASE_ENV" ]; then
+            for _ in $(seq 1 60); do
+              (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null && break
+              sleep 1
+            done
+            if ! (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; then
+              echo "::error::No PostgreSQL on 127.0.0.1:5432 for $TEST_DATABASE_ENV (test-database-mode: sidecar needs the runner pod's postgres sidecar)."
+              exit 1
+            fi
+            export "$TEST_DATABASE_ENV=postgres://ci:ci-only-password@127.0.0.1:5432/ci_test?sslmode=disable"
+            # Database tests reset the schema; packages must not run at the same time.
+            extra=(-p 1)
+          fi
+          CGO_ENABLED=1 go test -race "${extra[@]}" ./...
+
+      - name: govulncheck
+        env:
+          GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  frontend:
+    name: Frontend
+    needs: setup
+    if: inputs.frontend-dir != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.frontend-dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.frontend-dir }}/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run --if-present lint
+      - run: npm run --if-present typecheck
+      - run: npm run --if-present test
+      - run: npm run --if-present build
+
+  trivy-fs:
+    name: Trivy (repository)
+    needs: setup
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ inputs.trivy-version }}
+          cache: true
+
+      - name: Use .trivyignore.yaml if present
+        run: |
+          if [ -f .trivyignore.yaml ]; then echo "TRIVY_IGNOREFILE=.trivyignore.yaml" >> "$GITHUB_ENV"; fi
+
+      - name: Scan (SARIF for code scanning)
+        id: sarif
+        run: |
+          trivy fs --quiet --scanners vuln,secret,misconfig --misconfig-scanners dockerfile \
+            --ignore-unfixed --format sarif --output "$RUNNER_TEMP/trivy-fs.sarif" .
+
+      - name: Upload SARIF
+        if: always() && inputs.upload-sarif && steps.sarif.outcome == 'success'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/trivy-fs.sarif
+          category: trivy-fs
+
+      - name: Gate on HIGH and CRITICAL findings
+        run: |
+          trivy fs --quiet --scanners vuln,secret,misconfig --misconfig-scanners dockerfile \
+            --ignore-unfixed --severity "$TRIVY_SEVERITY_GATE" --exit-code 1 --format table .
+
+  images:
+    name: Image ${{ matrix.name }}
+    needs: setup
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.images) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: ${{ inputs.buildkit-endpoint != '' && 'remote' || 'docker-container' }}
+          endpoint: ${{ inputs.buildkit-endpoint }}
+          driver-opts: ${{ inputs.buildkit-driver-opts }}
+
+      - name: Build arguments
+        id: args
+        env:
+          BUILD_ARGS: ${{ matrix.build_args }}
+        run: |
+          set -euo pipefail
+          version="ci-$(git rev-parse --short HEAD)"
+          {
+            echo "build-args<<CI_EOF"
+            printf '%s\n' "${BUILD_ARGS//\{version\}/$version}"
+            echo "CI_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 to an OCI archive
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          build-args: ${{ steps.args.outputs.build-args }}
+          provenance: false
+          sbom: false
+          outputs: type=oci,dest=${{ runner.temp }}/image.tar
+          cache-from: type=gha,scope=${{ inputs.module }}-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.module }}-${{ matrix.name }}
+
+      # Trivy reads an OCI layout directory, not the archive.
+      - name: Unpack the OCI layout
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-oci"
+          tar -xf "$RUNNER_TEMP/image.tar" -C "$RUNNER_TEMP/image-oci"
+          rm "$RUNNER_TEMP/image.tar"
+
+      # Reads the layout directly (no Docker daemon needed): the image config
+      # for User, and every layer in order, honouring whiteouts, for shells.
+      - name: Verify image policy (shell-less, non-root)
+        env:
+          IMAGE_LAYOUT: ${{ runner.temp }}/image-oci
+          IMAGE_NAME: ${{ inputs.module }}-${{ matrix.name }}
+          SHELL_LESS: ${{ matrix.shell_less }}
+          ALLOW_ROOT: ${{ matrix.allow_root }}
+        run: |
+          set -euo pipefail
+          layout="$IMAGE_LAYOUT"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          blob() { printf '%s/blobs/%s/%s' "$layout" "${1%%:*}" "${1#*:}"; }
+
+          desc="$(jq -r '.manifests[0].digest' "$layout/index.json")"
+          while jq -e '.manifests' "$(blob "$desc")" >/dev/null 2>&1; do
+            desc="$(jq -r '[.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")][0].digest' "$(blob "$desc")")"
+          done
+          manifest="$(blob "$desc")"
+          config="$(blob "$(jq -r '.config.digest' "$manifest")")"
+
+          failed=0
+          user="$(jq -r '.config.User // ""' "$config")"
+          uid="${user%%:*}"
+          if [ "$ALLOW_ROOT" = "true" ]; then
+            echo "User: '${user}' (root allowed for this image)"
+          elif [ -z "$uid" ] || [ "$uid" = "0" ] || [ "$uid" = "root" ]; then
+            echo "::error::$IMAGE_NAME runs as root (image User is '${user}'). Set USER in the Dockerfile, or mark the image allow-root with a documented reason."
+            failed=1
+          else
+            echo "User: '${user}' (non-root)"
+          fi
+
+          if [ "$SHELL_LESS" = "true" ]; then
+            : > "$work/all.txt"
+            i=0
+            for layer in $(jq -r '.layers[].digest' "$manifest"); do
+              tar -tf "$(blob "$layer")" | sed -e 's#^\./##' -e 's#^/##' -e 's#/$##' | awk -v l="$i" '$0 != "" { print l "\t" $0 }' >> "$work/all.txt"
+              i=$((i + 1))
+            done
+            awk -F'\t' '
+              {
+                layer = $1; path = $2
+                n = split(path, parts, "/"); base = parts[n]
+                dir = (n > 1) ? substr(path, 1, length(path) - length(base) - 1) : ""
+                prefix = (dir == "") ? "" : dir "/"
+                if (base == ".wh..wh..opq") {
+                  for (p in present) if (index(p, prefix) == 1 && seen[p] < layer) delete present[p]
+                  next
+                }
+                if (index(base, ".wh.") == 1) {
+                  target = prefix substr(base, 5)
+                  delete present[target]
+                  for (p in present) if (index(p, target "/") == 1) delete present[p]
+                  next
+                }
+                present[path] = 1; seen[path] = layer
+              }
+              END { for (p in present) print p }
+            ' "$work/all.txt" > "$work/final.txt"
+            found=""
+            for f in bin/sh bin/bash bin/ash bin/dash bin/busybox usr/bin/sh usr/bin/bash usr/bin/dash usr/bin/busybox; do
+              if grep -qxF "$f" "$work/final.txt"; then found="$found /$f"; fi
+            done
+            if [ -n "$found" ]; then
+              echo "::error::$IMAGE_NAME must be shell-less but contains:$found"
+              failed=1
+            else
+              echo "Shell-less: no shell found in $(wc -l < "$work/final.txt") files"
+            fi
+          else
+            echo "Shell-less check skipped (image not marked shell-less)"
+          fi
+          exit "$failed"
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ inputs.trivy-version }}
+          cache: true
+
+      - name: Use .trivyignore.yaml if present
+        run: |
+          if [ -f .trivyignore.yaml ]; then echo "TRIVY_IGNOREFILE=.trivyignore.yaml" >> "$GITHUB_ENV"; fi
+
+      - name: Trivy image scan (SARIF for code scanning)
+        id: sarif
+        run: |
+          trivy image --quiet --input "$RUNNER_TEMP/image-oci" --scanners vuln,secret \
+            --ignore-unfixed --format sarif --output "$RUNNER_TEMP/trivy-image.sarif"
+
+      - name: Upload SARIF
+        if: always() && inputs.upload-sarif && steps.sarif.outcome == 'success'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/trivy-image.sarif
+          category: trivy-image-${{ matrix.name }}
+
+      - name: Gate on HIGH and CRITICAL vulnerabilities
+        run: |
+          trivy image --quiet --input "$RUNNER_TEMP/image-oci" --scanners vuln,secret \
+            --ignore-unfixed --severity "$TRIVY_SEVERITY_GATE" --exit-code 1 --format table
+
+      - name: SBOM (CycloneDX)
+        if: always() && steps.build.outcome == 'success'
+        env:
+          SBOM: ${{ runner.temp }}/${{ inputs.module }}-${{ matrix.name }}.cdx.json
+        run: trivy image --quiet --input "$RUNNER_TEMP/image-oci" --format cyclonedx --output "$SBOM"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: sbom-ci-${{ inputs.module }}-${{ matrix.name }}
+          path: ${{ runner.temp }}/${{ inputs.module }}-${{ matrix.name }}.cdx.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release-prepare:
+    name: Release tag
+    needs: [setup, go, frontend, trivy-fs, images]
+    if: >-
+      inputs.push && !cancelled()
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+        with:
+          version: v0.22.1
+
+      - name: Compute MAJOR.MINOR.PATCH-BUILD
+        id: tag
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          IMAGES: ${{ needs.setup.outputs.images }}
+          REPO_PREFIX: ${{ inputs.registry }}/${{ inputs.image-namespace }}/${{ inputs.module }}
+        run: |
+          set -euo pipefail
+          # BUILD = 1 + the highest existing VERSION-N over all images of the module.
+          highest=0
+          for name in $(jq -r '.[].name' <<<"$IMAGES"); do
+            repo="${REPO_PREFIX}-${name}"
+            if ! tags="$(crane ls "$repo" 2>"$RUNNER_TEMP/crane.err")"; then
+              if grep -qiE 'NAME_UNKNOWN|not found|404|denied' "$RUNNER_TEMP/crane.err"; then
+                echo "$repo: no published tags yet"
+                tags=""
+              else
+                cat "$RUNNER_TEMP/crane.err"
+                exit 1
+              fi
+            fi
+            for t in $tags; do
+              if [[ "$t" =~ ^${VERSION//./\\.}-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -gt "$highest" ]; then
+                highest="${BASH_REMATCH[1]}"
+              fi
+            done
+          done
+          tag="${VERSION}-$((highest + 1))"
+          for name in $(jq -r '.[].name' <<<"$IMAGES"); do
+            if crane digest "${REPO_PREFIX}-${name}:${tag}" >/dev/null 2>&1; then
+              echo "::error::${REPO_PREFIX}-${name}:${tag} already exists; tags are never overwritten."
+              exit 1
+            fi
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "### Releasing \`${tag}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Publishing tag $tag"
+
+  release-build:
+    name: Publish ${{ matrix.name }}
+    needs: [setup, release-prepare]
+    if: needs.release-prepare.result == 'success'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.images) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      # QEMU for linux/arm64. With a local Docker daemon (GitHub-hosted) the
+      # action registers it; a remote BuildKit (ARC) needs binfmt installed on
+      # the node instead (docs: deploy/self-hosted-runners, "arm64 images").
+      - name: Check for a Docker daemon
+        id: docker
+        if: inputs.arm64
+        run: |
+          if docker info >/dev/null 2>&1; then echo "available=true" >> "$GITHUB_OUTPUT"; else echo "available=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: inputs.arm64 && steps.docker.outputs.available == 'true'
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        id: buildx
+        with:
+          driver: ${{ inputs.buildkit-endpoint != '' && 'remote' || 'docker-container' }}
+          endpoint: ${{ inputs.buildkit-endpoint }}
+          driver-opts: ${{ inputs.buildkit-driver-opts }}
+
+      - name: Check the builder supports every platform
+        env:
+          PLATFORMS: ${{ needs.setup.outputs.platforms }}
+          BUILDER_PLATFORMS: ${{ steps.buildx.outputs.platforms }}
+        run: |
+          for p in ${PLATFORMS//,/ }; do
+            case ",${BUILDER_PLATFORMS}," in
+              *",$p,"*|*",$p/"*) ;;
+              *) echo "::error::The builder cannot build $p (it supports: $BUILDER_PLATFORMS). For arm64 on ARC, install QEMU binfmt on the nodes."; exit 1 ;;
+            esac
+          done
+
+      - name: Registry login (no Docker daemon needed)
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.docker"
+          jq -n --arg r "$REGISTRY" --arg a "$(printf '%s:%s' "$ACTOR" "$TOKEN" | base64 -w0)" \
+            '{auths: {($r): {auth: $a}}}' > "$HOME/.docker/config.json"
+          chmod 600 "$HOME/.docker/config.json"
+
+      - name: Build arguments and labels
+        id: args
+        env:
+          BUILD_ARGS: ${{ matrix.build_args }}
+          TAG: ${{ needs.release-prepare.outputs.tag }}
+          IMAGE: ${{ inputs.module }}-${{ matrix.name }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            echo "build-args<<CI_EOF"
+            printf '%s\n' "${BUILD_ARGS//\{version\}/$TAG}"
+            echo "CI_EOF"
+            echo "labels<<CI_EOF"
+            echo "org.opencontainers.image.title=$IMAGE"
+            echo "org.opencontainers.image.version=$TAG"
+            echo "org.opencontainers.image.revision=$(git rev-parse HEAD)"
+            echo "org.opencontainers.image.source=$SOURCE"
+            echo "CI_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Release builds use no cache and pull base images, so a rebuild (new
+      # BUILD) always picks up base-image security updates. The image is
+      # pushed by digest only; release-merge adds the tag.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ needs.setup.outputs.platforms }}
+          build-args: ${{ steps.args.outputs.build-args }}
+          labels: ${{ steps.args.outputs.labels }}
+          pull: true
+          no-cache: true
+          provenance: mode=max
+          sbom: true
+          outputs: type=image,name=${{ inputs.registry }}/${{ inputs.image-namespace }}/${{ inputs.module }}-${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.name }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release-merge:
+    name: Tag and sign ${{ matrix.name }}
+    needs: [setup, release-prepare, release-build]
+    if: needs.release-build.result == 'success'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.images) }}
+    env:
+      REPO: ${{ inputs.registry }}/${{ inputs.image-namespace }}/${{ inputs.module }}-${{ matrix.name }}
+      TAG: ${{ needs.release-prepare.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/digests
+          name: digests-${{ matrix.name }}
+
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+        with:
+          version: v0.22.1
+
+      - name: Add the tag (never overwrites)
+        id: merge
+        run: |
+          set -euo pipefail
+          if crane digest "$REPO:$TAG" >/dev/null 2>&1; then
+            echo "::error::$REPO:$TAG already exists; tags are never overwritten."
+            exit 1
+          fi
+          set -- "$RUNNER_TEMP"/digests/*
+          digest="sha256:$(basename "$1")"
+          crane tag "$REPO@$digest" "$TAG"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Registry login for cosign and Trivy (no Docker daemon needed)
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.docker"
+          jq -n --arg r "$REGISTRY" --arg a "$(printf '%s:%s' "$ACTOR" "$TOKEN" | base64 -w0)" \
+            '{auths: {($r): {auth: $a}}}' > "$HOME/.docker/config.json"
+          chmod 600 "$HOME/.docker/config.json"
+
+      - name: Sign (keyless)
+        env:
+          DIGEST: ${{ steps.merge.outputs.digest }}
+        run: cosign sign --yes "$REPO@$DIGEST"
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ inputs.trivy-version }}
+          cache: true
+
+      - name: Attach the SBOM attestation (CycloneDX)
+        env:
+          DIGEST: ${{ steps.merge.outputs.digest }}
+          SBOM: ${{ runner.temp }}/${{ inputs.module }}-${{ matrix.name }}-${{ needs.release-prepare.outputs.tag }}.cdx.json
+        run: |
+          set -euo pipefail
+          trivy image --quiet --image-src remote --format cyclonedx --output "$SBOM" "$REPO@$DIGEST"
+          cosign attest --yes --type cyclonedx --predicate "$SBOM" "$REPO@$DIGEST"
+          {
+            echo "- \`$REPO:$TAG\`"
+            echo "  digest \`$DIGEST\`, signed, CycloneDX SBOM attested"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ inputs.module }}-${{ matrix.name }}-${{ needs.release-prepare.outputs.tag }}
+          path: ${{ runner.temp }}/${{ inputs.module }}-${{ matrix.name }}-${{ needs.release-prepare.outputs.tag }}.cdx.json
+          retention-days: 90
