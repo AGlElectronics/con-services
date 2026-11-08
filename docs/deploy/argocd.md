@@ -141,7 +141,7 @@ expose it. Check that it has the health check for Application objects
 sync wave starts at once:
 
 ```sh
-kubectl -n argocd get cm argocd-cm -o yaml | grep -c argoproj.io_Application
+kubectl -n argocd get cm argocd-cm -o yaml | grep -c health.argoproj.io_Application
 ```
 
 ```text
@@ -416,7 +416,7 @@ charts installed with default names.
 
 **Every Application starts at once instead of wave by wave**
 :   The Application health check is missing from `argocd-cm`; check
-    `kubectl -n argocd get cm argocd-cm -o yaml | grep argoproj.io_Application`
+    `kubectl -n argocd get cm argocd-cm -o yaml | grep health.argoproj.io_Application`
     and add the block from
     [Prerequisites: Argo CD](prerequisites.md#9-argo-cd).
 

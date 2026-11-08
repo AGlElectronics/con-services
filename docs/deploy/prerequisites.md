@@ -424,7 +424,7 @@ Check:
 
 ```sh
 kubectl -n argocd get deploy argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-kubectl -n argocd get cm argocd-cm -o yaml | grep -c argoproj.io_Application
+kubectl -n argocd get cm argocd-cm -o yaml | grep -c health.argoproj.io_Application
 ```
 
 ```text
@@ -506,7 +506,7 @@ of the control-plane items for you.
     supports. Replace them with v1.6.3 (step 3) and restart the Cilium
     operator.
 
-**`argocd-cm` has no `argoproj.io_Application` entry**
+**`argocd-cm` has no `resource.customizations.health.argoproj.io_Application` entry**
 :   Add the health check from [step 9](#9-argo-cd) to `argocd-cm` (with the
     Helm chart: `configs.cm`) before applying the root Application.
     Argo CD picks the change up without a restart.
