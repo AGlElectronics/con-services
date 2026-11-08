@@ -16,7 +16,7 @@ Den comes first, then each module.
 | Set up my own installation from the plain manifests | [Running on Kubernetes](running.md#set-up-your-own-installation) |
 | Add a module | [Running on Kubernetes: Add a module](running.md#add-a-module), [Installing modules with Helm](helm.md) |
 | Pin, upgrade or roll back images | [Versions and upgrades](versioning.md) |
-| Install Cilium and check that NetworkPolicies are enforced | [Network policies and isolation](network-policies.md#installing-cilium) |
+| Check what Con Services needs from Cilium and that NetworkPolicies are enforced | [Network policies and isolation](network-policies.md#what-con-services-needs-from-cilium) |
 | Keep secrets in Vault / a cloud secret manager and rotate them | [Secrets](secrets.md) |
 | Set up backups and restore a database | [Databases, backups and restore](databases-and-backups.md) |
 | Recover from a lost server, cluster or key | [Disaster recovery](disaster-recovery.md) |

@@ -3,7 +3,7 @@
 # ghcr.io/aglelectronics/ci-runner:<tag from infra/ci-runner/VERSION>.
 # Runs on GitHub-hosted runners: this repository is public, and the
 # self-hosted runners cannot build their own image before they exist.
-# Docs: https://aglelectronics.github.io/con-services/deploy/self-hosted-runners/
+# Docs: https://aglelectronics.github.io/con-services/contributing/ci/#where-it-runs
 name: CI runner image
 
 on:

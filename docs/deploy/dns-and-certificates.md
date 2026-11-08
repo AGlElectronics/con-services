@@ -40,9 +40,9 @@ flowchart LR
     user((Visitor)) -->|den.example.org| dns[Public DNS]
     dns -->|203.0.113.7| router[Router<br/>forwards 80, 443]
     router --> pub[Gateway public<br/>192.0.2.240]
-    admin((Admin on LAN)) -->|argocd.example.org<br/>split DNS| int[Gateway internal<br/>192.0.2.241]
+    admin((Admin on LAN)) -->|auth-admin.example.org<br/>split DNS| int[Gateway internal<br/>192.0.2.241]
     pub --> apps[Den, modules, Keycloak sign-in]
-    int --> tools[Argo CD, OpenBao, Keycloak admin console]
+    int --> tools[Keycloak admin console, optional Longhorn and Hubble UIs]
     cm[cert-manager] -->|DNS-01 TXT| api[DNS provider API]
     cm -->|wildcard-tls| pub
     cm -->|wildcard-tls| int
@@ -54,31 +54,27 @@ Both Gateways terminate TLS with the same certificate `wildcard-tls`
 
 ## 1. Choose the Gateway IPs
 
-Each Gateway is a `Service` of type `LoadBalancer`. Pick one of:
+Each Gateway is a `Service` of type `LoadBalancer`, and your cluster
+assigns the addresses (cloud provider, MetalLB, or a Cilium LB IPAM pool;
+the template does not create the pool, see
+[Prerequisites](prerequisites.md#5-loadbalancer-ips-dns-and-ports)). On
+bare metal with Cilium, that is an
+[LB IPAM pool](https://docs.cilium.io/en/stable/network/lb-ipam/) with
+[L2 announcements](https://docs.cilium.io/en/stable/network/l2-announcements/)
+(Cilium needs `l2announcements.enabled: true`).
 
-- **Your load balancer assigns them** (cloud provider, MetalLB, or your
-  own Cilium IP pool): nothing to set. To pin addresses, set
-  `gateway.public.loadBalancerIP` and `gateway.internal.loadBalancerIP`.
-- **The template hands them out with Cilium** (bare metal on one LAN):
-  choose a small free range outside your router's DHCP range and put it in
-  `cluster.yaml`:
+To pin the two addresses from a Cilium pool, set them in `cluster.yaml`:
 
-    ```yaml
-    loadBalancer:
-      ciliumL2:
-        enabled: true
-        blocks: ["192.0.2.240/29"]   # 192.0.2.240 to 192.0.2.247
-    gateway:
-      public:
-        loadBalancerIP: 192.0.2.240
-      internal:
-        loadBalancerIP: 192.0.2.241
-    ```
+```yaml
+gateway:
+  public:
+    loadBalancerIP: 192.0.2.240
+  internal:
+    loadBalancerIP: 192.0.2.241
+```
 
-    The `cilium-lb` Application then creates a `CiliumLoadBalancerIPPool`
-    and a `CiliumL2AnnouncementPolicy`; one node answers ARP for each IP
-    and another takes over if it fails. Cilium must run with
-    `l2announcements.enabled: true` ([Prerequisites](prerequisites.md#2-cilium)).
+Other load balancers use their own annotation; put it in
+`gateway.public.annotations` and `gateway.internal.annotations`.
 
 After the `gateway` Application has synced, check:
 
@@ -211,11 +207,13 @@ kubectl get certificate -A
 NAMESPACE             NAME                      READY   SECRET                    AGE
 cert-manager          conservices-internal-ca   True    conservices-internal-ca   12m
 conservices-gateway   wildcard-tls              True    wildcard-tls              2m
-openbao               openbao-tls               True    openbao-tls               9m
 ```
 
 Issuance takes one to three minutes; cert-manager waits until the TXT
-record is visible on the resolvers in `acme.recursiveNameservers`.
+record is visible on public DNS. If your cluster's DNS answers for your
+domain itself (split DNS), cert-manager must check against public
+resolvers instead: that is a cert-manager setting
+(`--dns01-recursive-nameservers`) of whoever runs it.
 
 ## 6. Switch to production certificates
 
@@ -254,7 +252,7 @@ from `gateway.className` (`cilium`):
 | Gateway | Listeners | Who may attach routes |
 | --- | --- | --- |
 | `public` | `http` :80 (redirects to HTTPS), `https` :443 `*.<domain>` | namespaces labelled `app.kubernetes.io/part-of=conservices` |
-| `internal` | `http` :80 (redirects), `https` :443 `*.<domain>` | `conservices-gateway`, `openbao`, `argocd`, plus `longhorn-system` and `kube-system` when their admin routes are on |
+| `internal` | `http` :80 (redirects), `https` :443 `*.<domain>` | `conservices-gateway`, plus `longhorn-system` and `kube-system` when their admin routes are on |
 
 ## Internal hostnames
 
@@ -262,8 +260,6 @@ The admin tools are only on the internal Gateway:
 
 | Hostname | Tool | `cluster.yaml` |
 | --- | --- | --- |
-| `argocd.<domain>` | Argo CD | `argocd.selfManage: true` |
-| `bao.<domain>` | OpenBao UI | `adminRoutes.openbao: true` |
 | `auth-admin.<domain>` | Keycloak admin console | always |
 | `longhorn.<domain>` | Longhorn UI (**no login**) | `adminRoutes.longhorn: true` |
 | `hubble.<domain>` | Hubble UI (Cilium network flows) | `adminRoutes.hubble: true` |
@@ -274,13 +270,13 @@ has those hostnames. To reach them, make them resolve to the internal
 Gateway IP on your LAN, with one of:
 
 - **Split DNS** on your router or local DNS server (Pi-hole, AdGuard Home,
-  Unbound, ...): local records `argocd.example.org` → `192.0.2.241`, and so
+  Unbound, ...): local records `auth-admin.example.org` → `192.0.2.241`, and so
   on. Recommended.
 - **A hosts file** on each admin computer (`/etc/hosts`, or
   `C:\Windows\System32\drivers\etc\hosts`):
 
     ```text
-    192.0.2.241  argocd.example.org bao.example.org auth-admin.example.org
+    192.0.2.241  auth-admin.example.org longhorn.example.org hubble.example.org
     ```
 
 The certificate is the same wildcard, so browsers trust it either way.
@@ -290,11 +286,11 @@ The certificate is the same wildcard, so browsers trust it either way.
 Backends check sign-in tokens against Keycloak at `https://auth.<domain>`.
 Without help, that request leaves the cluster, comes back through the
 router (**hairpin NAT**, which many routers do not support) and the public
-Gateway. You need one of:
+Gateway. Cluster DNS belongs to whoever runs the cluster, so the template
+does not change it. You need one of:
 
-- **`oidcHairpin.mode: coredns-custom`** (k3s and AKS): the template writes
-  the ConfigMap `kube-system/coredns-custom`, which those distributions'
-  CoreDNS reads. It contains:
+- **A CoreDNS rewrite** that answers `auth.<domain>` with the in-cluster
+  Service `keycloak-public`:
 
     ```text
     rewrite stop {
@@ -306,14 +302,28 @@ Gateway. You need one of:
     Pods resolving `auth.example.org` get the Service `keycloak-public`
     (443 to Keycloak's 8443), whose internal certificate carries
     `auth.example.org`, so the connection stays inside the cluster and is
-    still verified. If you already have a `coredns-custom` ConfigMap, merge
-    its keys into a copy of `charts/oidc-hairpin` instead.
-- **The same rewrite in your CoreDNS configuration** (kubeadm, Talos and
-  others; see [Kubernetes distributions](distributions.md)), with
-  `oidcHairpin.mode: none`.
+    still verified. On k3s and AKS, CoreDNS reads extra configuration from
+    the ConfigMap `kube-system/coredns-custom`:
+
+    ```yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: coredns-custom
+      namespace: kube-system
+    data:
+      keycloak.override: |
+        rewrite stop {
+            name exact auth.example.org. keycloak-public.conservices-identity.svc.cluster.local.
+            answer auto
+        }
+    ```
+
+    On other distributions, add the block to the server block of your
+    CoreDNS configuration.
 - **Nothing**, if your router supports hairpin NAT or your cluster's
   outbound traffic reaches the public IP anyway (most cloud load
-  balancers). Leave `oidcHairpin.mode: none`.
+  balancers).
 
 Check from a pod once Keycloak runs ([Identity](identity.md)):
 
@@ -359,7 +369,7 @@ the ConfigMap was created after CoreDNS started, restart CoreDNS once:
     records for the public names pointing to the public Gateway IP
     (`192.0.2.240`), the same way as the internal hostnames.
 
-**`https://argocd.example.org` shows `404` or times out**
+**`https://auth-admin.example.org` shows `404` or times out**
 :   The name resolves to the public IP. Set up split DNS or a hosts entry
     ([Internal hostnames](#internal-hostnames)).
 
@@ -372,11 +382,11 @@ the ConfigMap was created after CoreDNS started, restart CoreDNS once:
     `kubectl -n conservices-gateway describe certificate wildcard-tls`.
 
 **The Gateway has no `ADDRESS`**
-:   With `loadBalancer.ciliumL2`: the pinned IP is outside the pool, or
-    another Service holds it. Check
+:   Your load balancer did not assign an address. With a Cilium pool: the
+    pinned IP is outside the pool, or another Service holds it; check
     `kubectl get ciliumloadbalancerippool -o wide` and
-    `kubectl -n conservices-gateway describe svc`. Without it: your load
-    balancer did not assign an address; check its controller's logs.
+    `kubectl -n conservices-gateway describe svc`. Otherwise check your
+    load balancer controller's logs.
 
 **Sign-in fails in the apps with `issuer` or `connection refused` errors, but the browser can open `https://auth.<domain>`**
 :   Pods cannot reach the public address (no hairpin NAT). Use one of the

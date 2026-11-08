@@ -58,6 +58,13 @@ theme:
 plugins:
   - search
 
+hooks:
+  - scripts/mkdocs_changelog.py
+
+watch:
+  - CHANGELOG.md
+  - scripts/mkdocs_changelog.py
+
 markdown_extensions:
   - abbr
   - admonition
@@ -157,7 +164,6 @@ nav:
   - Deploy with Argo CD:
       - deploy/index.md
       - Prerequisites: deploy/prerequisites.md
-      - Kubernetes distributions: deploy/distributions.md
       - Argo CD and cluster.yaml: deploy/argocd.md
       - DNS and certificates: deploy/dns-and-certificates.md
       - Secrets with OpenBao: deploy/secrets-openbao.md
@@ -166,8 +172,6 @@ nav:
       - Den and the modules: deploy/apps.md
       - Sizing and resources: deploy/sizing.md
       - High availability: deploy/high-availability.md
-      - "Example: a k3s cluster": deploy/cluster.md
-      - Self-hosted CI runners: deploy/self-hosted-runners.md
   - Operations:
       - operations/index.md
       - Running on Kubernetes: operations/running.md
@@ -187,3 +191,4 @@ nav:
       - Local development with Docker Compose: contributing/local-development.md
       - Changelogs: contributing/changelog.md
       - CI and releases: contributing/ci.md
+  - Changelog: changelog.md

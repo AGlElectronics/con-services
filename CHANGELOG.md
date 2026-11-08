@@ -9,6 +9,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Documentation site: a *Changelog* page in the top navigation shows this
+  changelog and links to the changelogs of every module and of the Argo CD
+  template. The site now rebuilds when `CHANGELOG.md` changes.
+
+### Changed
+
+- Deployment docs: the prerequisites now allow tainted control-plane nodes
+  as long as at least 3 nodes accept workloads, and list what we expect of
+  how the cluster is run (HA control plane, etcd backups, encryption at
+  rest, OS updates, monitoring).
+- Deployment docs: the GitOps template (`con-services-gitops`) now installs
+  only Con Services itself (Den, the modules, PostgreSQL, Keycloak, and the
+  issuers, gateways and secret references they need). Argo CD,
+  cert-manager with trust-manager, External Secrets Operator with OpenBao,
+  the CloudNativePG operator with the Barman Cloud plugin, load balancer
+  IPs and the CoreDNS rewrite for Keycloak are
+  documented as cluster prerequisites, with tested versions and checks but
+  no setup walkthrough. *Prerequisites* lists them;
+  *Secrets with OpenBao* now covers preparing an existing OpenBao
+  (`openbao-configure.sh`) instead of installing, unsealing and backing it
+  up; *Sizing* counts these services separately. Upgrading an existing
+  installation: follow the **BREAKING** entries in the template's
+  `CHANGELOG.md`.
+- Internal TLS docs: cert-manager and trust-manager are described as
+  cluster prerequisites with a check, instead of install steps (the local
+  trial in *Run Den on Kubernetes* still installs them).
+- Contributing docs: *CI and releases* now describes what the project's
+  self-hosted runners provide (runner image, BuildKit and test database
+  sidecars) and how to fix missing arm64 emulation on their nodes.
+
+### Removed
+
+- Deployment docs: the pages *Example: a k3s cluster*, *Self-hosted CI
+  runners* and *Kubernetes distributions*. Building a cluster and running
+  CI runners are not part of a Con Services installation; the template no
+  longer contains them either (see its `CHANGELOG.md`). *Prerequisites*
+  links to the upstream installation guides, and *DNS and certificates*
+  shows the CoreDNS rewrite for Keycloak inline.
+- Deployment and operations docs: the remaining install commands for
+  cluster services (Argo CD, the Gateway API CRDs, Cilium, Cilium
+  WireGuard) and the Argo CD login steps. The docs now say only what
+  Con Services needs from each service: *Prerequisites* has a new
+  *Argo CD* section with the required Application health check, step 3
+  of *Argo CD and cluster.yaml* checks for it instead of installing Argo
+  CD, and *Network policies* lists what Con Services needs from Cilium.
+
 ### Fixed
 
 - The deploy validation workflow no longer fails silently on Kustomize
@@ -219,7 +267,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Envoy. ingress-nginx is no longer maintained. What to do on upgrade:
     1. Install the Gateway API CRDs v1.6.3 (standard channel) and Cilium
        with `gatewayAPI.enabled: true` and `kubeProxyReplacement: true`
-       (see [Network policies](docs/operations/network-policies.md#installing-cilium)).
+       (see [Network policies](docs/operations/network-policies.md#what-con-services-needs-from-cilium)).
     2. Provide the Gateway `public` in `conservices-gateway`. The
        `example` overlay brings one (`overlays/example/gateway.yaml`); in
        your own overlay create it or patch the routes' `parentRefs`.

@@ -26,15 +26,21 @@ available yet and why.
 
 ## What survives what
 
+Argo CD, cert-manager, trust-manager, External Secrets, OpenBao and the
+CloudNativePG operator are [prerequisites](prerequisites.md): how highly
+available they are depends on how your cluster runs them. The rows below
+show the tested installation (2 replicas of each controller, 3 OpenBao
+voters); the template only needs them to be there.
+
 | Component | Replicas | Losing one pod | Losing one node (of 3) |
 | --- | --- | --- | --- |
 | Kubernetes control plane (k3s, embedded etcd) | 3 servers | n/a | keeps working (2 of 3 etcd members) |
 | Cilium agent / operator | 1 per node / 2 | the node's networking pauses until the agent restarts (seconds) | traffic moves to the other nodes |
 | Cilium Gateway (Envoy) | on every node, one LB IP announced by one node | n/a | the IP moves to another node within seconds (L2 announcement lease) |
 | Longhorn volumes | 3 replicas (`longhorn` class) | n/a | volume keeps working from the other replicas, rebuilds when the node returns |
-| Argo CD | server 2, repo-server 2, Redis HA 3 | no effect | no effect; syncing continues |
-| cert-manager, trust-manager, External Secrets | 2 each | no effect | no effect |
-| OpenBao | 3 Raft voters | no effect (a standby takes over) | keeps working; the restarted pod must be **unsealed** before it rejoins ([runbook](secrets-openbao.md)) |
+| Argo CD (prerequisite) | server 2, repo-server 2, Redis HA 3 | no effect | no effect; syncing continues |
+| cert-manager, trust-manager, External Secrets, CloudNativePG operator (prerequisites) | 2 each | no effect | no effect |
+| OpenBao (prerequisite) | 3 Raft voters | no effect (a standby takes over) | keeps working; unless OpenBao auto-unseals, the restarted pod must be **unsealed** by its operator before it rejoins |
 | PostgreSQL (CloudNativePG) | 3 instances, 1 synchronous standby | if the primary dies, a standby is promoted in about 10–30 seconds; apps reconnect | same; no committed transaction is lost (synchronous replica) |
 | Object storage (managed S3, for example Hetzner) | run by the provider, outside the cluster | no effect | no effect; the cluster only needs outbound internet access |
 | Keycloak | 2+ instances, sessions in the database-backed cache | no effect; signed-in users stay signed in | no effect |
@@ -86,8 +92,8 @@ Upgrading a node (k3s, the operating system) is safe one node at a time:
     kubectl uncordon node-2
     ```
 
-4. If OpenBao ran on that node, unseal its pod
-   ([runbook](secrets-openbao.md)).
+4. If OpenBao ran on that node and does not auto-unseal, have its pod
+   unsealed (`bao status` must show `Sealed false`).
 5. Wait until `kubectl get pods -A` shows everything ready and Longhorn
    shows all volumes `Healthy` before you start the next node.
 
@@ -99,8 +105,9 @@ Upgrading a node (k3s, the operating system) is safe one node at a time:
   [Disaster recovery](../operations/disaster-recovery.md).
 - **A second physical host.** Three VMs on one server do not survive that
   server failing.
-- **The OpenBao unseal keys.** Without them a fully restarted cluster cannot
-  read its secrets. Keep them offline in two places.
+- **OpenBao's unseal keys and backups.** They belong to whoever runs
+  OpenBao, but without them a fully restarted cluster cannot read Con
+  Services' secrets. Make sure they exist and are kept offline.
 
 ## Troubleshooting
 
@@ -123,5 +130,7 @@ Upgrading a node (k3s, the operating system) is safe one node at a time:
   `cluster.yaml` (and accept less redundancy).
 
 **After a full restart of all nodes nothing gets its secrets**
-: OpenBao is sealed. Unseal all three pods; External Secrets then refreshes
-  the Secrets by itself within its refresh interval.
+: OpenBao is sealed. Have it unsealed (by its operator, or by its
+  auto-unseal); External Secrets then refreshes the Secrets by itself
+  within its refresh interval. See
+  [Secrets with OpenBao](secrets-openbao.md#troubleshooting).

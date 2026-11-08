@@ -122,7 +122,8 @@ them.
 ## Upgrading
 
 1. **Read the changelog** of the module, from your version to the new one:
-   `CHANGELOG.md` in the module's repository. Look for **BREAKING** entries
+   `CHANGELOG.md` in the module's repository (all of them are linked from
+   the [Changelog](../changelog.md) page). Look for **BREAKING** entries
    and anything under *Changed* or *Removed* that affects your settings.
 2. **Make a backup.** Den admin console → **Backups** → **Back up now**, and
    wait until it shows as succeeded.
@@ -245,5 +246,6 @@ Decide quickly, and tell people to stop using the module while you do.
 
 - [Installing modules with Helm](helm.md#roll-back): `helm rollback`.
 - [Databases, backups and restore](databases-and-backups.md#restore): restoring before a rollback.
+- [Changelog](../changelog.md): what changed in each release, and links to every repository's changelog.
 - [Changelogs](../contributing/changelog.md): how releases are described.
 - [CI and releases](../contributing/ci.md): how images are built, signed and published.

@@ -38,11 +38,20 @@ those tests reset the schema.
 
 ## Where it runs
 
-By default every job runs on the self-hosted runner scale set
-`arc-conservices` (see [Self-hosted runners](../deploy/self-hosted-runners.md)):
-runner pods without a Docker daemon, with a rootless BuildKit sidecar for
-image builds and a PostgreSQL sidecar for tests. To run a module on
-GitHub-hosted runners instead, set in its `ci.yml`:
+By default every job runs on the project's self-hosted runners with the
+label `arc-conservices`, a runner scale set of
+[Actions Runner Controller](https://docs.github.com/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/about-actions-runner-controller).
+These runners are project infrastructure, not part of a Con Services
+installation. A runner pod for this pipeline has no Docker daemon and
+three containers sharing `127.0.0.1`:
+
+| Container | Image | Provides |
+| --- | --- | --- |
+| runner | `ghcr.io/aglelectronics/ci-runner` (from `infra/ci-runner/`; adds the C compiler `go test -race` needs) | the job, as a non-root user |
+| BuildKit sidecar | `moby/buildkit:<version>-rootless` | image builds at `tcp://127.0.0.1:1234` (`buildkit-endpoint`) |
+| PostgreSQL sidecar | `postgres:16.15-alpine` | a throw-away test database at `127.0.0.1:5432`, user `ci`, database `ci_test` (`test-database-mode: sidecar`) |
+
+To run a module on GitHub-hosted runners instead, set in its `ci.yml`:
 
 ```yaml
     with:
@@ -329,8 +338,7 @@ One-time settings for the pipeline to work:
 The modules run on self-hosted runners by default, which use no Actions
 minutes. On GitHub-hosted runners, public repositories have no minute
 limit; private repositories have a monthly quota. See
-[Where it runs](#where-it-runs) and
-[Self-hosted runners](../deploy/self-hosted-runners.md).
+[Where it runs](#where-it-runs).
 
 ## The deploy validation workflow
 
@@ -466,8 +474,13 @@ module without Den set `standalone`.
 : arm64 images are built with QEMU emulation on the amd64 runner, which is
   several times slower than a native build. Expected.
 
+**The release fails with *The builder cannot build linux/arm64***
+: On self-hosted runners, BuildKit uses the node's QEMU handlers, which are
+  missing. Install them once on every node that runs runner pods:
+  `sudo apt-get install -y qemu-user-static binfmt-support` (or
+  `docker run --privileged --rm tonistiigi/binfmt --install arm64`).
+
 ## Related pages
 
 - [Versions and upgrades](../operations/versioning.md): what tags mean and how to pin them.
 - [Changelogs](changelog.md): what goes into a release section.
-- [Self-hosted runners](../deploy/self-hosted-runners.md): runners in your own cluster.

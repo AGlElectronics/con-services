@@ -79,10 +79,14 @@ gives you:
   open-source, Linux Foundation fork of HashiCorp Vault; it runs inside the
   cluster, and the commands and ESO configuration on this page work with it
   unchanged (`bao` instead of `vault`). The
-  [GitOps reference deployment](../deploy/index.md) installs it with three
-  replicas and connects ESO through a ClusterSecretStore named `openbao`.
-  Setup, unsealing, rotation and backups:
-  [Secrets with OpenBao](../deploy/secrets-openbao.md).
+  [GitOps reference deployment](../deploy/index.md) expects OpenBao and ESO
+  to be installed by the cluster's admin (a
+  [prerequisite](../deploy/prerequisites.md#7-external-secrets-operator-and-openbao))
+  and connects ESO to it through a ClusterSecretStore named `openbao`.
+  Preparing OpenBao for Con Services, seeding and rotation:
+  [Secrets with OpenBao](../deploy/secrets-openbao.md). Installing,
+  unsealing and backing up OpenBao itself follow the
+  [OpenBao documentation](https://openbao.org/docs/).
 - **Managed cluster in a cloud: that cloud's secret manager** (AWS Secrets
   Manager, Azure Key Vault, Google Secret Manager), which needs no
   unsealing or backups from you. See [Other providers](#other-providers).
@@ -112,9 +116,7 @@ gives you:
 | Internal CA private key (`tls.key`) | `conservices-internal-ca` | `cert-manager` | cert-manager (`ClusterIssuer/conservices-internal-ca`) | Signs every internal certificate. Created by cert-manager inside the cluster, never in your secret manager. Back it up with the cluster; rotate only if leaked, as in [Rotating the internal CA](internal-tls.md#rotating-the-internal-ca). |
 | Service TLS keys (`tls.key`, `tls.crt`, `ca.crt`) | `postgres-tls`, `s3-tls`, `keycloak-tls`, `den-backend-tls`, `den-operator-tls`, `den-frontend-tls`, `<module>-backend-tls`, `<module>-frontend-tls` | the service's namespace | that service | Created and renewed by cert-manager every 60 days. Rotate now by deleting the Secret; cert-manager issues a new key in seconds. See [Internal TLS](internal-tls.md#renewal). |
 | `api-token` | `cloudflare-api-token` (from OpenBao `kv/infra/cloudflare` through the `ExternalSecret` of the same name) | `cert-manager` | cert-manager (Let's Encrypt DNS-01) | GitOps reference only. A Cloudflare API token limited to **Zone: DNS: Edit** and **Zone: Zone: Read** on one zone. Rotate by creating a new token in Cloudflare, `bao kv patch`, then revoking the old one. See [DNS and certificates](../deploy/dns-and-certificates.md). |
-| OpenBao unseal keys (5, any 3 unseal) and root token | none | **offline** | OpenBao operators | GitOps reference only. Never in the cluster or in Git. Losing 3 keys loses every secret in OpenBao. Revoke the root token after setup; replace keys with `bao operator rekey`. See [Secrets with OpenBao](../deploy/secrets-openbao.md#4-put-the-init-file-away-and-revoke-the-root-token). |
-| OpenBao TLS key (`tls.key`, `tls.crt`, `ca.crt`) | `openbao-tls` | `openbao` | OpenBao | GitOps reference only. Issued by the internal CA, renewed by cert-manager; OpenBao reloads it on `SIGHUP` ([how](../deploy/secrets-openbao.md#openbaos-own-certificate-and-keys)). |
-| `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (from OpenBao `kv/infra/github-arc` through the `ExternalSecret` of the same name) | `arc-runners` | Actions Runner Controller (self-hosted CI runners) | Optional; only with [self-hosted runners](../deploy/self-hosted-runners.md). The GitHub App can register runners for the organisation, nothing else. Written by `bootstrap/scripts/openbao-seed.sh` in con-services-gitops. |
+| OpenBao token for `openbao-configure.sh` and `openbao-seed.sh` | none | your shell only (`BAO_TOKEN`) | the person running the scripts | GitOps reference only. Comes from whoever runs OpenBao; use a short-lived token with only the rights the scripts need, never the root token, and never store it in the cluster or in Git. OpenBao's own unseal keys, root token and TLS key belong to its operator. See [Secrets with OpenBao](../deploy/secrets-openbao.md). |
 
 **GitOps reference: OpenBao paths of the platform.** In
 [con-services-gitops](../deploy/index.md) every secret below is read from
@@ -140,7 +142,6 @@ the provider credentials, only for the modules and options enabled in
 | `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; asked for by the seed script |
 | `kv/infra/ghcr` | `username`, `token` | `ghcr-pull` (`kubernetes.io/dockerconfigjson`) in every application namespace | image pulls | optional, only with `images.pullSecret.enabled: true` (private images); GitHub personal access token with **only `read:packages`**; see [Private images](../deploy/apps.md#private-images-the-ghcr-pull-secret) |
 | `kv/infra/cloudflare` | `api-token` | `cloudflare-api-token` (`cert-manager`) | cert-manager (Let's Encrypt DNS-01) | optional, only with `acme.dns01.provider: cloudflare`; see [DNS and certificates](../deploy/dns-and-certificates.md) |
-| `kv/infra/github-arc` | `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (`arc-runners`) | Actions Runner Controller | optional, only with `arc.enabled: true`; see [Self-hosted runners](../deploy/self-hosted-runners.md) |
 
 The age **public** key for Den's backups (`BACKUP_AGE_RECIPIENTS`) is not
 secret and lives in `cluster.yaml` (`den.backupAgeRecipients`).
@@ -214,7 +215,6 @@ existing entries.
 | `kv/conservices/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | S3 provider, own key for the PostgreSQL backup bucket | as above; CloudNativePG picks up the new key by itself |
 | `kv/infra/ghcr` (only with `images.pullSecret.enabled`) | `username`, `token` | `ghcr-pull` (type `kubernetes.io/dockerconfigjson`) in every Den and module namespace | a GitHub classic token with **only `read:packages`** | new token, `bao kv patch kv/infra/ghcr token=-`, revoke the old one ([Private images](../deploy/apps.md#private-images-the-ghcr-pull-secret)) |
 | `kv/infra/cloudflare` (only with `acme.dns01.provider: cloudflare`) | `api-token` | `cloudflare-api-token` (`cert-manager`) | a Cloudflare API token limited to one zone | new token in Cloudflare, `bao kv patch kv/infra/cloudflare api-token=-`, revoke the old one |
-| `kv/infra/github-arc` (only with `arc.enabled`) | `github_app_id`, `github_app_installation_id`, `github_app_private_key` | `arc-github-app` (`arc-runners`) | the GitHub App of the runners | [Rotate the GitHub App key](../deploy/self-hosted-runners.md#rotate-the-github-app-key) |
 
 External Secrets refreshes every Secret hourly. To apply a rotated value
 at once, run
@@ -502,7 +502,7 @@ for rotation and auditing.
   objects with RBAC, and restrict the store to the namespaces that need it
   with its `spec.conditions` (`namespaceSelector` or `namespaces`), or
   switch to per-namespace stores as described above
-  ([trade-off](../deploy/secrets-openbao.md#how-it-is-set-up)).
+  ([trade-off](../deploy/secrets-openbao.md#what-the-template-sets-up)).
 - **Keep secrets out of logs and tickets.** Den shows a module's database
   password and pairing tokens exactly once; copy them straight into the
   secret manager.
@@ -591,7 +591,6 @@ On PowerShell, replace `$(date +%s)` with
 | `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
 | Backup age key | Add the new public key to `BACKUP_AGE_RECIPIENTS` and restart the operator. Only new backups use it; **keep the old secret key** as long as backups made with it are kept. | None. |
 | Keycloak bootstrap admin | Create a permanent admin in the master realm, then remove the bootstrap one and its secret. | None. |
-| GitHub App key for the CI runners (`kv/infra/github-arc`) | GitHub → organisation **Settings → Developer settings → GitHub Apps → the app → Generate a private key**; write it with `bao kv patch kv/infra/github-arc github_app_private_key=@<new key>.pem`; ESO refreshes `arc-github-app` within an hour (or `kubectl annotate externalsecret -n arc-runners arc-github-app force-sync=$(date +%s) --overwrite`); restart the listener (`kubectl delete pod -n arc-systems -l app.kubernetes.io/component=runner-scale-set-listener`); then delete the old key on GitHub. See [Self-hosted runners](../deploy/self-hosted-runners.md#rotate-the-github-app-key). | Queued jobs wait until the listener is back (seconds). |
 
 ## Troubleshooting
 

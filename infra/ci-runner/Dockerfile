@@ -5,7 +5,7 @@
 # `go test -race` needs. Built and published by
 # .github/workflows/ci-runner-image.yml as
 # ghcr.io/aglelectronics/ci-runner:<RUNNER_VERSION>-<BUILD> (see VERSION).
-# Docs: https://aglelectronics.github.io/con-services/deploy/self-hosted-runners/
+# Docs: https://aglelectronics.github.io/con-services/contributing/ci/#where-it-runs
 FROM ghcr.io/actions/actions-runner:2.338.2@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
 
 USER root

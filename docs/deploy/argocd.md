@@ -1,9 +1,11 @@
 # Argo CD and cluster.yaml
 
 This is the main installation guide. You copy the template, fill in its
-one settings file, install Argo CD and apply one object; Argo CD then
-installs every component in the right order. With a cluster that meets the
-[Prerequisites](prerequisites.md), plan about one hour.
+one settings file, connect it to your Argo CD, prepare OpenBao and apply one object;
+Argo CD then installs every component in the right order. With a cluster
+that meets the [Prerequisites](prerequisites.md) (including Argo CD,
+cert-manager, External Secrets Operator, OpenBao and CloudNativePG, which
+the template uses but does not install), plan about one hour.
 
 ## Terms used on this page
 
@@ -13,7 +15,7 @@ installs every component in the right order. With a cluster that meets the
 
 **Application**
 :   An Argo CD object that says "render this chart and apply it to that
-    namespace". Each component (cert-manager, OpenBao, Den, ...) is one
+    namespace". Each component (PostgreSQL, Keycloak, Den, ...) is one
     Application.
 
 **Root Application (app of apps)**
@@ -36,10 +38,9 @@ cluster.yaml              <- the only file you edit
 charts/root/              <- renders every Application from cluster.yaml
   values.yaml             <- defaults for every setting (do not edit; override in cluster.yaml)
   values.schema.json      <- rejects unknown or misspelt keys
-charts/<component>/       <- small charts for cluster-specific objects (gateway, postgres, keycloak, ...)
-values/<component>.yaml   <- fixed settings for the upstream charts (cert-manager, OpenBao, ...)
+charts/<component>/       <- small charts for cluster-specific objects (gateway, postgres, keycloak, secret-store, ...)
 components/               <- fixed Kustomize folders (internal CA, namespaces, ...)
-bootstrap/                <- install-root.sh, Argo CD values, OpenBao scripts, example-k3s/
+bootstrap/                <- install-root.sh, OpenBao configure and seed scripts, reference Argo CD values
 examples/cluster.example-filled.yaml   <- a complete example with example.org
 ```
 
@@ -79,11 +80,15 @@ them from the main repository
 2. Set the optional values you need. The end of `cluster.yaml` shows the
    common ones commented out; the [full reference](#clusteryaml-reference)
    is below. Typical choices:
-    - Gateway IPs handed out by Cilium (`loadBalancer.ciliumL2`), see
+    - Fixed Gateway IPs from your Cilium LB IPAM pool
+      (`gateway.public.loadBalancerIP`, `gateway.internal.loadBalancerIP`), see
       [DNS and certificates](dns-and-certificates.md#1-choose-the-gateway-ips).
-    - `oidcHairpin.mode: coredns-custom` on k3s or AKS, see
-      [DNS and certificates](dns-and-certificates.md#inside-the-cluster-reaching-keycloak).
     - `storage.longhornSingle.enabled: true` with Longhorn.
+    - Where the prerequisites run, if not at the defaults: `openbao.server`
+      and `openbao.caBundle` (how External Secrets reaches OpenBao),
+      `externalSecrets.namespace` and `.serviceAccount`,
+      `postgres.operatorNamespace` (see
+      [Cluster prerequisites](#cluster-prerequisites)).
     - The modules to run: in the block *Pick the modules to run*, set
       `enabled: true` for each one you want. All eight are off by default;
       Den is always deployed. Each module waits for Den until you pair it
@@ -128,24 +133,19 @@ them from the main repository
     git add cluster.yaml && git commit -m "Configure cluster" && git push
     ```
 
-## 3. Install Argo CD
+## 3. Connect Argo CD
 
-The template's Argo CD values install Argo CD v3.6.1 highly available: 2
-replicas of the API server, the repo-server and the ApplicationSet
-controller with PodDisruptionBudgets, Redis with Sentinel (3 Redis and 3
-HAProxy pods on 3 nodes), resource requests and limits on every container,
-and the health check for Application objects that makes sync waves wait
-for each other.
+Argo CD is a prerequisite: the template does not install, upgrade or
+expose it. Check that it has the health check for Application objects
+([Prerequisites: Argo CD](prerequisites.md#9-argo-cd)); without it every
+sync wave starts at once:
 
 ```sh
-helm repo add argo https://argoproj.github.io/argo-helm
-helm install argocd argo/argo-cd --version 10.14.0 -n argocd --create-namespace \
-  -f bootstrap/argocd/values.yaml
-kubectl -n argocd rollout status deploy/argocd-server
+kubectl -n argocd get cm argocd-cm -o yaml | grep -c argoproj.io_Application
 ```
 
 ```text
-deployment "argocd-server" successfully rolled out
+1
 ```
 
 **Private copy?** Give Argo CD a read-only credential for it, for example a
@@ -163,7 +163,23 @@ kubectl -n argocd label secret repo-gitops argocd.argoproj.io/secret-type=reposi
 That token is a real secret: keep it in your password manager, see
 [Secrets](../operations/secrets.md).
 
-## 4. Apply the root Application
+## 4. Prepare and fill OpenBao
+
+The template reads every secret from the cluster's OpenBao. Do this once
+per cluster, with a token from whoever runs OpenBao:
+
+```sh
+BAO_TOKEN=change-me bash bootstrap/scripts/openbao-configure.sh
+BAO_TOKEN=change-me bash bootstrap/scripts/openbao-seed.sh
+```
+
+The first script creates the KV engine, the Kubernetes login and the
+read-only policy for External Secrets; the second generates the random
+secrets and asks for your S3 keys, SMTP server and DNS token. Both are
+explained, with their output, in
+[Secrets with OpenBao](secrets-openbao.md).
+
+## 5. Apply the root Application
 
 ```sh
 bash bootstrap/install-root.sh
@@ -171,6 +187,8 @@ bash bootstrap/install-root.sh
 
 ```text
 ==> Checking /home/you/con-services-gitops/cluster.yaml
+==> Checking the cluster prerequisites
+==> Prerequisites found
 ==> Argo CD will read https://github.com/your-org/con-services-gitops.git
 application.argoproj.io/root created
 
@@ -180,10 +198,14 @@ Root Application applied. Follow the sync waves with:
 ```
 
 The script renders only the root Application from your `cluster.yaml`
-(the same checks as in step 2) and applies it. `--dry-run` prints it
-without applying.
+(the same checks as in step 2), checks that the
+[prerequisites](prerequisites.md) are installed (the CRDs of cert-manager,
+trust-manager, External Secrets, CloudNativePG and the Barman Cloud plugin,
+External Secrets' service account and OpenBao's CA from `cluster.yaml`),
+and applies it. `--dry-run` prints it without checking or applying;
+`--skip-preflight` skips the prerequisite check.
 
-## 5. Watch the sync waves
+## 6. Watch the sync waves
 
 ```sh
 kubectl get applications -n argocd -w
@@ -191,40 +213,31 @@ kubectl get applications -n argocd -w
 
 | Wave | Applications | Done when |
 | --- | --- | --- |
-| -10 | `cilium-lb` (only with `loadBalancer.ciliumL2.enabled`) | IP pool and L2 policy exist |
-| -9 | `cert-manager` | 2 replicas each of controller, webhook, cainjector |
-| -8 | `trust-manager`, `longhorn-storage` (only with `storage.longhornSingle.enabled`) | trust-manager running; StorageClass `longhorn-single` |
+| -8 | `longhorn-storage` (only with `storage.longhornSingle.enabled`) | StorageClass `longhorn-single` |
 | -7 | `pki` | ClusterIssuer `conservices-internal-ca` ready |
-| -6 | `external-secrets` | External Secrets Operator running |
-| -5 | `openbao` | **waits for you**: initialise and unseal OpenBao (step 6) |
-| -4 | `cluster-secret-store`, `oidc-hairpin` (only with `oidcHairpin.mode: coredns-custom`) | ClusterSecretStore `openbao` valid |
+| -4 | `cluster-secret-store` | ClusterSecretStore `openbao` valid (needs step 4) |
 | -3 | `letsencrypt` | ClusterIssuers `letsencrypt-staging` and `letsencrypt-prod` ready |
 | -2 | `gateway` | certificate `wildcard-tls` issued, Gateways `public` and `internal` programmed |
-| -1 | `argocd` (only with `argocd.selfManage`) | Argo CD manages itself; UI at `https://argocd.<domain>` |
-| 0 | `platform-namespaces` | namespaces `cnpg-system`, `conservices-data`, `conservices-identity` |
-| 1 | `cnpg-operator` | CloudNativePG operator running |
-| 2 | `cnpg-barman-cloud`, `keycloak-operator` | both operators running |
+| 0 | `platform-namespaces` | namespaces `conservices-data`, `conservices-identity` |
+| 2 | `keycloak-operator` | Keycloak operator running |
 | 3 | `postgres` | PostgreSQL cluster `conservices-pg` healthy, 3 instances ([Data](data.md)) |
 | 4 | `keycloak` | Keycloak ready, realms imported ([Identity](identity.md)) |
 | 5 | `den` | Den running ([Den and the modules](apps.md)) |
 | 10 | one per enabled module | the module running |
-| 20, 21 | `arc-controller`, `arc-runners` (only with `arc.enabled`) | [Self-hosted CI runners](self-hosted-runners.md) |
 
-## 6. Do the steps only a person can do
+## 7. Do the steps only a person can do
 
 Argo CD waits at these points and continues by itself once they are done:
 
-1. **Wave -5, OpenBao:** the `openbao` Application stays `Progressing`
-   because a new OpenBao is uninitialised and sealed. Follow
-   [Secrets with OpenBao](secrets-openbao.md): `openbao-init.sh`, then
-   `openbao-seed.sh`, which asks for your S3 keys, SMTP server and DNS
-   token and generates every other secret.
+1. **Wave -4, secrets:** `cluster-secret-store` stays `Degraded` until
+   OpenBao is prepared (step 4). An entry you skipped in `openbao-seed.sh`
+   keeps the Application that reads it `Degraded`; run the script again.
 2. **Wave -2, certificates and DNS:** create the DNS records and the port
    forward ([DNS and certificates](dns-and-certificates.md)).
 3. **Wave 3, buckets:** the buckets must exist before PostgreSQL's first
    backup and before the apps start ([Data](data.md)).
 
-## 7. What "done" looks like
+## 8. What "done" looks like
 
 ```sh
 kubectl get applications -n argocd
@@ -232,14 +245,9 @@ kubectl get applications -n argocd
 
 ```text
 NAME                   SYNC STATUS   HEALTH STATUS
-argocd                 Synced        Healthy
-cert-manager           Synced        Healthy
 cluster-secret-store   Synced        Healthy
-cnpg-barman-cloud      Synced        Healthy
-cnpg-operator          Synced        Healthy
 den                    Synced        Healthy
 desk                   Synced        Healthy
-external-secrets       Synced        Healthy
 finance                Synced        Healthy
 gateway                Synced        Healthy
 hr                     Synced        Healthy
@@ -247,7 +255,6 @@ keycloak               Synced        Healthy
 keycloak-operator      Synced        Healthy
 learn                  Synced        Healthy
 letsencrypt            Synced        Healthy
-openbao                Synced        Healthy
 pki                    Synced        Healthy
 platform-namespaces    Synced        Healthy
 postgres               Synced        Healthy
@@ -255,30 +262,13 @@ rally                  Synced        Healthy
 root                   Synced        Healthy
 stash                  Synced        Healthy
 tasks                  Synced        Healthy
-trust-manager          Synced        Healthy
 wiki                   Synced        Healthy
 ```
 
 Then open `https://den.<domain>` and sign in ([Den and the modules](apps.md)).
-Argo CD itself is at `https://argocd.<domain>` on the **internal** Gateway
-([Internal hostnames](dns-and-certificates.md#internal-hostnames)).
 
-## Log in to Argo CD
-
-Before the internal Gateway exists, use a port-forward:
-
-```sh
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
-kubectl -n argocd port-forward svc/argocd-server 8443:443
-```
-
-Open <https://localhost:8443> (self-signed certificate at this point), user
-`admin`, the password printed by the first command. Change it (**User Info
-→ Update Password**) and delete the initial secret:
-
-```sh
-kubectl -n argocd delete secret argocd-initial-admin-secret
-```
+The same states are visible in Argo CD's UI, wherever your cluster exposes
+it; the template does not publish it.
 
 ## Changing settings later
 
@@ -303,11 +293,10 @@ den:
 - **Con Services:** set `images.tag` and `charts.targetRevision` to the new
   release and read the [changelog](https://github.com/AGlElectronics/con-services/blob/main/CHANGELOG.md)
   first. Releases that need action start with **BREAKING:**.
-- **Argo CD:** with `argocd.selfManage: true`, change the chart version in
-  `charts/root/templates/infrastructure.yaml` (from a new template
-  release), push, and Argo CD upgrades itself. Read the
-  [upgrade notes](https://argo-cd.readthedocs.io/en/stable/operator-manual/upgrading/overview/)
-  first.
+- **The prerequisites** (Argo CD, cert-manager, trust-manager, External
+  Secrets, OpenBao, CloudNativePG) are upgraded by whoever runs them, not by the
+  template. Before a minor upgrade, check that the template release you run
+  lists the new version on [Prerequisites](prerequisites.md#at-a-glance).
 - **The template itself:** merge the new template release into your copy
   (`git remote add template https://github.com/AGlElectronics/con-services-gitops.git`,
   `git fetch template`, `git merge template/main`). Conflicts can only
@@ -324,7 +313,7 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `domain` | `change-me` | Base domain. Apps on `<app>.<domain>` (Rally on `events.`, its submission site on `submit.`), Keycloak on `auth.` and `auth-admin.`, Argo CD on `argocd.`, OpenBao on `bao.` |
+| `domain` | `change-me` | Base domain. Apps on `<app>.<domain>` (Rally on `events.`, its submission site on `submit.`), Keycloak on `auth.` and `auth-admin.` |
 | `git.repoURL` | `change-me` | HTTPS URL of your copy; every Application reads it |
 | `acme.email` | `change-me` | Let's Encrypt account e-mail |
 | `s3.endpoint` | `change-me` | HTTPS URL of the S3 service, without bucket |
@@ -332,7 +321,6 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 | `s3.bucketPrefix` | `change-me` | Prefix of every bucket name |
 | `s3.fqdns` | `[change-me]` | Host names of the endpoint, allowed in the egress network policies |
 | `den.backupAgeRecipients` | `change-me` | age public key(s), comma-separated, Den encrypts its backups to |
-| `loadBalancer.ciliumL2.blocks`, `gateway.public.loadBalancerIP`, `gateway.internal.loadBalancerIP` | empty | Required only with `loadBalancer.ciliumL2.enabled: true` |
 
 ### Git, certificates, S3
 
@@ -342,7 +330,6 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 | `acme.issuer` | `letsencrypt-staging` | Issuer of the wildcard certificate; set `letsencrypt-prod` once staging works |
 | `acme.dns01.provider` | `cloudflare` | `cloudflare` (token in OpenBao `kv/infra/cloudflare`) or `custom` |
 | `acme.dns01.solvers` | `[]` | With `custom`: cert-manager ACME solvers ([format](https://cert-manager.io/docs/configuration/acme/dns01/)) |
-| `acme.recursiveNameservers` | `1.1.1.1:53,8.8.8.8:53` | Resolvers cert-manager uses to check DNS-01 records |
 | `s3.pathStyle` | `true` | `true`: `https://<endpoint>/<bucket>`; `false`: `https://<bucket>.<endpoint>` |
 | `s3.backup.endpoint`, `s3.backup.region` | empty (same as `s3.*`) | Separate S3 service for PostgreSQL and Den backups (recommended: another region) |
 | `s3.backup.pathStyle` | empty (same as `s3.pathStyle`) | Addressing style of the backup service |
@@ -372,11 +359,6 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 | `gateway.className` | `cilium` | GatewayClass of both Gateways |
 | `gateway.public.loadBalancerIP`, `gateway.internal.loadBalancerIP` | empty | Fixed IP (Cilium LB IPAM annotation `lbipam.cilium.io/ips`); empty: any |
 | `gateway.public.annotations`, `gateway.internal.annotations` | `{}` | Extra annotations for the Gateway's Service (other load balancers) |
-| `loadBalancer.ciliumL2.enabled` | `false` | Create a Cilium LB IPAM pool and L2 announcement policy |
-| `loadBalancer.ciliumL2.blocks` | `[]` | CIDRs (`192.0.2.240/29`) or ranges (`{start: 192.0.2.240, stop: 192.0.2.247}`) |
-| `loadBalancer.ciliumL2.interfaces` | `[]` | Node interfaces to announce on (regular expressions); empty: all |
-| `oidcHairpin.mode` | `none` | `coredns-custom`: write `kube-system/coredns-custom` so pods reach `auth.<domain>` in-cluster (k3s, AKS) |
-| `adminRoutes.openbao` | `true` | OpenBao UI on `bao.<domain>` (internal Gateway) |
 | `adminRoutes.longhorn` | `false` | Longhorn UI on `longhorn.<domain>` (internal; it has no login) |
 | `adminRoutes.hubble` | `false` | Hubble UI on `hubble.<domain>` (internal) |
 
@@ -384,48 +366,38 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `storage.className` | empty (cluster default) | StorageClass for the PostgreSQL and OpenBao volumes |
-| `storage.longhornSingle.enabled` | `false` | Create StorageClass `longhorn-single` (1 Longhorn copy) and use it for PostgreSQL and OpenBao |
-| `openbao.storage.className`, `postgres.storage.className` | empty | Per-component StorageClass, overrides the two keys above |
-| `openbao.storage.dataSize`, `openbao.storage.auditSize` | `10Gi`, `5Gi` | OpenBao volume sizes |
+| `storage.className` | empty (cluster default) | StorageClass for the PostgreSQL volumes |
+| `storage.longhornSingle.enabled` | `false` | Create StorageClass `longhorn-single` (1 Longhorn copy) and use it for PostgreSQL |
+| `postgres.storage.className` | empty | StorageClass for PostgreSQL only, overrides the two keys above |
 | `postgres.storage.size`, `postgres.storage.walSize` | `20Gi`, `10Gi` | PostgreSQL data and WAL volume sizes |
 
+### Cluster prerequisites
+
+Where the services the template uses but does not install
+([Prerequisites](prerequisites.md)) run. The defaults match their upstream
+charts installed with default names.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `openbao.server` | `https://openbao-active.openbao.svc:8200` | OpenBao's API as seen from External Secrets. Use an address that reaches only the unsealed leader (with the upstream chart: the Service `openbao-active`); the plain `openbao` Service also sends requests to sealed pods |
+| `openbao.kvPath` | `kv` | Mount path of the KV version 2 engine Con Services uses; `openbao-configure.sh` creates it |
+| `openbao.caBundle.kind`, `.name`, `.key`, `.namespace` | `ConfigMap`, `openbao-ca`, `ca.crt`, empty (`externalSecrets.namespace`) | The CA certificate that signed OpenBao's TLS certificate. Empty `name`: none (OpenBao has a publicly trusted certificate) |
+| `openbao.auth.mountPath`, `openbao.auth.role` | `kubernetes`, `external-secrets` | Kubernetes auth method and role External Secrets logs in with; `openbao-configure.sh` creates both |
+| `externalSecrets.namespace`, `externalSecrets.serviceAccount` | `external-secrets`, `external-secrets` | Namespace and service account of External Secrets Operator |
+| `postgres.operatorNamespace` | `cnpg-system` | Namespace of the CloudNativePG operator and the Barman Cloud plugin; the database's network policy lets it in |
 ### Components
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `certManager.replicas` | `2` | Replicas of controller, webhook and cainjector |
-| `certManager.resources.{controller,webhook,cainjector,startupapicheck}` | see [Sizing](sizing.md) | Resources |
-| `trustManager.replicas`, `trustManager.resources.{controller,defaultPackage}` | `2` | trust-manager |
-| `externalSecrets.replicas`, `externalSecrets.resources.{controller,webhook,certController}` | `2` | External Secrets Operator |
-| `openbao.replicas` | `3` | Raft voters (1, 3 or 5) |
-| `openbao.resources` | 100m/256Mi to 1/512Mi | OpenBao server |
-| `cnpg.operator.replicas`, `cnpg.operator.resources` | `2` | CloudNativePG operator |
-| `cnpg.barmanCloud.replicas`, `cnpg.barmanCloud.resources` | `1` | Barman Cloud plugin |
-| `cnpg.barmanCloud.sidecarResources` | 50m/128Mi to 500m/512Mi | Backup sidecar in every PostgreSQL pod |
 | `postgres.instances` | `3` | PostgreSQL instances (1 primary, the rest standbys; synchronous when more than 1) |
 | `postgres.resources` | 250m/1Gi to 2/1Gi | Each PostgreSQL instance |
 | `postgres.backup.schedule` | `0 15 2 * * *` | Base backup time (six fields, seconds first): 02:15 every day |
 | `postgres.backup.retention` | `30d` | How long backups are kept |
+| `postgres.backup.sidecarResources` | 50m/128Mi to 500m/512Mi | Barman Cloud sidecar in every PostgreSQL pod (WAL archiving) |
 | `keycloakOperator.resources` | 100m/256Mi to 500m/512Mi | Keycloak operator |
 | `keycloak.instances` | `2` | Keycloak pods |
 | `keycloak.resources` | 250m/1Gi to 2/2Gi | Each Keycloak pod |
 | `keycloak.smtp.enabled` | `true` | Realms send mail through OpenBao `kv/conservices/keycloak/smtp` |
-| `argocd.selfManage` | `true` | Argo CD manages its own installation with `bootstrap/argocd/values.yaml` |
-| `<component>.values` | `{}` | Extra values for that upstream chart (`certManager`, `trustManager`, `externalSecrets`, `openbao`, `cnpg.operator`, `cnpg.barmanCloud`, `argocd`) |
-
-### Self-hosted CI runners
-
-| Key | Default | What it does |
-| --- | --- | --- |
-| `arc.enabled` | `false` | Install Actions Runner Controller and a runner scale set |
-| `arc.githubConfigUrl` | `https://github.com/your-org` | Organisation or repository the runners register with (must be changed when enabled) |
-| `arc.runnerScaleSetName` | `arc-conservices` | Name used in `runs-on:` |
-| `arc.minRunners`, `arc.maxRunners` | `0`, `3` | Idle and maximum runners |
-| `arc.runnerImage` | `ghcr.io/aglelectronics/ci-runner:2.338.2-1` | Runner image |
-| `arc.buildkitImage` | `moby/buildkit:v0.34.2-rootless` | Image build sidecar |
-| `arc.testDatabaseImage` | `postgres:16.15-alpine` | Test database sidecar |
-| `arc.resources.{controller,listener,runner,buildkit,testDatabase}` | see [Sizing](sizing.md#self-hosted-runners) | Resources |
 
 ## Troubleshooting
 
@@ -443,15 +415,20 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
     it shows the same message with the key's path.
 
 **Every Application starts at once instead of wave by wave**
-:   The Application health check is missing from `argocd-cm`. It comes from
-    `bootstrap/argocd/values.yaml`; check
-    `kubectl -n argocd get cm argocd-cm -o yaml | grep argoproj.io_Application`.
-    If Argo CD was installed without that file, run `helm upgrade` with it.
+:   The Application health check is missing from `argocd-cm`; check
+    `kubectl -n argocd get cm argocd-cm -o yaml | grep argoproj.io_Application`
+    and add the block from
+    [Prerequisites: Argo CD](prerequisites.md#9-argo-cd).
 
-**`openbao` stays `Progressing` forever**
-:   OpenBao is sealed. Run `openbao-init.sh` (first time) or
-    `openbao-unseal.sh` (after restarts); see
-    [Secrets with OpenBao](secrets-openbao.md).
+**`install-root.sh` stops with `missing: ...`**
+:   A prerequisite is not installed, or not where `cluster.yaml` says.
+    See [Prerequisites](prerequisites.md#troubleshooting).
+
+**`cluster-secret-store` stays `Degraded`**
+:   External Secrets cannot log in to OpenBao. `kubectl get clustersecretstore openbao`
+    shows why; the usual causes are that `openbao-configure.sh` was not run,
+    OpenBao is sealed, or `openbao.server` / `openbao.caBundle` do not match
+    your OpenBao. See [Secrets with OpenBao](secrets-openbao.md#troubleshooting).
 
 **`letsencrypt` or `gateway` stays `Progressing` or `Degraded`**
 :   Usually the DNS token: `kubectl -n cert-manager get externalsecret cloudflare-api-token`
@@ -466,12 +443,5 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 **A sync fails with `the server could not find the requested resource` for a CRD kind**
 :   The CRD comes from an earlier wave that is not Healthy yet. Fix that
     Application first; the automatic retry picks the rest up.
-
-**`argocd.<domain>` returns `upstream connect error` or `503`**
-:   The Gateway cannot verify argocd-server's certificate. Check that the
-    namespace has the internal CA bundle (`kubectl -n argocd get cm conservices-internal-ca`)
-    and that the Certificate is ready (`kubectl -n argocd get certificate`).
-    Never "fix" this with `wellKnownCACertificates`: with Cilium it
-    silently sends plaintext.
 
 Next: [DNS and certificates](dns-and-certificates.md).

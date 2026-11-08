@@ -6,6 +6,8 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "CHANGELOG.md"
+      - "scripts/mkdocs_changelog.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 

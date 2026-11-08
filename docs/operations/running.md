@@ -17,7 +17,7 @@ and fix the usual problems. Upgrading is on its own page,
 ## Set up your own installation
 
 1. **Prepare the cluster:** Cilium with the Gateway API turned on
-   ([install steps](network-policies.md#installing-cilium)), a Gateway
+   ([what it needs](network-policies.md#what-con-services-needs-from-cilium)), a Gateway
    called `public` in the namespace `conservices-gateway` with a
    load-balancer address ([The Gateway](#the-gateway)), cert-manager and
    trust-manager ([Internal TLS](internal-tls.md#set-it-up)), and the

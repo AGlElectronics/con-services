@@ -91,19 +91,15 @@ those only work if the cluster's network plugin (CNI) enforces them.
 ### Encryption inside the cluster
 
 Con Services encrypts its own connections inside the cluster with TLS and a
-private certificate authority run by cert-manager and trust-manager. Install
-both before you apply the platform; see [Internal TLS](internal-tls.md).
+private certificate authority run by cert-manager and trust-manager. Both
+must run before you apply the platform; see [Internal TLS](internal-tls.md).
 
-With Cilium, also turn on its transparent encryption with WireGuard, so
-traffic between nodes is encrypted even for components outside Con Services:
-
-```sh
-cilium install --set encryption.enabled=true --set encryption.type=wireguard --set encryption.nodeEncryption=true
-cilium encrypt status
-```
-
-`cilium encrypt status` should report `Encryption: Wireguard` and one peer
-per other node. The two layers complement each other: WireGuard covers every
+When the nodes share a network with other machines, the cluster should also
+encrypt traffic between nodes, for example with Cilium's
+[transparent encryption with WireGuard](https://docs.cilium.io/en/stable/security/network/encryption-wireguard/).
+That is part of running the cluster
+([Prerequisites](../deploy/prerequisites.md#12-how-the-cluster-is-run)).
+The two layers complement each other: WireGuard covers every
 packet between nodes, internal TLS proves *which* service answers and also
 protects connections that leave the cluster.
 

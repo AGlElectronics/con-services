@@ -105,28 +105,36 @@ cluster.
 ## Set it up
 
 Internal TLS is part of the platform manifests and on by default in every
-module's Helm chart. You only need cert-manager and trust-manager in the
-cluster **before** you apply Con Services.
+module's Helm chart. It needs cert-manager and trust-manager in the
+cluster **before** you apply Con Services. They are cluster prerequisites,
+installed once per cluster by its admin; installing them is covered by their
+own documentation
+([cert-manager](https://cert-manager.io/docs/installation/),
+[trust-manager](https://cert-manager.io/docs/trust/trust-manager/installation/)),
+not here. Tested versions: cert-manager v1.21.3, trust-manager v0.26.0.
+Both must run in the namespace `cert-manager`, because the internal CA's
+Secret lives there.
 
-1. **Install cert-manager** (once per cluster) and wait until it is ready:
-
-    ```sh
-    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.3/cert-manager.yaml
-    kubectl wait --namespace cert-manager --for=condition=Available deployment --all --timeout=180s
-    ```
-
-    You should see three lines ending in `condition met`
-    (`cert-manager`, `cert-manager-cainjector`, `cert-manager-webhook`).
-
-2. **Install trust-manager** into the same namespace with
-   [Helm](https://helm.sh/docs/intro/install/):
+1. **Check that cert-manager and trust-manager run:**
 
     ```sh
-    helm upgrade --install trust-manager oci://quay.io/jetstack/charts/trust-manager --namespace cert-manager --version v0.26.0 --wait
+    kubectl get deploy -n cert-manager
     ```
 
-    You should see `STATUS: deployed`. Check the published versions of
-    both projects and pin the newest stable ones in your own runbook.
+    ```text
+    NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+    cert-manager              1/1     1            1           3d
+    cert-manager-cainjector   1/1     1            1           3d
+    cert-manager-webhook      1/1     1            1           3d
+    trust-manager             1/1     1            1           3d
+    ```
+
+    Every line must show all replicas ready. No output, or no
+    `trust-manager` line, means a prerequisite is missing.
+
+2. **Local trial only:** on a throw-away cluster without them,
+   [Run Den on Kubernetes](../getting-started/den-quickstart.md#4d-cert-manager-and-trust-manager)
+   shows the two install commands.
 
 3. **Apply the platform** as usual, for example
    `kubectl apply -k deploy/kubernetes/overlays/example`. Among the output
@@ -466,13 +474,14 @@ page yet; keep that host's Docker network private.
   `app.kubernetes.io/part-of=conservices`; check with
   `kubectl get namespace <name> --show-labels`. Otherwise check
   `kubectl get pods -n cert-manager` (all `Running`), then
-  `kubectl get certificate -A` and `kubectl get bundle`. Install the
-  missing add-on as in [Set it up](#set-it-up); the pods start by
+  `kubectl get certificate -A` and `kubectl get bundle`. Have the
+  missing add-on installed (see [Set it up](#set-it-up)); the pods start by
   themselves once the Secret and ConfigMap exist.
 
 **`kubectl apply` fails with `no matches for kind "Certificate" in version "cert-manager.io/v1"` or `no matches for kind "Bundle"`**
 : cert-manager or trust-manager is not installed, so Kubernetes does not
-  know these object types. Install them first, then apply again.
+  know these object types. They are cluster prerequisites; have them
+  installed first (see [Set it up](#set-it-up)), then apply again.
 
 **A `Certificate` stays `READY False`**
 : Read the reason: `kubectl describe certificate -n <namespace> <name>`.

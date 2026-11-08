@@ -132,7 +132,7 @@ namespaces start from a default deny with only DNS allowed.
 | --- | --- | --- | --- | --- |
 | module namespaces (`conservices.io/tier: module`), `conservices-den`, `conservices-identity` | PostgreSQL pods (`conservices.io/postgres: "true"`) | 5432 | NetworkPolicy `conservices-pg` | Applications, Den's operator and Keycloak reach their databases. |
 | PostgreSQL pods | PostgreSQL pods | 5432, 8000 | `conservices-pg` | Streaming replication and the instance manager's status API. |
-| CloudNativePG operator (`cnpg-system`) | PostgreSQL pods | 8000, 5432 | `conservices-pg` | Status checks, switchovers, managing roles and databases. |
+| CloudNativePG operator (namespace from `postgres.operatorNamespace`, default `cnpg-system`) | PostgreSQL pods | 8000, 5432 | `conservices-pg` | Status checks, switchovers, managing roles and databases. The operator is a prerequisite; if its own namespace has a default deny, its egress to `conservices-data` is the cluster admin's rule. |
 | PostgreSQL pods | Kubernetes API (`toEntities: kube-apiserver`) | 6443 | CiliumNetworkPolicy `conservices-pg-kube-apiserver` | The instance manager watches its `Cluster` object. |
 | PostgreSQL pods | external S3 by host name | 443 | CiliumNetworkPolicy `conservices-pg-s3` | WAL archive and base backups ([Data](../deploy/data.md#network-policy-for-s3)). |
 | Cilium gateway (reserved identity `ingress`) | Keycloak pods | 8443 | CiliumNetworkPolicy in `conservices-identity` (`fromEntities: [ingress]`) | `auth.<domain>` (public) and `auth-admin.<domain>` (internal Gateway). |
@@ -151,7 +151,10 @@ Every flow in this table except DNS is encrypted with TLS and checked against
 the internal certificate authority (external S3: against public CAs); see
 [Internal TLS](internal-tls.md).
 cert-manager and trust-manager need no flows of their own: they only talk to
-the Kubernetes API, which NetworkPolicies do not cover.
+the Kubernetes API, which NetworkPolicies do not cover. External Secrets
+reaching OpenBao (`openbao.server`, port 8200) runs between two
+prerequisites outside the Con Services namespaces, so the template adds no
+policy for it; if your cluster restricts that traffic, allow it there.
 
 ## Calls between modules
 
@@ -378,61 +381,30 @@ kubectl debug -n conservices-den deploy/den-backend -it --image=curlimages/curl:
 204
 ```
 
-### Installing Cilium
+### What Con Services needs from Cilium
 
-On a new cluster, install Cilium **before** anything else, because the CNI
-is chosen when the cluster's networking starts. The production procedure
-(k3s with Cilium replacing kube-proxy, WireGuard, the Gateway API and LB
-IPAM) is in [Deploy with Argo CD: the cluster](../deploy/cluster.md); the
-local trial's settings are in
-[the quickstart](../getting-started/den-quickstart.md#4c-cilium). The short
-version, with Helm:
+Cilium is part of the cluster, not of Con Services; installing and
+upgrading it is up to whoever runs the cluster
+([Cilium documentation](https://docs.cilium.io/en/stable/installation/k8s-install-helm/)).
+Con Services relies on:
 
-1. Install the Cilium command-line tool from
-   <https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/>.
-2. Install the Gateway API definitions, then Cilium with the Gateway API
-   and Hubble turned on (the Gateway API needs Cilium's kube-proxy
-   replacement; see the pages above for the cluster-specific values):
+- standard `NetworkPolicy`, enforced;
+- Cilium's Gateway API support (which needs its kube-proxy replacement);
+- `CiliumNetworkPolicy` for the gateway (`fromEntities: [ingress]`) and for
+  `toFQDNs` egress rules to S3.
 
-    ```sh
-    kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
-    helm repo add cilium https://helm.cilium.io
-    helm install cilium cilium/cilium --version 1.20.4 -n kube-system \
-      --set kubeProxyReplacement=true --set gatewayAPI.enabled=true \
-      --set hubble.relay.enabled=true --set hubble.ui.enabled=true
-    ```
+The exact settings are on
+[Prerequisites](../deploy/prerequisites.md#2-cilium). After installing
+Con Services, run the enforcement test above. If Hubble is turned on, it
+shows the connections a policy drops while you use the suite:
 
-3. Wait for it to be healthy:
+```sh
+hubble observe --namespace conservices-den --verdict DROPPED -f
+```
 
-    ```sh
-    cilium status --wait
-    ```
-
-    ```text
-        /¯¯\
-     /¯¯\__/¯¯\    Cilium:             OK
-     \__/¯¯\__/    Operator:           OK
-     /¯¯\__/¯¯\    Envoy DaemonSet:    OK
-     \__/¯¯\__/    Hubble Relay:       OK
-        \__/       ClusterMesh:        disabled
-    ```
-
-4. Install Con Services and run the enforcement test above.
-5. Watch dropped connections while you use the suite:
-
-    ```sh
-    cilium hubble port-forward &
-    hubble observe --namespace conservices-den --verdict DROPPED -f
-    ```
-
-    ```text
-    Nov  6 14:12:03.120: default/np-test:41234 (ID:9811) <> conservices-den/den-operator-5c6f9d7b84-mn2rs:8080 (ID:2271) policy-verdict:none INGRESS DENIED (TCP Flags: SYN)
-    ```
-
-Pin the Cilium version like any other image and follow Cilium's upgrade
-guide; Con Services relies on standard NetworkPolicy, Cilium's Gateway API,
-and `CiliumNetworkPolicy` for the gateway (`fromEntities: [ingress]`) and
-for `toFQDNs`.
+```text
+Nov  6 14:12:03.120: default/np-test:41234 (ID:9811) <> conservices-den/den-operator-5c6f9d7b84-mn2rs:8080 (ID:2271) policy-verdict:none INGRESS DENIED (TCP Flags: SYN)
+```
 
 ## Pod Security
 

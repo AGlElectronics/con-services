@@ -49,8 +49,9 @@ and `keycloak.smtp.enabled` from `cluster.yaml` to `charts/keycloak`.
 - **Services:** `keycloak` (port 8443, used by Den's backend for the admin
   API) and `keycloak-public` (443 → 8443). Inside the cluster, CoreDNS
   answers `auth.example.org` with `keycloak-public`, so backends check
-  tokens without leaving the cluster (`oidcHairpin.mode` in `cluster.yaml`;
-  see [Argo CD](argocd.md#clusteryaml-reference)).
+  tokens without leaving the cluster. That CoreDNS rewrite is part of the
+  cluster, not the template; see
+  [DNS and certificates](dns-and-certificates.md#inside-the-cluster-reaching-keycloak).
 - **Network policies** (`charts/keycloak/templates/networkpolicies.yaml`):
   ingress on 8443 only from the Gateway, Den and the module namespaces;
   the instances talk to each other on 7800 and 57800; egress to
@@ -276,9 +277,8 @@ For a new module `shop` with the browser client `shop-spa`:
 : The backend cannot reach Keycloak in the cluster. Check that CoreDNS
   answers `auth.example.org` with the `keycloak-public` Service
   (`kubectl run -it --rm dns --image=busybox:1.37 --restart=Never -- nslookup auth.example.org`).
-  If it returns the public address instead, set `oidcHairpin.mode` in
-  `cluster.yaml`, or add the rewrite to your CoreDNS yourself when the
-  mode is `none`.
+  If it returns the public address instead, add the rewrite to your
+  CoreDNS ([how](dns-and-certificates.md#inside-the-cluster-reaching-keycloak)).
 
 **PodSecurity warnings in `conservices-identity`**
 : The namespace enforces `baseline` and only warns about `restricted`,

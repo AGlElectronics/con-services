@@ -13,8 +13,10 @@ This guide sets up where Con Services keeps its data:
 
 **You need:** the previous guides done ([Argo CD](argocd.md),
 [DNS and certificates](dns-and-certificates.md),
-[Secrets with OpenBao](secrets-openbao.md)), so Argo CD, cert-manager,
-trust-manager, External Secrets and an unsealed OpenBao are running.
+[Secrets with OpenBao](secrets-openbao.md)), and the
+[prerequisites](prerequisites.md) running: Argo CD, cert-manager,
+trust-manager, External Secrets, an unsealed OpenBao, and the CloudNativePG
+operator with its Barman Cloud plugin.
 
 **You are done when:** `kubectl get cluster -n conservices-data` shows
 `Cluster in healthy state` with 3 ready instances, the first base backup is
@@ -404,10 +406,15 @@ which of these features it supports; all providers in the
 
 | Piece | Where | Argo CD Application (sync wave) |
 | --- | --- | --- |
-| Namespaces `cnpg-system`, `conservices-data`, `conservices-identity` with default-deny policies | `components/platform-namespaces` | `platform-namespaces` (0) |
-| CloudNativePG operator 1.30.1 (chart `cloudnative-pg` 0.29.1), 2 replicas | `cnpg-system` | `cnpg-operator` (1) |
-| Barman Cloud plugin v0.15.1 (chart `plugin-barman-cloud` 0.8.1): backups to S3 | `cnpg-system` | `cnpg-barman-cloud` (2) |
+| Namespaces `conservices-data`, `conservices-identity` with default-deny policies | `components/platform-namespaces` | `platform-namespaces` (0) |
 | PostgreSQL cluster `conservices-pg`, roles, databases, backups (chart `charts/postgres`) | `conservices-data` | `postgres` (3) |
+
+The CloudNativePG operator (tested: 1.30.1) and the Barman Cloud plugin
+(tested: v0.15.1), which runs the backups to S3, are
+[prerequisites](prerequisites.md#8-cloudnativepg-and-the-barman-cloud-plugin):
+the cluster's admin installs them, in the namespace set in
+`postgres.operatorNamespace` (default `cnpg-system`). The database's
+network policy admits the operator from that namespace.
 
 Argo CD syncs the waves in order and waits until each is healthy before
 starting the next. Keycloak (wave 4), Den (5) and the modules (10) follow.
@@ -460,7 +467,7 @@ with the defaults of the `postgres` block in `cluster.yaml`:
    itself. Watch them:
 
     ```sh
-    kubectl get applications -n argocd | grep -E "platform|cnpg|postgres"
+    kubectl get applications -n argocd | grep -E "platform|postgres"
     ```
 
     After a few minutes every line shows `Synced   Healthy`.

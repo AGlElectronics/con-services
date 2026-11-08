@@ -7,6 +7,10 @@ changelog describes that module; the suite's describes the shared pieces
 scripts and these docs).
 
 The changelogs follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The [Changelog](../changelog.md) page of this site shows the suite's
+changelog and links to every other one. It is built from the root
+`CHANGELOG.md`, so write links to docs pages there as `docs/<page>.md`
+(they work on GitHub, and the site turns them into links between pages).
 
 ## The format
 
@@ -109,7 +113,13 @@ release:
 : Code in a module repository: that module's. Root `docker-compose.yml`,
   `infra/`, the Keycloak realm, Caddy, `deploy/kubernetes/`,
   `deploy/charts/` and these docs: the root `CHANGELOG.md` in
-  `con-services`.
+  `con-services`. The Argo CD template (`cluster.yaml`, its charts and
+  bootstrap scripts): `CHANGELOG.md` in `con-services-gitops`.
+
+**A link in the root `CHANGELOG.md` is broken on the site, and `mkdocs build --strict` fails**
+: Write links to docs pages as `docs/<page>.md` (relative to the
+  repository root), not `../docs/...` or `<page>.md`. The site rewrites
+  only links that start with `docs/`.
 
 **A rebuild with only a base-image update**
 : No changelog section; increase `BUILD` (`1.4.2-1` → `1.4.2-2`).

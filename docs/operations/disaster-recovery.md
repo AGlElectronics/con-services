@@ -128,7 +128,7 @@ key, Git and the secret manager survived.
 
 1. **Build the cluster foundations**, in this order:
     1. a Kubernetes cluster with Cilium, which enforces NetworkPolicy and
-       serves the Gateway API (see [Network policies](network-policies.md#installing-cilium));
+       serves the Gateway API (see [Network policies](network-policies.md#what-con-services-needs-from-cilium));
     2. the Gateway `public` and its load-balancer address
        ([Production](production.md#a-load-balancer-address-for-the-gateway));
        with the [Argo CD path](../deploy/index.md), Git brings both back;

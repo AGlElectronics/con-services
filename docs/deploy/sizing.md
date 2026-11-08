@@ -24,19 +24,22 @@ lacks a request or limit.
 
 ## Totals
 
-With the defaults (all 8 modules on, self-hosted runners off):
+With all 8 modules on:
 
 | | Requests | Limits |
 | --- | --- | --- |
-| CPU | **4.2 cores** | 39 cores |
-| Memory | **11.1 GiB** | 29.4 GiB |
-| Volumes | 136 GiB (13 volumes) | |
+| CPU | **2.3 cores** | 21.4 cores |
+| Memory | **6.6 GiB** | 13.5 GiB |
+| Volumes | 91 GiB (7 volumes) | |
 
 Requests are what the cluster must have free. Limits are a ceiling per
 container that is never reached by all containers at once, so their sum can
 be far above the cluster's size. Not included: Kubernetes itself, Cilium,
-Longhorn and CoreDNS (the [Prerequisites](prerequisites.md)), and
-short-lived jobs and init containers.
+Longhorn, CoreDNS and the platform services (Argo CD, cert-manager,
+trust-manager, External Secrets Operator, OpenBao, CloudNativePG; see
+[Prerequisites](prerequisites.md) and
+[Platform services](#platform-services) below), and short-lived jobs and
+init containers.
 
 Recommended for the defaults: **3 nodes with 4 cores and 16 GiB each**
 ([Prerequisites](prerequisites.md#1-kubernetes-and-nodes)).
@@ -46,38 +49,12 @@ Recommended for the defaults: **3 nodes with 4 cores and 16 GiB each**
 "Replicas" is the number of pods; requests and limits are per container.
 The `cluster.yaml` column names the key that changes it.
 
-### Cluster add-ons
-
-| Component | Container | Replicas | Requests | Limits | `cluster.yaml` |
-| --- | --- | --- | --- | --- | --- |
-| cert-manager | controller | 2 | 50m, 128Mi | 500m, 512Mi | `certManager.resources.controller` |
-| | webhook | 2 | 20m, 64Mi | 200m, 128Mi | `certManager.resources.webhook` |
-| | cainjector | 2 | 50m, 128Mi | 500m, 512Mi | `certManager.resources.cainjector` |
-| trust-manager | trust-manager | 2 | 25m, 64Mi | 200m, 256Mi | `trustManager.resources.controller` |
-| External Secrets | controller | 2 | 50m, 128Mi | 500m, 512Mi | `externalSecrets.resources.controller` |
-| | webhook | 2 | 20m, 64Mi | 200m, 128Mi | `externalSecrets.resources.webhook` |
-| | cert-controller | 2 | 20m, 64Mi | 200m, 256Mi | `externalSecrets.resources.certController` |
-| OpenBao | openbao | 3 | 100m, 256Mi | 1, 512Mi | `openbao.resources` |
-| Argo CD | application-controller | 1 | 250m, 512Mi | 2, 2Gi | `argocd.values.controller.resources` |
-| | server | 2 | 50m, 128Mi | 500m, 512Mi | `argocd.values.server.resources` |
-| | repo-server | 2 | 100m, 256Mi | 1, 1Gi | `argocd.values.repoServer.resources` |
-| | applicationset-controller | 2 | 25m, 64Mi | 250m, 256Mi | `argocd.values.applicationSet.resources` |
-| | notifications-controller | 1 | 25m, 64Mi | 250m, 256Mi | `argocd.values.notifications.resources` |
-| | Redis (redis, sentinel, split-brain-fix) | 3 | 50m+10m+10m, 128Mi+32Mi+32Mi | 500m+100m+100m, 512Mi+128Mi+128Mi | `argocd.values.redis-ha.*` |
-| | HAProxy | 3 | 25m, 64Mi | 250m, 256Mi | `argocd.values.redis-ha.haproxy.resources` |
-
-The Argo CD numbers live in `bootstrap/argocd/values.yaml` (used for the
-first install too); `argocd.values` overrides them once Argo CD manages
-itself.
-
 ### Data and identity
 
 | Component | Container | Replicas | Requests | Limits | `cluster.yaml` |
 | --- | --- | --- | --- | --- | --- |
-| CloudNativePG operator | manager | 2 | 100m, 128Mi | 500m, 512Mi | `cnpg.operator.resources` |
-| Barman Cloud plugin | barman-cloud | 1 | 50m, 64Mi | 200m, 256Mi | `cnpg.barmanCloud.resources` |
 | PostgreSQL | postgres | 3 | 250m, 1Gi | 2, 1Gi | `postgres.resources` |
-| | backup sidecar | 3 (one per instance) | 50m, 128Mi | 500m, 512Mi | `cnpg.barmanCloud.sidecarResources` |
+| | backup sidecar | 3 (one per instance) | 50m, 128Mi | 500m, 512Mi | `postgres.backup.sidecarResources` |
 | Keycloak operator | keycloak-operator | 1 | 100m, 256Mi | 500m, 512Mi | `keycloakOperator.resources` |
 | Keycloak | keycloak | 2 | 250m, 1Gi | 2, 2Gi | `keycloak.resources` |
 
@@ -111,12 +88,29 @@ in [High availability](high-availability.md#why-some-backends-run-one-replica).
 | --- | --- | --- | --- |
 | PostgreSQL data | 3 | 20Gi | `postgres.storage.size` |
 | PostgreSQL WAL | 3 | 10Gi | `postgres.storage.walSize` |
-| OpenBao data | 3 | 10Gi | `openbao.storage.dataSize` |
-| OpenBao audit log | 3 | 5Gi | `openbao.storage.auditSize` |
 | Wiki editing buffers | 1 | 1Gi | `modules.wiki.values` (chart key `backend.buffer.persistence.size`) |
 
 Volumes can grow later (Longhorn and most cloud classes allow it) but
 never shrink. Files and backups are in S3, not on these volumes.
+
+### Platform services
+
+The platform services are [prerequisites](prerequisites.md):
+the cluster operator installs and sizes them, and they are shared with
+anything else on the cluster. Plan for roughly the following, which is the
+tested installation (two replicas of each controller, three OpenBao pods,
+Argo CD with `bootstrap/argocd/values.yaml`):
+
+| Service | Requests | Limits | Volumes |
+| --- | --- | --- | --- |
+| Argo CD (application-controller 1, server 2, repo-server 2, applicationset-controller 2, notifications 1, Redis HA 3, HAProxy 3) | 910m, 2.2Gi | 8.6, 8.75Gi | |
+| cert-manager (controller, webhook, cainjector, 2 each) | 240m, 640Mi | 2.4, 2.25Gi | |
+| trust-manager (2) | 50m, 128Mi | 400m, 512Mi | |
+| External Secrets Operator (controller, webhook, cert-controller, 2 each) | 180m, 512Mi | 1.8, 1.75Gi | |
+| OpenBao (3) | 300m, 768Mi | 3, 1.5Gi | 3 × 10Gi data, 3 × 5Gi audit |
+| CloudNativePG operator (2) | 200m, 256Mi | 1, 1Gi | |
+| Barman Cloud plugin (1) | 50m, 64Mi | 200m, 256Mi | |
+| **Total** | **about 1.9 cores, 4.5 GiB** | 17.4 cores, 16 GiB | 45 GiB |
 
 ## Changing resources
 
@@ -147,9 +141,9 @@ Two starting points. Copy the block into `cluster.yaml` and adjust.
 
 ### Small (evaluation, a few dozen users)
 
-Fewer modules and smaller limits; still 3 nodes, because PostgreSQL,
-OpenBao and Redis need 3 different nodes. Fits on 3 nodes with 2 cores and
-8 GiB each.
+Fewer modules and smaller limits; still 3 nodes, because PostgreSQL and
+Redis need 3 different nodes. Fits on 3 nodes with 2 cores and 8 GiB each,
+platform services included.
 
 ```yaml
 modules:
@@ -165,8 +159,6 @@ keycloak:
   resources:
     requests: { cpu: 100m, memory: 768Mi }
     limits: { cpu: "1", memory: 1Gi }
-openbao:
-  storage: { dataSize: 5Gi, auditSize: 2Gi }
 ```
 
 ### Large (a convention with thousands of attendees)
@@ -196,21 +188,6 @@ modules:
 ```
 
 Plan 3 nodes with 8 cores and 32 GiB each, or more nodes.
-
-## Self-hosted runners
-
-With `arc.enabled: true`, each running CI job is one pod with three
-containers. Idle runners (`arc.minRunners: 0`) cost nothing.
-
-| Container | Requests | Limits | `cluster.yaml` |
-| --- | --- | --- | --- |
-| ARC controller (always on) | 20m, 64Mi | 200m, 256Mi | `arc.resources.controller` |
-| Listener (always on) | 10m, 32Mi | 100m, 128Mi | `arc.resources.listener` |
-| runner (per job) | 1, 2Gi | 2, 6Gi | `arc.resources.runner` |
-| BuildKit (per job) | 1, 2Gi | 4, 6Gi | `arc.resources.buildkit` |
-| test database (per job) | 100m, 256Mi | 1, 1Gi | `arc.resources.testDatabase` |
-
-At `arc.maxRunners: 3`, add up to 6.3 cores and 12.75 GiB of requests.
 
 ## Troubleshooting
 

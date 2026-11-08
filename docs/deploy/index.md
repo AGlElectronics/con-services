@@ -1,7 +1,7 @@
 # Deploy with Argo CD
 
-This section takes you from empty virtual machines to the full Con Services
-suite running highly available on Kubernetes, managed with **GitOps**: a Git
+This section takes you from a running Kubernetes cluster to the full Con
+Services suite running highly available on it, managed with **GitOps**: a Git
 repository describes everything that runs in the cluster, and
 [Argo CD](https://argo-cd.readthedocs.io/) keeps the cluster equal to it.
 
@@ -10,7 +10,18 @@ The repository is
 It is the **golden reference**: the setup the project tests and recommends,
 published as a blank template. You make your own copy, fill in one
 settings file, point Argo CD at your copy, and Argo CD installs and
-configures everything else.
+configures Con Services: Den and the modules, their database, Keycloak,
+and the certificates, gateways and secret references they need.
+
+!!! note "What the template does not install"
+    The template assumes a running, hardened cluster that already provides
+    the shared services a cluster like that has anyway: Argo CD,
+    cert-manager with trust-manager, External Secrets Operator with
+    OpenBao, the CloudNativePG operator with its Barman Cloud plugin,
+    load balancer addresses and cluster DNS. These are
+    [prerequisites](prerequisites.md): the guides say which versions are
+    tested and how to check them, but setting them up is left to their own
+    documentation.
 
 ## What you build
 
@@ -23,28 +34,38 @@ flowchart TB
         gw --> kc[Keycloak<br/>2+ instances]
         apps --> pg[(CloudNativePG<br/>3 instances)]
         kc --> pg
-        eso[External Secrets] --> bao[OpenBao<br/>3 Raft voters]
-        argo[Argo CD] -.manages.-> apps
-        cm[cert-manager + trust-manager] -.certificates.-> apps
         lh[Longhorn] -.volumes.-> pg
+        subgraph prereq [already in the cluster: prerequisites]
+            argo[Argo CD]
+            eso[External Secrets + OpenBao]
+            cm[cert-manager + trust-manager]
+            cnpg[CloudNativePG operator]
+        end
+        argo -.manages.-> apps
+        eso -.secrets.-> apps
+        cm -.certificates.-> apps
+        cnpg -.runs.-> pg
     end
     git[(con-services-gitops<br/>on GitHub)] --> argo
     apps --> s3[(Managed S3<br/>files and backups)]
     pg -->|backups| s3
 ```
 
+Rows marked *prerequisite* are already in your cluster; the template uses
+them but does not install them.
+
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Kubernetes | [k3s](https://k3s.io) v1.37, 3 server nodes with embedded etcd | Small, one binary, HA control plane with 3 nodes. |
 | Network | [Cilium](https://cilium.io) 1.20: CNI, kube-proxy replacement, WireGuard encryption, NetworkPolicy, **Gateway API**, load balancer IPs | One component for networking, policy and the entry point. Cilium's Gateway checks the apps' internal certificates (`BackendTLSPolicy`), so [internal TLS](../operations/internal-tls.md) works end to end. No ingress-nginx (no longer developed) and no Traefik. |
 | Storage | [Longhorn](https://longhorn.io) 1.13 | Replicated block storage across nodes. |
-| Delivery | [Argo CD](https://argo-cd.readthedocs.io/) 3.6 | GitOps: Git is the source of truth. |
-| Certificates | cert-manager + trust-manager | Let's Encrypt (DNS-01 through Cloudflare) for the public side, the internal CA inside the cluster. |
-| Secrets | [OpenBao](https://openbao.org) + External Secrets Operator | Secrets never go into Git; see [Secrets](../operations/secrets.md). |
-| Database | [CloudNativePG](https://cloudnative-pg.io) | PostgreSQL with automatic failover and backups. |
+| Delivery | [Argo CD](https://argo-cd.readthedocs.io/) 3.6 (*prerequisite*) | GitOps: Git is the source of truth. |
+| Certificates | cert-manager + trust-manager (*prerequisite*) | The template adds the issuers: Let's Encrypt (DNS-01 through Cloudflare) for the public side, the internal CA inside the cluster. |
+| Secrets | [OpenBao](https://openbao.org) + External Secrets Operator (*prerequisite*) | The template adds the store and one ExternalSecret per Secret. Secrets never go into Git; see [Secrets](../operations/secrets.md). |
+| Database | [CloudNativePG](https://cloudnative-pg.io) operator (*prerequisite*) | The template creates the PostgreSQL cluster: automatic failover and backups. |
 | Object storage | A **managed S3 service**, for example [Hetzner Object Storage](https://www.hetzner.com/storage/object-storage/) | Files and backups live outside the cluster, so losing the cluster never loses them, and the provider runs the replication. Any S3-compatible service works (AWS S3, Cloudflare R2, Backblaze B2, Wasabi, Scaleway, OVH, ...); see [Data](data.md). |
 | Sign-in | Keycloak through the Keycloak Operator | Production mode, several instances. |
-| Images | GitHub Actions on GitHub-hosted or [self-hosted runners](self-hosted-runners.md), GHCR | Tested, scanned with Trivy and signed; see [CI](../contributing/ci.md). If you run your own private images, the cluster can pull them with a pull secret; see [Den and the modules](apps.md). |
+| Images | Published by the project on GHCR | Tested, scanned with Trivy and signed; see [CI](../contributing/ci.md). If you run your own private images, the cluster can pull them with a pull secret; see [Den and the modules](apps.md). |
 
 ## How it works
 
@@ -65,17 +86,20 @@ flowchart TB
     When that command prints nothing, the file is complete.
 3. **Check your cluster.** You bring a Kubernetes cluster that meets the
    [Prerequisites](prerequisites.md): at least 3 nodes, Cilium with the
-   Gateway API, a replicated default StorageClass, and Argo CD. Any
-   conformant Kubernetes works (k3s, kubeadm, Talos, managed clouds);
-   [Kubernetes distributions](distributions.md) lists what to prepare on
-   each. If you still need to build one, [Example: a k3s cluster](cluster.md)
-   shows a tested way.
-4. **Point Argo CD at your copy.** One command,
-   `bash bootstrap/install-root.sh`, creates the root Application; from then on Argo CD installs every component in the right
-   order and keeps it equal to your repository
+   Gateway API, a replicated default StorageClass, Argo CD, cert-manager,
+   External Secrets Operator with OpenBao, and CloudNativePG. Any
+   conformant Kubernetes works (k3s, kubeadm, Talos, managed clouds).
+   Building the cluster and installing these is not covered here; the
+   prerequisites page says what Con Services needs from each.
+4. **Prepare OpenBao.** Two scripts create what Con Services needs in your
+   OpenBao (a KV engine, a login for External Secrets) and store its
+   secrets there ([Secrets with OpenBao](secrets-openbao.md)).
+5. **Point Argo CD at your copy.** One command,
+   `bash bootstrap/install-root.sh`, checks the prerequisites and creates
+   the root Application; from then on Argo CD installs every Con Services
+   component in the right order and keeps it equal to your repository
    ([Argo CD](argocd.md)).
-5. **Do the steps only a person can do**: unseal OpenBao and store the
-   secrets in it ([Secrets with OpenBao](secrets-openbao.md)), create the
+6. **Do the steps only a person can do**: create the
    DNS records and the port forward
    ([DNS and certificates](dns-and-certificates.md)), create the S3
    buckets ([Data](data.md)). Argo CD waits for these and continues by
@@ -96,8 +120,8 @@ hour from copying the template to signing in to Den.
    copy.
 3. [DNS and certificates](dns-and-certificates.md): DNS records, the
    Let's Encrypt token, the public and internal gateways.
-4. [Secrets with OpenBao](secrets-openbao.md): initialise, unseal and fill
-   OpenBao.
+4. [Secrets with OpenBao](secrets-openbao.md): prepare your OpenBao for
+   Con Services and fill it.
 5. [Data](data.md): PostgreSQL with CloudNativePG, buckets at a managed
    S3 service, backups.
 6. [Identity](identity.md): Keycloak and the production realm.
@@ -106,10 +130,6 @@ hour from copying the template to signing in to Den.
 Before you go live, read [Sizing and resources](sizing.md) (the CPU and
 memory every component requests and may use, and how to change it) and
 [High availability](high-availability.md) (what survives which failure).
-
-Optional: [Example: a k3s cluster](cluster.md) if you need to build a
-cluster first, and [Self-hosted CI runners](self-hosted-runners.md) if you
-build your own images.
 
 !!! warning "Three nodes on one physical host is not fully highly available"
     Three nodes protect you against one node failing, being upgraded or

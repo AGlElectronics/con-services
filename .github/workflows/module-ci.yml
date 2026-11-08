@@ -9,8 +9,8 @@
 # MAJOR.MINOR.PATCH-BUILD, signs them with cosign (keyless) and attaches a
 # CycloneDX SBOM attestation. Existing tags are never overwritten.
 #
-# The defaults fit the self-hosted runners (Actions Runner Controller) from
-# con-services-gitops: runner pods with a rootless BuildKit sidecar on
+# The defaults fit the project's self-hosted runners (Actions Runner
+# Controller, label arc-conservices): runner pods with a rootless BuildKit sidecar on
 # 127.0.0.1:1234 and a PostgreSQL sidecar on 127.0.0.1:5432, no Docker daemon.
 # For GitHub-hosted runners pass: runner: ubuntu-24.04, buildkit-endpoint: "",
 # test-database-mode: service.
@@ -269,7 +269,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v gcc >/dev/null; then
-            echo "::error::go test -race needs a C compiler. Use the ghcr.io/aglelectronics/ci-runner image for the ARC runner pods (docs: deploy/self-hosted-runners)."
+            echo "::error::go test -race needs a C compiler. Use the ghcr.io/aglelectronics/ci-runner image for the ARC runner pods (docs: contributing/ci, 'Where it runs')."
             exit 1
           fi
           extra=()
@@ -620,7 +620,7 @@ jobs:
 
       # QEMU for linux/arm64. With a local Docker daemon (GitHub-hosted) the
       # action registers it; a remote BuildKit (ARC) needs binfmt installed on
-      # the node instead (docs: deploy/self-hosted-runners, "arm64 images").
+      # the node instead (docs: contributing/ci, "The builder cannot build linux/arm64").
       - name: Check for a Docker daemon
         id: docker
         if: inputs.arm64
