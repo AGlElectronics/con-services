@@ -157,11 +157,11 @@ cert-manager needs a token that can edit DNS records in your zone only.
     "active"
     ```
 
-The token goes into OpenBao, never into Git: `openbao-seed.sh` asks for it
-and stores it at `kv/infra/cloudflare` (property `api-token`); an
-ExternalSecret copies it into the Secret `cloudflare-api-token` in the
-`cert-manager` namespace. See
-[Secrets with OpenBao](secrets-openbao.md#3-seed-the-secrets) and
+The token goes into OpenBao, never into Git: you store it at
+`kv/infra/cloudflare` (key `api-token`), in the OpenBao web UI or with
+`openbao-seed.sh`, which asks for it; an ExternalSecret copies it into the
+Secret `cloudflare-api-token` in the `cert-manager` namespace. See
+[Secrets with OpenBao](secrets-openbao.md#4-enter-your-provider-credentials) and
 [Secrets](../operations/secrets.md).
 
 ### Any other DNS provider (`acme.dns01.provider: custom`)
@@ -355,7 +355,8 @@ the ConfigMap was created after CoreDNS started, restart CoreDNS once:
 
 **`kubectl -n cert-manager get externalsecret cloudflare-api-token` shows `SecretSyncedError`**
 :   The value is not in OpenBao (`kv/infra/cloudflare`, property
-    `api-token`) or OpenBao is sealed. Run `openbao-seed.sh` again; see
+    `api-token`) or OpenBao is sealed. Store the token (for example with
+    `openbao-seed.sh`); see
     [Secrets with OpenBao](secrets-openbao.md#troubleshooting).
 
 **`too many certificates already issued` / `rateLimited`**

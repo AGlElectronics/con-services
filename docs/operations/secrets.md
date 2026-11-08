@@ -116,19 +116,21 @@ gives you:
 | Internal CA private key (`tls.key`) | `conservices-internal-ca` | `cert-manager` | cert-manager (`ClusterIssuer/conservices-internal-ca`) | Signs every internal certificate. Created by cert-manager inside the cluster, never in your secret manager. Back it up with the cluster; rotate only if leaked, as in [Rotating the internal CA](internal-tls.md#rotating-the-internal-ca). |
 | Service TLS keys (`tls.key`, `tls.crt`, `ca.crt`) | `postgres-tls`, `s3-tls`, `keycloak-tls`, `den-backend-tls`, `den-operator-tls`, `den-frontend-tls`, `<module>-backend-tls`, `<module>-frontend-tls` | the service's namespace | that service | Created and renewed by cert-manager every 60 days. Rotate now by deleting the Secret; cert-manager issues a new key in seconds. See [Internal TLS](internal-tls.md#renewal). |
 | `api-token` | `cloudflare-api-token` (from OpenBao `kv/infra/cloudflare` through the `ExternalSecret` of the same name) | `cert-manager` | cert-manager (Let's Encrypt DNS-01) | GitOps reference only. A Cloudflare API token limited to **Zone: DNS: Edit** and **Zone: Zone: Read** on one zone. Rotate by creating a new token in Cloudflare, `bao kv patch`, then revoking the old one. See [DNS and certificates](../deploy/dns-and-certificates.md). |
-| OpenBao token for `openbao-configure.sh` and `openbao-seed.sh` | none | your shell only (`BAO_TOKEN`) | the person running the scripts | GitOps reference only. Comes from whoever runs OpenBao; use a short-lived token with only the rights the scripts need, never the root token, and never store it in the cluster or in Git. OpenBao's own unseal keys, root token and TLS key belong to its operator. See [Secrets with OpenBao](../deploy/secrets-openbao.md). |
+| OpenBao admin token for `openbao-configure.sh` | none | your shell only (asked for, or `BAO_TOKEN`) | the OpenBao administrator, once per cluster | GitOps reference only. Writes the policies and the setup role; never store it in the cluster or in Git, and revoke a temporary one afterwards. Entering your provider credentials needs only a token that may write `kv/`. The setup Job and External Secrets log in with their service accounts and need no token. OpenBao's own unseal keys, root token and TLS key belong to its operator. See [Secrets with OpenBao](../deploy/secrets-openbao.md). |
 
 **GitOps reference: OpenBao paths of the platform.** In
 [con-services-gitops](../deploy/index.md) every secret below is read from
 OpenBao (KV v2 mounted at `kv`) by External Secrets.
-`bootstrap/scripts/openbao-seed.sh` generates the random ones and asks for
-the provider credentials, only for the modules and options enabled in
-`cluster.yaml`; it never prints a value and keeps existing entries.
-`--rotate` replaces only the entries marked *rotatable*.
+External Secrets creates the random ones (PushSecrets, never replacing an
+existing value) and you enter the provider credentials, only for the
+modules and options enabled in `cluster.yaml`
+([Every secret](../deploy/secrets-openbao.md#every-secret-keys-and-values)).
+Entries marked *rotatable* can be rotated by deleting them
+([Rotate a generated value](../deploy/secrets-openbao.md#rotate-a-generated-value)).
 
 | OpenBao path | Keys | Becomes (Secret, namespace) | Used by | Source, rotation |
 | --- | --- | --- | --- | --- |
-| `kv/conservices/postgres/superuser` | `username` (`postgres`), `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` | CloudNativePG, Den operator | generated; rotatable (CNPG applies the new password) |
+| `kv/conservices/postgres/superuser` | `password` (user `postgres`) | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` | CloudNativePG, Den operator | generated; rotatable (CNPG applies the new password) |
 | `kv/conservices/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); `DATABASE_URL` of the application; `keycloak-db` | CloudNativePG, each application | generated; rotatable, then restart the application |
 | `kv/conservices/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | Barman Cloud plugin (WAL archive, base backups) | your S3 provider; rotate there, then `bao kv put` |
 | `kv/conservices/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
@@ -137,9 +139,9 @@ the provider credentials, only for the modules and options enabled in
 | `kv/conservices/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
 | `kv/conservices/service-tokens/<module>` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
 | `kv/conservices/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
-| `kv/conservices/keycloak/bootstrap-admin` | `username` (`temp-admin`), `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
+| `kv/conservices/keycloak/bootstrap-admin` | `password` (user `temp-admin`) | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
 | `kv/conservices/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR, Learn | Keycloak, Den, HR, Learn | generated; to rotate, regenerate in Keycloak, then `bao kv patch` |
-| `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; asked for by the seed script |
+| `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; you enter it |
 | `kv/infra/ghcr` | `username`, `token` | `ghcr-pull` (`kubernetes.io/dockerconfigjson`) in every application namespace | image pulls | optional, only with `images.pullSecret.enabled: true` (private images); GitHub personal access token with **only `read:packages`**; see [Private images](../deploy/apps.md#private-images-the-ghcr-pull-secret) |
 | `kv/infra/cloudflare` | `api-token` | `cloudflare-api-token` (`cert-manager`) | cert-manager (Let's Encrypt DNS-01) | optional, only with `acme.dns01.provider: cloudflare`; see [DNS and certificates](../deploy/dns-and-certificates.md) |
 
@@ -194,19 +196,18 @@ In the [GitOps reference deployment](../deploy/index.md) every secret above
 comes from one OpenBao entry (KV version 2, mounted at `kv/`), read by
 External Secrets through the ClusterSecretStore `openbao`. Several
 Kubernetes Secrets read the same entry, so the two sides of a shared value
-can never disagree. `bootstrap/scripts/openbao-seed.sh` generates the random
-values (32 bytes, hex) and asks for the ones that come from a provider,
-only for what `cluster.yaml` enables; it never prints a value and keeps
-existing entries.
+can never disagree. External Secrets generates the random values (48
+letters and digits) and never replaces an existing one; you enter the ones
+that come from a provider. Both only for what `cluster.yaml` enables.
 
 | OpenBao path | Keys | Kubernetes Secrets (namespace) | Source | Rotate |
 | --- | --- | --- | --- | --- |
-| `kv/conservices/postgres/superuser` | `username`, `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` (`conservices-den`) | generated | `openbao-seed.sh --rotate` (rotates every rotatable entry at once); CloudNativePG changes the password, restart `den-operator` |
-| `kv/conservices/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); the `DATABASE_URL` of the module; `keycloak-db` (`conservices-identity`) | generated | `--rotate`; then restart the module |
-| `kv/conservices/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | `--rotate`; restart both Den deployments |
-| `kv/conservices/service-tokens/learn`, `.../wiki`, `.../tasks` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | `--rotate`; restart HR and the module |
+| `kv/conservices/postgres/superuser` | `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` (`conservices-den`) | generated | delete the entry ([how](../deploy/secrets-openbao.md#rotate-a-generated-value)); CloudNativePG changes the password, restart `den-operator` |
+| `kv/conservices/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); the `DATABASE_URL` of the module; `keycloak-db` (`conservices-identity`) | generated | delete the entry; then restart the module |
+| `kv/conservices/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | delete the entry; restart both Den deployments |
+| `kv/conservices/service-tokens/learn`, `.../wiki`, `.../tasks` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | delete the entry; restart HR and the module |
 | `kv/conservices/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
-| `kv/conservices/keycloak/bootstrap-admin` | `username`, `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
+| `kv/conservices/keycloak/bootstrap-admin` | `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
 | `kv/conservices/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (first realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR and Learn | generated | regenerate in the Keycloak admin console, then `bao kv patch kv/conservices/keycloak/clients <client>=-` and restart the module |
 | `kv/conservices/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` (first realm import only) | your mail provider | at the provider, then in Keycloak: **Realm settings → Email** |
 | `kv/conservices/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |

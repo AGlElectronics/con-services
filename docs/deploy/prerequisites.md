@@ -314,19 +314,31 @@ What the template needs:
 - If OpenBao's certificate is not publicly trusted: its CA certificate in a
   ConfigMap or Secret that ESO can read (default: ConfigMap `openbao-ca`,
   key `ca.crt`, in ESO's namespace).
-- A token that may enable a secrets engine and an auth method and write
-  policies, once, for `bootstrap/scripts/openbao-configure.sh`. It sets up
-  the KV engine, the Kubernetes login and the read-only policy Con Services
-  uses ([Secrets with OpenBao](secrets-openbao.md)).
+- The **Kubernetes auth method** enabled in OpenBao, and OpenBao's service
+  account allowed to check tokens (ClusterRole `system:auth-delegator`;
+  the upstream chart grants it).
+- **Once, from the OpenBao administrator:** two policies and the role
+  `conservices-setup` for the template's setup Job
+  (`bootstrap/scripts/openbao-configure.sh` writes them with an admin token
+  it asks for). The Job then enables the KV engine and writes External
+  Secrets' role when you sync the Application `openbao-setup`; ESO creates
+  the random secrets. With `openbao.setup.enabled: false` the administrator
+  creates the KV engine and that role too. Details, the exact policies and
+  every secret: [Secrets with OpenBao](secrets-openbao.md).
+- If OpenBao's namespace has network policies: let in ESO's pods and the
+  setup Job (in ESO's namespace, label
+  `app.kubernetes.io/name: conservices-openbao-setup`) on port 8200.
 
 Tell the template where they are in `cluster.yaml` if they are not at the
 defaults (`openbao.*`, `externalSecrets.*`; see the
 [reference](argocd.md#cluster-prerequisites)).
 
 !!! note "A Vault or OpenBao you already run"
-    HashiCorp Vault works the same way: the store uses ESO's `vault`
-    provider, which speaks to both. The scripts run the `bao` command inside
-    the OpenBao pods; with Vault, run the same steps by hand with `vault`.
+    The template is built and tested for OpenBao. The store uses ESO's
+    `vault` provider and the API is the same as HashiCorp Vault's, but
+    Vault is not tested: with Vault, set `openbao.setup.enabled: false` and
+    run the steps of [Without the setup Job](secrets-openbao.md#without-the-setup-job)
+    by hand with `vault`.
 
 Check:
 
@@ -439,7 +451,7 @@ quay.io/argoproj/argocd:v3.6.1
 | `kubectl` | 1.36 or newer | everything |
 | `helm` | 3.19 | `helm template` checks, `install-root.sh`, `openbao-configure.sh`, `openbao-seed.sh` |
 | `git` | any | your copy of the template |
-| `bash`, `jq`, `openssl` | bash 4 or newer | the bootstrap scripts (on Windows: use WSL) |
+| `bash`, `jq` | bash 4 or newer | the bootstrap scripts (on Windows: use WSL) |
 | `age` | 1.2 | the key Den encrypts its backups to |
 
 Check:

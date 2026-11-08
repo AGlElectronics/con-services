@@ -163,21 +163,25 @@ kubectl -n argocd label secret repo-gitops argocd.argoproj.io/secret-type=reposi
 That token is a real secret: keep it in your password manager, see
 [Secrets](../operations/secrets.md).
 
-## 4. Prepare and fill OpenBao
+## 4. Let OpenBao trust the template (OpenBao administrator, once)
 
-The template reads every secret from the cluster's OpenBao. Do this once
-per cluster, with a token from whoever runs OpenBao:
+The template reads every secret from the cluster's OpenBao, and by default
+sets up its own part of OpenBao through a Job that you review before it
+runs (`openbao.setup.enabled: true`). For that, whoever administers OpenBao
+gives the Job a narrow role, once per cluster, with an admin token:
 
 ```sh
-BAO_TOKEN=change-me bash bootstrap/scripts/openbao-configure.sh
-BAO_TOKEN=change-me bash bootstrap/scripts/openbao-seed.sh
+bash bootstrap/scripts/openbao-configure.sh
 ```
 
-The first script creates the KV engine, the Kubernetes login and the
-read-only policy for External Secrets; the second generates the random
-secrets and asks for your S3 keys, SMTP server and DNS token. Both are
-explained, with their output, in
-[Secrets with OpenBao](secrets-openbao.md).
+It writes two policies and the role `conservices-setup`; nothing else.
+The token is asked for and never stored in the cluster. The commands it
+runs, what the Job may and may not do, and the way without the Job are in
+[Secrets with OpenBao](secrets-openbao.md#2-the-administrators-one-time-step).
+
+The random secrets (database passwords, tokens) are created by External
+Secrets later; you only enter your provider credentials (S3 keys, SMTP,
+DNS token) once the KV engine exists, in step 7.
 
 ## 5. Apply the root Application
 
@@ -215,7 +219,8 @@ kubectl get applications -n argocd -w
 | --- | --- | --- |
 | -8 | `longhorn-storage` (only with `storage.longhornSingle.enabled`) | StorageClass `longhorn-single` |
 | -7 | `pki` | ClusterIssuer `conservices-internal-ca` ready |
-| -4 | `cluster-secret-store` | ClusterSecretStore `openbao` valid (needs step 4) |
+| -5 | `openbao-setup` (only with `openbao.setup.enabled`, manual sync) | you pressed Sync and the Job finished (step 7) |
+| -4 | `cluster-secret-store` | ClusterSecretStore `openbao` valid, random secrets created |
 | -3 | `letsencrypt` | ClusterIssuers `letsencrypt-staging` and `letsencrypt-prod` ready |
 | -2 | `gateway` | certificate `wildcard-tls` issued, Gateways `public` and `internal` programmed |
 | 0 | `platform-namespaces` | namespaces `conservices-data`, `conservices-identity` |
@@ -229,9 +234,12 @@ kubectl get applications -n argocd -w
 
 Argo CD waits at these points and continues by itself once they are done:
 
-1. **Wave -4, secrets:** `cluster-secret-store` stays `Degraded` until
-   OpenBao is prepared (step 4). An entry you skipped in `openbao-seed.sh`
-   keeps the Application that reads it `Degraded`; run the script again.
+1. **Wave -5, OpenBao setup:** `openbao-setup` waits for you. Review its
+   diff in Argo CD and press Sync
+   ([Secrets with OpenBao](secrets-openbao.md#3-review-and-sync-openbao-setup)).
+   Then enter your provider credentials (S3 keys, SMTP, DNS token) in
+   OpenBao ([which ones](secrets-openbao.md#every-secret-keys-and-values)).
+   An Application whose entry is missing stays `Degraded` until you add it.
 2. **Wave -2, certificates and DNS:** create the DNS records and the port
    forward ([DNS and certificates](dns-and-certificates.md)).
 3. **Wave 3, buckets:** the buckets must exist before PostgreSQL's first
@@ -380,9 +388,13 @@ charts installed with default names.
 | Key | Default | What it does |
 | --- | --- | --- |
 | `openbao.server` | `https://openbao-active.openbao.svc:8200` | OpenBao's API as seen from External Secrets. Use an address that reaches only the unsealed leader (with the upstream chart: the Service `openbao-active`); the plain `openbao` Service also sends requests to sealed pods |
-| `openbao.kvPath` | `kv` | Mount path of the KV version 2 engine Con Services uses; `openbao-configure.sh` creates it |
-| `openbao.caBundle.kind`, `.name`, `.key`, `.namespace` | `ConfigMap`, `openbao-ca`, `ca.crt`, empty (`externalSecrets.namespace`) | The CA certificate that signed OpenBao's TLS certificate. Empty `name`: none (OpenBao has a publicly trusted certificate) |
-| `openbao.auth.mountPath`, `openbao.auth.role` | `kubernetes`, `external-secrets` | Kubernetes auth method and role External Secrets logs in with; `openbao-configure.sh` creates both |
+| `openbao.kvPath` | `kv` | Mount path of the KV version 2 engine Con Services uses; the setup Job creates it |
+| `openbao.caBundle.kind`, `.name`, `.key`, `.namespace` | `ConfigMap`, `openbao-ca`, `ca.crt`, empty (`externalSecrets.namespace`) | The CA certificate that signed OpenBao's TLS certificate. Empty `name`: none (OpenBao has a publicly trusted certificate). The setup Job runs in this namespace |
+| `openbao.auth.mountPath`, `openbao.auth.role` | `kubernetes`, `external-secrets` | Kubernetes auth method (the administrator's) and the role External Secrets logs in with (written by the setup Job) |
+| `openbao.namespace` | `openbao` | Namespace of the OpenBao pods; the setup Job's NetworkPolicy allows only that namespace. Empty: no NetworkPolicy (OpenBao outside the cluster) |
+| `openbao.setup.enabled` | `true` | The Application `openbao-setup` (wave -5, manual sync): a Job that enables the KV engine and writes External Secrets' role, after you review it and press Sync. `false`: the OpenBao administrator does both ([Without the setup Job](secrets-openbao.md#without-the-setup-job)) |
+| `openbao.setup.role`, `openbao.setup.serviceAccount` | `conservices-setup`, `conservices-openbao-setup` | OpenBao role the Job logs in with, and the Job's service account; the administrator's step binds one to the other |
+| `openbao.setup.image` | `quay.io/openbao/openbao:2.7.2` | Image of the setup Job (it needs the `bao` CLI and a shell) |
 | `externalSecrets.namespace`, `externalSecrets.serviceAccount` | `external-secrets`, `external-secrets` | Namespace and service account of External Secrets Operator |
 | `postgres.operatorNamespace` | `cnpg-system` | Namespace of the CloudNativePG operator and the Barman Cloud plugin; the database's network policy lets it in |
 ### Components
@@ -424,11 +436,22 @@ charts installed with default names.
 :   A prerequisite is not installed, or not where `cluster.yaml` says.
     See [Prerequisites](prerequisites.md#troubleshooting).
 
+**Nothing installs after `pki`; `openbao-setup` is `OutOfSync`**
+:   Argo CD waits for you to review and sync `openbao-setup`; see
+    [Secrets with OpenBao](secrets-openbao.md#3-review-and-sync-openbao-setup).
+
+**`openbao-setup` is `Degraded`**
+:   The Job failed. `kubectl -n external-secrets logs job/conservices-openbao-setup`
+    says why, usually that the administrator's step (step 4) was not done.
+    See [Secrets with OpenBao](secrets-openbao.md#troubleshooting).
+
 **`cluster-secret-store` stays `Degraded`**
-:   External Secrets cannot log in to OpenBao. `kubectl get clustersecretstore openbao`
-    shows why; the usual causes are that `openbao-configure.sh` was not run,
-    OpenBao is sealed, or `openbao.server` / `openbao.caBundle` do not match
-    your OpenBao. See [Secrets with OpenBao](secrets-openbao.md#troubleshooting).
+:   External Secrets cannot log in to OpenBao, or a random secret could not
+    be created. `kubectl get clustersecretstore openbao` and
+    `kubectl get pushsecret -n external-secrets` show why; the usual causes
+    are that `openbao-setup` did not run, OpenBao is sealed, or
+    `openbao.server` / `openbao.caBundle` do not match your OpenBao. See
+    [Secrets with OpenBao](secrets-openbao.md#troubleshooting).
 
 **`letsencrypt` or `gateway` stays `Progressing` or `Degraded`**
 :   Usually the DNS token: `kubectl -n cert-manager get externalsecret cloudflare-api-token`

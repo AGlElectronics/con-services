@@ -17,6 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Deployment docs: *Secrets with OpenBao* describes the new flow of the
+  GitOps template. The OpenBao administrator grants a narrow role once.
+  Argo CD then waits at `openbao-setup` until you review and sync it.
+  External Secrets creates the random secrets, and you enter only your
+  provider credentials. A new table lists every OpenBao entry with its keys,
+  the kind of value and who creates it. *Argo CD*, *Prerequisites*,
+  *Data*, *Identity*, *DNS and certificates*, *Secrets* and *Network
+  policies* follow the same flow (new flow: the setup Job to OpenBao).
 - Deployment docs: the prerequisites now allow tainted control-plane nodes
   as long as at least 3 nodes accept workloads, and list what we expect of
   how the cluster is run (HA control plane, etcd backups, encryption at

@@ -141,6 +141,7 @@ namespaces start from a default deny with only DNS allowed.
 | Keycloak operator | Keycloak pods; Kubernetes API | 8443, 9000; 6443 | NetworkPolicy and CiliumNetworkPolicy in `conservices-identity` | Health checks and managing the StatefulSet and realm imports. |
 | Keycloak pods | PostgreSQL pods | 5432 | NetworkPolicy in `conservices-identity` | Keycloak's database. |
 | Keycloak pods | internet outside the private ranges | 587, 465 | NetworkPolicy in `conservices-identity` | Password-reset and verification mail through your SMTP provider. |
+| setup Job (`app.kubernetes.io/name: conservices-openbao-setup`, ESO's namespace) | `kube-dns`; any pod in `openbao.namespace` (default `openbao`) | 53; all | NetworkPolicy `conservices-openbao-setup` (`charts/openbao-setup`, only with `openbao.setup.enabled`) | The Job enables the KV engine and writes External Secrets' role. It accepts no connections. If OpenBao's namespace has a default deny, admitting the Job on 8200 is the OpenBao operator's rule. |
 
 Not listed, so blocked: one module calling another (except the documented
 integrations below), the operator being reached by anything but
