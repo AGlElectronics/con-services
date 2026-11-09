@@ -1,5 +1,11 @@
 # Con Services
 
+> [!WARNING]
+> ## **NOT READY FOR PRODUCTION**
+>
+> Con Services is under active development. Expect breaking changes, missing
+> features and bugs. Do not use it for real events or real data yet.
+
 **Self-hosted tools for running a convention** — volunteers and staff, programme and events, inventory, training, finance, helpdesk, wiki and task boards. One sign-in, your brand on every screen, and the convention owns its data.
 
 This repository holds the **shared suite**: documentation, Kubernetes / Helm deploy pieces, the local Docker Compose stack, and Keycloak / proxy / Postgres helpers. Each product module lives in its own repository under [AGlElectronics](https://github.com/AGlElectronics).
