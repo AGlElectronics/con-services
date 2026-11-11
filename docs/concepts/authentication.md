@@ -312,13 +312,17 @@ access token and the userinfo response, as plain names (`den-admin`, not
 
 ## From groups to roles
 
-Den has three roles in an organisation:
+Den serves one organisation and has these roles in it:
 
 | Role | Can do | How you get it |
 | --- | --- | --- |
-| `owner` | Everything an admin can. | Set directly in Den's database. Den never changes an owner's role. |
-| `admin` | Use the portal and the admin console: modules, pairing, branding, organisation settings, Keycloak sync, backups. | Be in one of the groups in `DEN_ADMIN_GROUPS` (default `den-admin`). |
-| `member` | Use the portal home. | Be in one of the groups in `DEN_MEMBER_GROUPS` (default `den-member`). |
+| `owner` | Everything an admin can. | Legacy: set directly in Den's database; nothing assigns it. Den never changes an owner's role. |
+| `admin` | Use the portal and the admin console: modules, pairing and credentials, branding, organisation and module settings, Keycloak sync, the audit log, the backup status. | Be in one of the groups in `DEN_ADMIN_GROUPS` (default `den-admin`). |
+| `ops` | Run, schedule and download backups, delete a module's database. Usually given to admins as well. | Be in one of the groups in `DEN_OPS_GROUPS` (default `den-ops`). |
+| `member` | Use the portal home, with the services they have a role in. | Be in one of the groups in `DEN_MEMBER_GROUPS` (default `den-member`). |
+
+The decision to take roles only from groups is recorded in Den's
+[ADR 0007](https://github.com/AGlElectronics/den/blob/main/docs/adr/0007-roles-from-idp-groups.md).
 
 On **every** authenticated request, Den recomputes the role from the token's
 groups:
@@ -327,11 +331,16 @@ groups:
 2. Otherwise, in a member group? The role becomes `member`.
 3. Otherwise the person has **no role**: their membership is removed and Den
    refuses them everything except `/api/v1/me` and their preferences.
+4. Independently, in an ops group? The person also gets `ops` for this
+   request (it is never stored).
 
 Group names are compared case-insensitively, and a leading `/` (Keycloak's
 full-path form) is ignored; the full rule is in
 [How groups are matched](#how-groups-are-matched). An `owner` membership is
-never changed or removed by this sync.
+never changed or removed by this sync. Den also stores the groups of each
+person's last sign-in, to decide which modules they may use. A person whose
+Den account is disabled (`users.is_disabled`) is refused with `403` on every
+request.
 
 So to give someone admin access, add them to `den-admin` in Keycloak; to
 take it away, remove them. Because Den reads the groups from the token, the
@@ -415,16 +424,25 @@ Den's catalog, with the default groups:
     {
       "key": "admin",
       "label": "Convention admin",
-      "description": "Manage modules, pairing, branding and portal settings.",
+      "description": "Manage modules, pairing, branding, settings and the audit log.",
       "group": "den-admin",
       "assignable": true,
       "scope": "organization",
-      "permissions": ["modules.manage", "branding.manage", "settings.manage"]
+      "permissions": ["modules.manage", "branding.manage", "settings.manage", "audit.view"]
+    },
+    {
+      "key": "ops",
+      "label": "Operations",
+      "description": "Runs and downloads backups, changes the backup schedule and deletes module databases.",
+      "group": "den-ops",
+      "assignable": true,
+      "scope": "organization",
+      "permissions": ["backups.manage", "databases.drop"]
     },
     {
       "key": "member",
       "label": "Member",
-      "description": "Sees the portal home and every usable service.",
+      "description": "Sees the portal home and the services they have a role in.",
       "group": "den-member",
       "assignable": true,
       "default": true,
@@ -435,9 +453,13 @@ Den's catalog, with the default groups:
 }
 ```
 
-The `group` of each role is the **first** group in `DEN_ADMIN_GROUPS` or
-`DEN_MEMBER_GROUPS`. `"default": true` tells HR to give new people the
-member role by default.
+The `group` of each role is the **first** group in `DEN_ADMIN_GROUPS`,
+`DEN_OPS_GROUPS` or `DEN_MEMBER_GROUPS`. `"default": true` tells HR to give
+new people the member role by default.
+
+Den reads the other modules' catalogs too: a member sees a module on the
+portal when one of their groups is in that module's catalog (or the module
+is set to be shown to every member).
 
 ## Dev mode (no Keycloak)
 

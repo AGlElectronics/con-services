@@ -455,18 +455,80 @@ The calls that exist today:
 | --- | --- | --- | --- |
 | every paired module | Den | `/api/v1/integrations/*` (bundle every minute, brand images, preferences) | module credential |
 | HR | every module | `GET /api/role-catalog` | none |
+| Den | paired modules | `GET /api/role-catalog` (who sees the module on the portal, cached 5 minutes) | none |
+| Den | paired modules | `GET /api/portal/todos` ([below](#portal-to-dos)) | the module's own pairing credential, plus the person's issuer and subject |
 | HR | Learn | `GET /api/qualification-catalog` | none (public, read-only) |
 | HR | Learn | `GET /api/internal/holdings?subjects=…` | `LEARN_SERVICE_TOKEN` |
 | HR | Wiki | `POST /api/internal/offboarded` | `WIKI_SERVICE_TOKEN` |
 | HR | Tasks | `POST /api/internal/departments` | `TASKS_SERVICE_TOKEN` |
-| Den's portal (in the browser) | paired modules | `GET /api/portal/todos` | the person's `den-spa` ID token |
 
-The portal to-dos call is a contract Den's web app already uses, but no
-module backend implements it yet. Den shows nothing for a module that
-answers `404`, fails CORS or times out. A module that implements it must
-accept `den-spa` as an extra token audience and list Den's address in
-`CORS_ALLOWED_ORIGINS`. See
-[Portal to-dos](../modules/den/admin-guide.md#portal-to-dos).
+### Portal to-dos
+
+Den's portal shows each person a list of things to do across the modules
+(**to-dos**). Den's **backend** collects them, server to server; the browser
+only talks to Den, and no user token leaves Den. A module takes part by
+serving one endpoint. This is the contract a module implements:
+
+**Request** (from `den-backend`, at the module's `internal_url`, else its
+`base_url`, over HTTPS, 5-second timeout):
+
+```http
+GET /api/portal/todos HTTP/1.1
+Authorization: Bearer <the module's own Den credential>
+X-Den-User-Issuer: https://auth.conservices.test/realms/conservices
+X-Den-User-Subject: 0b6e2c4d-8f1a-4b3c-9d7e-5a6b7c8d9e0f
+Accept: application/json
+```
+
+**What the module must check:**
+
+1. The bearer is exactly the credential the module received when it was
+   paired (compare in constant time). Anything else: `401`. The module
+   already stores this credential for its calls to Den; no new secret is
+   needed. A module that is not paired answers `404`.
+2. The person is the user with that issuer and subject in the module. An
+   unknown person gets `{"items": []}`, not an error.
+3. Only that person's to-dos are returned, filtered by what they may see in
+   the module.
+
+**Response** `200`, JSON:
+
+```json
+{
+  "items": [
+    {
+      "id": "shift-42",
+      "title": "Confirm your Saturday shift",
+      "detail": "Info desk, 10:00–14:00",
+      "due_at": "2026-11-14T10:00:00Z",
+      "url": "https://hr.conservices.test/shifts/42",
+      "severity": "warning"
+    }
+  ]
+}
+```
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `id` | yes | Stable within the module. |
+| `title` | yes | Short, shown as the link text. |
+| `detail` | no | One line under the title. |
+| `due_at` | no | RFC 3339 or `null`; sorted first when soonest. |
+| `url` | yes | An `https` (or `http`) link into the module. Den drops items with any other scheme. |
+| `severity` | no | `info`, `warning` or `danger`; anything else counts as `info`. |
+
+Den takes at most 50 items per module. A module that does not implement the
+endpoint answers `404` and is listed as `unsupported`; timeouts and other
+errors are skipped. Den only asks modules the person may use (by the
+module's role catalog or its portal visibility) and only when Den has
+`DEN_CREDENTIAL_KEY` set. Network policies must allow `den-backend` to reach
+the module backend on 8080
+([Network policies](../operations/network-policies.md#calls-between-modules)).
+
+Den's own endpoint, which the portal calls, is
+[`GET /api/v1/portal/todos`](../modules/den/api.md#get-apiv1portaltodos).
+Modules that accepted Den's ID token for `/api/portal/todos` before (Learn's
+`OIDC_EXTRA_AUDIENCES`) should switch to the credential check above.
 
 A service token is the same random value on both sides: the module that
 offers the endpoint checks it, the caller sends it. Both live in Kubernetes
