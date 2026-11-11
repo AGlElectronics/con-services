@@ -77,17 +77,29 @@ Two realms are imported when Keycloak first starts:
 | `attendees` | attendees submitting to Rally | `rally-submit` (public) |
 
 Every public client has an **audience mapper** that puts its API's name
-(`den-api`, `hr-api`, `events-api`, `events-public-api`, …) into its access
-tokens; the full list is on
+(`den-api`, `hr-api`, `events-api`, `events-public-api`, …) into the
+access token only. The ID token keeps the client id as its audience. The
+full list is on
 [Audiences per API](../concepts/authentication.md#audiences-per-api).
-Realm imports generated before these mappers existed lack them: add them
-to a running realm as described there.
+Each staff client's `groups` mapper sends the **full group path**, so the
+top-level group `den-admin` arrives as `/den-admin`. The modules strip one
+leading `/` and ignore case, so `/den-admin` and `den-admin` are the same
+grant
+([How groups are matched](../concepts/authentication.md#how-groups-are-matched)).
+`rally-submit` has no `groups` mapper. The confidential clients
+(`den-keycloak`, `hr-provisioner`, `learn-provisioner`) have no audience
+mapper.
+
+`bootstrap/scripts/keycloak-realm.py` writes both into every realm it
+generates. A realm Keycloak has already imported keeps the mappers it
+had. Add the missing ones before you upgrade Den, or a module that
+checks its audience, using the steps in the GitOps repository:
+[Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists).
 
 The realm imports (`charts/keycloak/templates/realm-*.yaml`) are
 **generated** from the development realms of the main repository by
-`bootstrap/scripts/keycloak-realm.py` and ship with the template; they
-take your domain from `cluster.yaml`. The generator makes them fit for
-production:
+that script and ship with the template; they take your domain from
+`cluster.yaml`. The generator makes them fit for production:
 
 - no users, except the service-account users of the confidential clients;
 - redirect URIs only on `https://<host>.example.org` (no `localhost`),
@@ -97,8 +109,75 @@ production:
 - TLS required for every request (`sslRequired: all`);
 - self-registration **off** in `conservices` (HR creates staff accounts)
   and on in `attendees` (people sign up to submit);
+- **brute-force protection** on in both realms: after `failureFactor`
+  (default 10) wrong passwords within 12 hours, the account is locked for a
+  minute, growing by a minute per further failure up to 15 minutes;
+- a **password policy** in both realms: at least 12 characters, not the
+  username, not the e-mail address;
+- one **audience mapper** on every public client, named `audience <api>`,
+  written onto the access token only. The generator takes the name from
+  `CLIENT_AUDIENCES` in the script and writes the mapper when the
+  development realm has none;
+- **full group paths** on every `groups` mapper (`full.path` set to
+  `true`), so a top-level group arrives as `/den-admin`. The development
+  realm sends the plain name `den-admin`;
+- no realm roles: the development realm's `admin` and `member` are dropped
+  (nothing reads them; access comes from groups);
+- `den-keycloak` with the single `realm-management` role `manage-realm`, or
+  none (see [Den and the realm](#den-and-the-realm));
 - client secrets and the SMTP login as `${PLACEHOLDERS}` (below); the SMTP
   block only with `keycloak.smtp.enabled: true`.
+
+### Sign-in protection settings
+
+The brute-force and password settings come from `cluster.yaml` (defaults in
+`charts/root/values.yaml`). Set only what you change:
+
+```yaml
+keycloak:
+  realm:
+    bruteForce:
+      enabled: true
+      failureFactor: 5          # failed sign-ins before a lockout
+      maxFailureWaitSeconds: 900
+    passwordPolicy:
+      minLength: 14             # 8 or more; rendering stops below 8
+      notUsername: true
+      notEmail: true
+      extra: "passwordHistory(3)"   # more Keycloak policies, joined with "and"
+    denDisplayNameSync: true
+```
+
+They are used at the **first import only**. On a running realm change them
+in the admin console; see [Changing a running realm](#changing-a-running-realm).
+
+### Den and the realm
+
+Den keeps the realm's display name (shown in Keycloak's e-mails) equal to
+the organisation name. It does this through the confidential client
+`den-keycloak`, whose service account has the `realm-management` role
+`manage-realm` and nothing else. Keycloak has no smaller role that may
+write the display name, and `manage-realm` can change every realm setting,
+so the client secret is as sensitive as an admin password. It lives only in
+OpenBao (`conservices/infra/keycloak/clients`, property `den-keycloak`).
+
+To give Den no rights in the realm at all, turn the sync off before the
+first install:
+
+```yaml
+keycloak:
+  realm:
+    denDisplayNameSync: false
+```
+
+The service account then gets no `realm-management` role, Den's
+`KEYCLOAK_ADMIN_URL` is empty (Den admin → Branding says the sync is off),
+and you set the display name yourself under **Realm settings → General →
+Display name**.
+
+The sign-in page's branding does not depend on this: the login theme
+fetches the brand from Den's public brand endpoint in the browser (see
+[Login theme](#login-theme)).
 
 You do not need to run the generator to install. Run it only after the
 development realms of the main repository change (from the root of the
@@ -112,15 +191,21 @@ python3 bootstrap/scripts/keycloak-realm.py --source ../con-services/infra/keycl
 You should see:
 
 ```text
-wrote charts/keycloak/templates/realm-conservices.yaml (12 clients, users kept: ['service-account-hr-provisioner', 'service-account-den-keycloak', 'service-account-learn-provisioner'])
-wrote charts/keycloak/templates/realm-attendees.yaml (1 clients, users kept: none)
+wrote charts/keycloak/templates/realm-conservices.yaml (12 clients, users kept: ['service-account-hr-provisioner', 'service-account-den-keycloak', 'service-account-learn-provisioner'], placeholders: ['DEN_KEYCLOAK_CLIENT_SECRET', 'HR_PROVISIONER_CLIENT_SECRET', 'LEARN_PROVISIONER_CLIENT_SECRET'])
+wrote charts/keycloak/templates/realm-attendees.yaml (1 clients, users kept: none, placeholders: none)
 ```
+
+The same script writes plain JSON realms for the
+[Docker production path](../operations/docker-production.md#the-realm)
+with `--format json --domain <your domain>`.
 
 !!! warning "A realm is imported only once"
     The operator imports a realm only if it does **not exist yet**. Editing
-    the realm file later does not change a running realm. Make later changes
-    in the admin console (and in the development realm, so new
-    installations get them), or see [Add a module client](#add-a-module-client).
+    the realm file or `keycloak.realm` later does not change a running
+    realm. Make later changes in the admin console (and in the development
+    realm, so new installations get them); see
+    [Changing a running realm](#changing-a-running-realm) and
+    [Add a module client](#add-a-module-client).
 
 ### Placeholders
 
@@ -244,8 +329,46 @@ kubectl rollout restart statefulset/keycloak -n conservices-identity
 ```
 
 The `master` realm keeps Keycloak's default theme; you can switch it under
-**Realm settings → Themes** in the `master` realm. Den can also brand the
-login page through the `den-keycloak` client (Den admin → Branding).
+**Realm settings → Themes** in the `master` realm.
+
+The login pages show Den's brand (name, logo, colours, background). The
+theme's script fetches it in the browser from Den's public endpoint
+`GET https://<den.host>.<domain>/api/v1/public/brand`; the chart sets
+`DEN_PUBLIC_URL` on Keycloak to Den's address for that. Change the brand in
+Den admin → Branding; the sign-in page shows it on the next visit. Den
+needs no access to the realm for this. Without Den (or before it answers)
+the page keeps the theme's neutral look.
+
+## Changing a running realm
+
+The realm imports only create realms that do not exist yet. When this
+template's realm changes (a new release, or a `keycloak.realm` setting you
+changed), make the same change in the admin console of a running cluster
+(`https://auth-admin.<domain>`, top left: pick the realm). For the
+sign-in protection added before 1.0.0, do this in `conservices` and again
+in `attendees`:
+
+1. **Realm settings → Security defenses → Brute force detection:** choose
+   *Lockout temporarily*; set *Max login failures* 10, *Wait increment*
+   1 minute, *Max wait* 15 minutes, *Failure reset time* 12 hours;
+   **Save**.
+2. **Authentication → Policies → Password policy → Add policy:** *Minimum
+   length* 12, *Not username*, *Not email*; **Save**. Existing passwords
+   stay valid; the policy applies the next time someone sets one.
+3. **Realm roles** (staff realm only): delete `admin` and `member`.
+4. **Users → service-account-den-keycloak → Role mapping** (staff realm
+   only; tick *Hide inherited roles* off if the list looks empty): select
+   `view-realm` and **Unassign**. Keep `manage-realm`, or unassign it too
+   if you set `denDisplayNameSync: false`.
+
+For the audience mappers and the full group paths, follow
+[Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists)
+in the GitOps repository. Do that before you upgrade Den or a module
+that checks its audience. A sync of this template leaves a realm that
+already exists as it is.
+
+Check it: a wrong password eleven times in a row for a test account shows
+*Account is temporarily disabled* on that account's page under **Users**, and **Realm settings → Security defenses** shows your values.
 
 ## Add a module client
 
@@ -256,7 +379,12 @@ For a new module `shop` with the browser client `shop-spa`:
    `groups` mapper and an audience mapper for `shop-api`
    ([Audiences per API](../concepts/authentication.md#audiences-per-api)),
    and add an `audience_mapper` line to `infra/keycloak/apply-mvp.sh`.
-2. Regenerate the realm templates in `charts/keycloak/templates/` (see
+2. In `bootstrap/scripts/keycloak-realm.py`, map the client to its API in
+   `CLIENT_AUDIENCES` (`"shop-spa": "shop-api"` in the `conservices`
+   realm) and, for a new host label, add `shop` to `APP_HOSTS`. The
+   generator writes that audience mapper from the table and stops when a
+   public client is missing. Add `shop` under `appHosts` in
+   `charts/keycloak/values.yaml`, regenerate the realm templates (see
    [The realms](#the-realms)) and commit them.
 3. On a **running** cluster the import does not run again, so add the
    client there by hand: in the admin console, **conservices → Clients →
@@ -378,6 +506,14 @@ Keep the development realm of the main repository unchanged: it uses the
 : The name does not resolve to the internal Gateway, or your computer is
   not on the internal network. `nslookup auth-admin.example.org` must
   return the internal Gateway IP.
+
+**A module answers `401` with `invalid token` after you upgrade it**
+: The access token is missing that API's audience, or the `groups` claim
+  still has the previous path. A realm imported earlier keeps its old
+  mappers; a later sync leaves them as they are. Add the audience mapper
+  and the full group path with
+  [Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists),
+  then sign out and sign in again.
 
 **Modules fail at start-up with `failed to discover OIDC issuer`**
 : The backend cannot reach Keycloak in the cluster. Check that CoreDNS

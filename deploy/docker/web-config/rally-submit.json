@@ -1,0 +1,9 @@
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/attendees",
+  "oidcClientId": "rally-submit",
+  "oidcScope": "openid profile email",
+  "apiBaseUrl": "",
+  "productName": "Event submissions",
+  "publicScheduleKey": ""
+}

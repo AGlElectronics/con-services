@@ -96,18 +96,19 @@ another entry, but it does not stop you; take the warning seriously.
 | `<prefix>-conservices-den` | Den (logos, branding) | `conservices/modules/den/s3` | read and write |
 | `<prefix>-conservices-stash` | Stash | `conservices/modules/stash/s3` | read and write |
 | `<prefix>-conservices-rally` | Rally | `conservices/modules/rally/s3` | read and write |
+| `<prefix>-conservices-finance` | Finance (invoice PDFs, receipts) | `conservices/modules/finance/s3` | read and write |
 | `<prefix>-conservices-learn` | Learn | `conservices/modules/learn/s3` | read and write |
 | `<prefix>-conservices-wiki` | Wiki | `conservices/modules/wiki/s3` | read and write |
 | `<prefix>-conservices-tasks` | Tasks | `conservices/modules/tasks/s3` | read and write |
-| all six module buckets | Den's operator, copying files into its backups | `conservices/modules/den/files-s3` | **read only** |
+| all seven buckets above (Den's and the modules') | Den's operator, copying files into its backups | `conservices/modules/den/files-s3` | **read only** |
 | `<prefix>-pg-backups` | CloudNativePG (WAL archive, base backups) | `conservices/infra/postgres/backup-s3` | read and write |
 | `<prefix>-den-backups` | Den's operator (encrypted daily backups) | `conservices/modules/den/backup-s3` | read and write |
 
 The paths are in OpenBao's KV mount `conservices`; the full list is on
 [Secrets with OpenBao](secrets-openbao.md#every-secret-keys-and-values).
 
-`<prefix>` is `s3.bucketPrefix` from `cluster.yaml`. HR, Finance and Desk
-store no files and get no bucket; create buckets only for the modules you
+`<prefix>` is `s3.bucketPrefix` from `cluster.yaml`. HR and Desk store no
+files and get no bucket; create buckets only for the modules you
 enable (Den's three are always needed).
 
 **Put the backup buckets in another region, or at another provider**, from

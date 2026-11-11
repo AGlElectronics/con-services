@@ -219,10 +219,28 @@ and its own database backups. Then:
   bootstrap admin login.
 - **Configure real SMTP** on the realm; the test realm points at Mailpit,
   which does not exist on Kubernetes.
+- **Turn on brute-force protection and a password policy.** Brute-force
+  protection locks an account for a while after repeated wrong passwords;
+  the password policy sets the rules for new passwords. The production
+  realms of the [Argo CD template](../deploy/identity.md) and of
+  [Docker production](docker-production.md) have both: a temporary lockout
+  after 10 failed sign-ins, and passwords of at least 12 characters that
+  are neither the username nor the e-mail address.
+- **Remove the realm roles `admin` and `member`.** Nothing reads them;
+  access in Con Services comes from groups.
 - **Install the `conservices` login theme** if you want Den's branding on the
-  sign-in page, and give the `den-keycloak` service account the
-  `realm-management` role `manage-realm`. That role can change every realm
-  setting, so keep its secret as safe as an admin password.
+  sign-in page, and set `DEN_PUBLIC_URL` on Keycloak to Den's public
+  address (for example `https://den.example.org`). The theme fetches the
+  brand from Den's public brand endpoint in the browser; Den needs no
+  rights in the realm for that.
+- **Give `den-keycloak` the least it needs.** Den only keeps the realm's
+  display name (shown in Keycloak's e-mails) equal to the organisation
+  name. That needs the `realm-management` role `manage-realm` and nothing
+  else; Keycloak has no smaller role that may write the display name.
+  `manage-realm` can change every realm setting, so keep the client secret
+  as safe as an admin password, or turn the sync off: give the service
+  account no role at all and leave `KEYCLOAK_ADMIN_URL` empty on Den
+  (`keycloak.realm.denDisplayNameSync: false` in the Argo CD template).
 - Decide on **session lengths**. The test realm uses 5-minute access tokens,
   a 10-hour idle session and a 24-hour maximum.
 
@@ -234,15 +252,32 @@ Kubernetes Secrets; `overlays/production-external-secrets` shows the
 structure. The full inventory, provider examples and rotation steps are on
 [Secrets](secrets.md).
 
-Every test value in the repository is public and must be replaced:
+Every test value in the repository is public and must be replaced. They
+appear in the Docker Compose dev stack (`docker-compose.yml`), the dev
+realms (`infra/keycloak/`) and the Kustomize example overlays
+(`deploy/kubernetes/overlays/example*/secrets.yaml`). The last column says
+what the [Argo CD template](../deploy/argocd.md) does; it generates every
+random value in OpenBao and never uses a test value.
 
-| Test value | Where it is used | Replace with |
-| --- | --- | --- |
-| `postgres-dev-password` and the other `*-dev-password` values | PostgreSQL logins, `PG_ADMIN_URL`, `DATABASE_URL`s | Long random passwords, or databases created by Den's operator, which generates them. |
-| `conservices` / `conservicesdev` | Keys of the trial S3 server (`s3-secrets`), used by every backend and the operator | Your S3 provider's keys, one set per bucket. |
-| `den-keycloak-dev-secret` | `KEYCLOAK_CLIENT_SECRET`, client `den-keycloak` | A new secret, generated in Keycloak. |
-| `den-operator-dev-token` | `OPERATOR_TOKEN` on the backend and the operator | A long random value, for example `openssl rand -hex 32`. |
-| The age key in `infra/operator/dev-backup-identity.txt` | `BACKUP_AGE_RECIPIENTS` | Your own key pair; see [The encryption key](databases-and-backups.md#the-encryption-key). |
+| Test value | Where it is used | Replace with | Argo CD template |
+| --- | --- | --- | --- |
+| `postgres` / `postgres` (Compose), `postgres-dev-password` (Kustomize) | PostgreSQL superuser, `PG_ADMIN_URL` of Den's operator | A long random password, known only to the database and Den's operator. | Generated: `infra/postgres/superuser` |
+| `den/den`, `hr/hr`, `stash/stash`, `events/events`, `finance/finance`, `learn/learn`, `wiki/wiki`, `desk/desk`, `tasks/tasks` (Compose), `den-dev-password`, `keycloak-dev-password` (Kustomize) | Database logins in each `DATABASE_URL` and `KC_DB_PASSWORD` | One long random password per role, or databases created by Den's operator, which generates them. | Generated: `infra/postgres/roles/<role>` |
+| `conservices` / `conservicesdev` | Keys of the dev S3 server, used by every backend and the operator | Your S3 provider's keys, one set per bucket (read and write on that bucket only). | Entered by you: `modules/<app>/s3`, `modules/den/files-s3`, `modules/den/backup-s3` |
+| `admin` / `admin` | Keycloak bootstrap admin (`KC_BOOTSTRAP_ADMIN_*`), `apply-mvp.sh` | A random password; replace the bootstrap admin with a named admin after the first login. | Generated: `infra/keycloak/bootstrap-admin` |
+| `adminadmin`, `alicealice`, `bobbob`, `attendee` | Test people in the dev realms | Nothing: the production realm has no people. HR creates staff accounts. | Not imported |
+| `den-keycloak-dev-secret` | `KEYCLOAK_CLIENT_SECRET` on Den, client `den-keycloak` | A new random client secret. | Generated: `infra/keycloak/clients` property `den-keycloak` |
+| `hr-provisioner-dev-secret` | `KEYCLOAK_CLIENT_SECRET` on HR, client `hr-provisioner` | A new random client secret. | Generated: `infra/keycloak/clients` property `hr-provisioner` |
+| `learn-provisioner-dev-secret` | `KEYCLOAK_CLIENT_SECRET` on Learn, client `learn-provisioner` | A new random client secret. | Generated: `infra/keycloak/clients` property `learn-provisioner` |
+| `den-operator-dev-token` | `OPERATOR_TOKEN` on Den's backend and operator | A long random value, for example `openssl rand -hex 32`. | Generated: `modules/den/operator-token` |
+| `learn-service-dev-token` | `LEARN_SERVICE_TOKEN` on HR and Learn | One long random value, the same on both. | Generated: `modules/learn/service-token` |
+| `wiki-service-dev-token` | `WIKI_SERVICE_TOKEN` on Wiki, the token in HR's `OFFBOARD_HOOKS` | One long random value, the same on both. | Generated: `modules/wiki/service-token` |
+| `tasks-service-dev-token` | `TASKS_SERVICE_TOKEN` on Tasks, the token in HR's `DEPARTMENT_HOOKS` | One long random value, the same on both. | Generated: `modules/tasks/service-token` |
+| `desk-dev-secret-change-me` | `DESK_SECRET_KEY` (encrypts stored mailbox passwords) | A long random value. Never change it afterwards without the steps on [Secrets](secrets.md#inventory): stored mailbox passwords become unreadable. | Generated: `modules/desk/secret-key` |
+| The `ZGV2LW9ubHkt…` values | `DEN_LINK_ENCRYPTION_KEY` of every module backend | One key per module: `openssl rand -base64 32`. | Generated: `modules/<module>/den-link` |
+| `rsk_programme_dev_key` | `PUBLIC_API_BUILTIN_KEY` on Rally, `publicScheduleKey` in the submission site's `/config.json` | Not a secret (every browser of the submission site sees it), but use your own value, or leave it empty to turn the built-in key off. | Off (empty) |
+| The age key in `infra/operator/dev-backup-identity.txt` | `BACKUP_AGE_RECIPIENTS` | Your own key pair; see [The encryption key](databases-and-backups.md#the-encryption-key). | Your public key in `den.backupAgeRecipients` |
+| `support` / `registration` mailboxes on GreenMail | Desk's dev mailboxes | Your real mailboxes and their passwords, entered in Desk. | Not used |
 
 ## Den settings
 
@@ -287,8 +322,43 @@ The most important points:
 
 - Your own age key, with the secret half stored **offline**, in two places.
 - Backups stored at a **different provider or account** from the live data.
+  The Argo CD template allows the same S3 service but warns about it (see
+  [Where backups go](databases-and-backups.md#where-backups-go)).
 - One test restore, before you need it.
 - Modules not on the operator's server are backed up by someone else.
+
+## Security headers
+
+Browsers apply extra protections when the server asks for them in response
+headers. Con Services sets them in two places:
+
+- **HSTS** (`Strict-Transport-Security: max-age=31536000; includeSubDomains`)
+  tells browsers to use only HTTPS for a host for the next year. It is set
+  where TLS ends: on every `HTTPRoute` at the Gateway (the charts' value
+  `route.responseHeaders`, the Kustomize routes and the Keycloak routes of
+  the Argo CD template), and in Caddy on Docker (dev stack and
+  [Docker production](docker-production.md)). To turn it off for one app,
+  set `route.responseHeaders: {}` in its chart values.
+- **Content Security Policy, frame protection, `nosniff`,
+  `Referrer-Policy` and `Permissions-Policy`** come from each web app's
+  nginx, from the shared snippet
+  [`shared/nginx/security-headers.conf`](../concepts/shared-code.md#nginx-security-headers).
+  They work the same on Docker and Kubernetes.
+
+Check a public host:
+
+```sh
+curl -sI https://den.example.org/ | grep -i -E 'strict-transport|content-security|x-frame'
+```
+
+```text
+strict-transport-security: max-age=31536000; includeSubDomains
+content-security-policy: default-src 'self'; script-src 'self'; …
+x-frame-options: DENY
+```
+
+HSTS cannot be undone quickly: browsers remember it for a year. Turn it on
+only once every host of the domain serves HTTPS.
 
 ## Client IP addresses
 
@@ -387,7 +457,11 @@ call it. Rate-limit in front of the Gateway.
   cluster; one bucket and one key set per module.
 - [ ] Managed PostgreSQL or CloudNativePG; `sslmode=verify-full`.
 - [ ] Keycloak in production mode (Keycloak Operator): no test accounts, no
-  password grant on app clients, no `localhost` redirect URIs, real SMTP.
+  password grant on app clients, no `localhost` redirect URIs, real SMTP,
+  brute-force protection and a password policy on, no realm roles
+  `admin`/`member`, `den-keycloak` with `manage-realm` only (or nothing).
+- [ ] `curl -sI` on a web app shows `strict-transport-security` and
+  `content-security-policy` ([Security headers](#security-headers)).
 - [ ] All secrets in a secret manager via External Secrets; no plain
   Secrets with test values; etcd encryption at rest turned on.
 - [ ] Own `den-frontend` build for your issuer; `AUTH_MODE=oidc`.

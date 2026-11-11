@@ -24,6 +24,13 @@ spec:
       backendRefs:
         - name: stash-frontend
           port: 443
+      # HSTS: browsers use only HTTPS for this host (TLS ends at the Gateway).
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=31536000; includeSubDomains
       timeouts:
         request: 120s
 ---

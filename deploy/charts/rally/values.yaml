@@ -188,6 +188,10 @@ submit:
 # a BackendTLSPolicy per web app so the gateway talks HTTPS to it and
 # checks its certificate against internalTLS.caConfigMap.
 route:
+  # Headers the Gateway sets on every response of this route. HSTS: browsers
+  # use only HTTPS for this host (the Gateway terminates TLS). {} turns it off.
+  responseHeaders:
+    Strict-Transport-Security: "max-age=31536000; includeSubDomains"
   enabled: true
   host: events.conservices.test
   # The Gateway's listener must allow routes from this namespace.

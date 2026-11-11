@@ -195,6 +195,7 @@ nav:
       - contributing/index.md
       - Documentation standards: contributing/documentation-standards.md
       - Local development with Docker Compose: contributing/local-development.md
+      - Wiring a new module: contributing/new-module.md
       - Changelogs: contributing/changelog.md
       - CI and releases: contributing/ci.md
   - Changelog: changelog.md

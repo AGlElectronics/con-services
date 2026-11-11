@@ -1,0 +1,7 @@
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+  "oidcClientId": "hr-spa",
+  "oidcScope": "openid profile email",
+  "apiBaseUrl": ""
+}

@@ -201,6 +201,61 @@ led by Den's MAJOR; see
   `OIDC_GROUP_PREFIX` or `OIDC_GROUP_MATCH=last` is set.
   [Authentication](docs/concepts/authentication.md#refusing-id-tokens)
   explains that refusing ID tokens relies on Keycloak's `typ` claim.
+- Docker Compose dev stack: healthchecks for Mailpit, GreenMail, Adminer,
+  the proxy, Den's backend and operator (`healthcheck` subcommand) and
+  every web app; services wait for `healthy` dependencies, and Den's web
+  app for a healthy Den backend. Den's backups now include every dev
+  bucket (`FILES_S3_BUCKETS` adds `finance-data-dev`, `learn-data-dev`
+  and `tasks-data-dev`). `.env.example` documents `COMPOSE_PROFILES`,
+  `DEN_MODE` and `TELEGRAM_BOT_TOKEN`
+  ([Local development](docs/contributing/local-development.md#how-the-stack-protects-your-computer)).
+- Docker production is a supported target: `deploy/docker/` holds a
+  tested `compose.production.yml` (pinned images, no dev services,
+  healthchecks, non-root users, read-only file systems, only the proxy
+  publishes ports, bundled PostgreSQL without a published port, one
+  profile per module), a `Caddyfile` with Let's Encrypt, HSTS, Keycloak
+  limited to its public paths and the admin console restricted to
+  `ADMIN_ALLOWED_CIDRS`, an `.env.example` for secrets written from a
+  secret manager, `postgres/init-databases.sh` and the web apps'
+  `/config.json` files. The realm comes from the GitOps template's
+  `keycloak-realm.py --format json`; the web apps' nginx gets the shared
+  security headers. CI renders it (Den only and every profile) and
+  validates the Caddyfile
+  ([Docker production](docs/operations/docker-production.md)).
+- Docs: [Production](docs/operations/production.md#secrets) lists every
+  public test value (database logins, S3 keys, Keycloak admin and client
+  secrets, service tokens, `DESK_SECRET_KEY`, `DEN_LINK_ENCRYPTION_KEY`,
+  the age key, ...) with its replacement and where the Argo CD template
+  generates it; the Keycloak section and
+  [Identity](docs/deploy/identity.md#den-and-the-realm) describe brute-force
+  protection, the password policy, `den-keycloak` reduced to
+  `manage-realm` (or nothing) and how to change a running realm.
+  [Databases and backups](docs/operations/databases-and-backups.md#where-backups-go)
+  documents the warning for backups on the same S3 service and the
+  `BACKUP_SAME_STORAGE_AS_DATA` flag Den's operator gets (the dev stack
+  sets it to `true`). The secrets inventory lists each module's generated
+  `conservices/modules/<module>/den-link` entry in OpenBao.
+- Nightly **Smoke** workflow (`.github/workflows/smoke.yml`, also run by
+  hand with a module image tag): the Den quickstart cluster on kind with
+  Den's pinned images, every module from its Helm chart with published
+  images (`scripts/ci/smoke-cluster.sh`), then `smoke-access-catalog.ps1`,
+  `smoke-learn.ps1` and `smoke-tasks.ps1` under PowerShell 7 on Ubuntu
+  ([Smoke tests](docs/contributing/ci.md#smoke-tests)).
+- Smoke scripts read their addresses from `SMOKE_*` variables
+  (`scripts/smoke-lib.ps1`, defaults are the Compose dev ports) and run on
+  Linux. `smoke-access-catalog.ps1` now checks all nine role catalogs
+  (Den, HR, Rally, Stash, Learn, Finance, Desk, Tasks, Wiki), signs in when
+  a catalog answers `401`, and takes `-Skip <modules>`.
+- Docs: [Wiring a new module](docs/contributing/new-module.md), a checklist
+  for adding a module to the dev stack, the Helm charts and Argo CD
+  template, Docker production, secrets and docs.
+- Finance gets its own S3 bucket for invoice PDFs and receipts: in the
+  Argo CD template `<prefix>-conservices-finance` with the key
+  `conservices/modules/finance/s3`, backed up by Den
+  ([Data](docs/deploy/data.md)); in Docker production
+  `FINANCE_S3_BUCKET`, `FINANCE_S3_ACCESS_KEY_ID` and
+  `FINANCE_S3_SECRET_ACCESS_KEY` (without them Finance received
+  `S3_ENDPOINT` alone and refused to start).
 
 ### Changed
 
@@ -229,7 +284,9 @@ led by Den's MAJOR; see
   `S3_ORIGIN` and `EXTRA_CONNECT_SRC`. Charts pass these as `env` and
   never ship a filled-in copy. The inline scripts in `index.html` (theme)
   and `silent-callback.html` must move to files; the docs show how.
-
+- Production Compose passes optional `DEN_SMTP_PASSWORD` into
+  `den-backend` (empty when unset in `.env`). The shared SMTP password is
+  not stored in Den's database. Restart `den-backend` after changing it.
 - Shared Go code: `authbase` and `denlink` read `APP_ENV` the same way
   (trimmed, any case, `production` when unset), through the new
   `NormalizeAppEnv` in each package. `APP_ENV=Development` now counts as
@@ -257,8 +314,17 @@ led by Den's MAJOR; see
   the `attendees` realm). ID tokens are unchanged, so modules that still
   send ID tokens keep working. `infra/keycloak/apply-mvp.sh` adds the
   mappers to existing development realms. A running production realm
-  needs them added by hand before a module that checks its audience is
-  upgraded ([Audiences per API](docs/concepts/authentication.md#audiences-per-api)).
+  needs the audience mappers and the full group paths added by hand
+  before a module that checks its audience is upgraded
+  ([Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists)).
+- Production realms written by the GitOps `keycloak-realm.py` include
+  one access-token audience mapper per public client and `groups`
+  mappers with full paths (`/den-admin`). Docker production generates
+  those JSON files at install time (`--format json`); `deploy/docker/`
+  does not commit a realm. A realm Keycloak has already imported keeps
+  its previous mappers until you add them with the same steps
+  ([The realms](docs/deploy/identity.md#the-realms),
+  [Docker production](docs/operations/docker-production.md#the-realm)).
 - CI *Chart versions*: a changed chart needs a higher version only once
   its app has a chart release tag `<app>/v*`; before the first release a
   chart may change while staying at its first version.
@@ -295,3 +361,16 @@ led by Den's MAJOR; see
   using it refuses to start outside `APP_ENV=development` without
   `DEN_LINK_ENCRYPTION_KEY`, and never re-pairs by itself after Den
   revoked its credential.
+- Docker Compose dev stack: every published port is bound to `127.0.0.1`,
+  so the public dev passwords are not reachable from your network;
+  Adminer, Mailpit, GreenMail and Caddy are pinned to exact versions;
+  Mailpit runs as a normal user and the proxy keeps only
+  `NET_BIND_SERVICE`. The dev proxy sends `Strict-Transport-Security`
+  on every host.
+- HSTS at the Gateway: every `HTTPRoute` of the Kustomize manifests
+  (Den, Keycloak, Stash) sets `Strict-Transport-Security:
+  max-age=31536000; includeSubDomains` with a `ResponseHeaderModifier`
+  filter; the app charts do the same through the new value
+  `route.responseHeaders` (`{}` turns it off). CSP and frame headers stay
+  in each web app's nginx
+  ([Security headers](docs/operations/production.md#security-headers)).

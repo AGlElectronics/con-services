@@ -133,10 +133,10 @@ S3_SECRET_ACCESS_KEY: "{{ .s3SecretKey }}"
 | Module | OpenBao entries it reads |
 | --- | --- |
 | Den | `infra/postgres/roles/den`, `modules/den/s3`, `infra/keycloak/clients` (`den-keycloak`), `modules/den/operator-token`; operator: `infra/postgres/superuser`, `modules/den/backup-s3`, `modules/den/files-s3` |
-| Stash, Rally, Wiki, Tasks, Learn | `infra/postgres/roles/<role>`, `modules/<module>/s3`; Wiki, Tasks and Learn also `modules/<module>/service-token` |
+| Every module | `modules/<module>/den-link` (`DEN_LINK_ENCRYPTION_KEY`), plus the entries below |
+| Stash, Rally, Finance, Wiki, Tasks, Learn | `infra/postgres/roles/<role>`, `modules/<module>/s3`; Wiki, Tasks and Learn also `modules/<module>/service-token` |
 | HR | `infra/postgres/roles/hr`, `infra/keycloak/clients` (`hr-provisioner`), and `modules/learn/service-token`, `modules/wiki/service-token`, `modules/tasks/service-token` for the ones enabled |
 | Learn | also `infra/keycloak/clients` (`learn-provisioner`) |
-| Finance | `infra/postgres/roles/finance` |
 | Desk | `infra/postgres/roles/desk`, `modules/desk/secret-key` |
 | all, with `images.pullSecret.enabled: true` | `infra/ghcr` (pull secret) |
 
@@ -463,7 +463,10 @@ from a chart `deploy/charts/shop` in `con-services`:
    addresses as `https://shop.conservices.test` in the dev realm; the
    generator script turns them into `{{.Values.appHosts.shop}}.{{.Values.domain}}`
    once `shop` is in `APP_HOSTS` of `bootstrap/scripts/keycloak-realm.py`
-   and under `appHosts` in `charts/keycloak/values.yaml`.
+   and under `appHosts` in `charts/keycloak/values.yaml`. Map
+   `shop-spa` to `shop-api` in that script's `CLIENT_AUDIENCES`: the
+   generator writes the client's audience mapper from the table and stops
+   when a public client is missing.
 4. Check the render, commit, push, and [pair](#pair-the-modules) it:
 
     ```sh

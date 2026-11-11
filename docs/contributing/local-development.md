@@ -28,6 +28,37 @@ profile and are always available. Each module's services sit in a
 | Mailpit | <https://mail.conservices.test>, direct <http://localhost:8025> |
 | Adminer | <https://db.conservices.test>, direct <http://localhost:8095> |
 
+### How the stack protects your computer
+
+The passwords in the stack are public, so the stack keeps itself off your
+network:
+
+- **Every published port is bound to `127.0.0.1`** (for example
+  `"127.0.0.1:5432:5432"`). Only programs on your own computer can reach
+  PostgreSQL, the S3 server, Keycloak or a backend; other devices on your
+  Wi-Fi cannot. To open a port to your network on purpose (for example to
+  test on a phone), use a `docker-compose.override.yml` that is not
+  committed, and only on a network you trust.
+- **Third-party images are pinned** to exact versions (`adminer:6.3.0`,
+  `axllent/mailpit:v1.33.1`, `greenmail/standalone:2.1.15`,
+  `caddy:2.11.9-alpine`). Raise a pin in a change of its own.
+- **Healthchecks:** PostgreSQL, the S3 server, Keycloak, Mailpit, GreenMail,
+  Adminer, the proxy, Den's backend and operator, and every web app report
+  `healthy` in `docker compose ps`. Services that need one of them wait for
+  `healthy`, not just "started". Den's web app waits for a healthy Den
+  backend. The other module backends get a healthcheck once their image
+  has a `healthcheck` subcommand like Den's (`/den-server healthcheck`);
+  their images have no shell or curl to probe with.
+- **Non-root:** the module backends (distroless `nonroot`), the web apps
+  (nginx as UID 101), Keycloak, Adminer, GreenMail and Mailpit (`user:
+  "1000:1000"`) run as normal users. PostgreSQL starts as root and switches
+  to its own user. The proxy and the S3 server stay root because their
+  volumes were created by root; the proxy keeps only the capability to
+  bind ports 80 and 443.
+- **HSTS:** the proxy sends `Strict-Transport-Security` for every
+  `*.conservices.test` host, like production. The web apps' own
+  security headers (CSP, frame protection) come from their nginx.
+
 ## The workspace
 
 Con Services is spread over several Git repositories. You work in one
@@ -113,6 +144,15 @@ den                 main       2 0     0
     module waits until it is paired, set `DEN_MODE=required` in `.env` and
     recreate the backends (`docker compose up -d`); see
     [Required or standalone](../concepts/pairing.md#required-or-standalone).
+
+    `.env` is also where optional values go that the stack reads from your
+    environment:
+
+    | Variable | Default | What it does |
+    | --- | --- | --- |
+    | `COMPOSE_PROFILES` | none | Profiles started without `--profile`, for example `den,events`. |
+    | `DEN_MODE` | `standalone` | `required`: module APIs wait until paired with Den. |
+    | `TELEGRAM_BOT_TOKEN` | empty | Bot token for Rally announcements and Learn notifications. Empty: Rally records dry runs, Learn sends nothing to Telegram. A real token is a secret; `.env` is never committed. |
 
 3. Build and start Den with what it depends on:
 
@@ -206,7 +246,9 @@ Hetzner Object Storage. For development the Compose stack runs
     ```
 
 To add a bucket for a new module, append it to the `-bucket=` list of the
-`s3` service and run `docker compose up -d s3`.
+`s3` service and to `FILES_S3_BUCKETS` of `den-operator` (so Den's backups
+include it), then run `docker compose up -d s3 den-operator`. The full
+checklist is [Wiring a new module](new-module.md).
 
 ## Keeping Compose and Kubernetes in step
 
@@ -217,7 +259,7 @@ change (see [Contributing](index.md)).
 
 ## Troubleshooting
 
-**`Bind for 0.0.0.0:5432 failed: port is already allocated`.** Another
+**`Bind for 127.0.0.1:5432 failed: port is already allocated`.** Another
 program uses the port (often a locally installed PostgreSQL, IIS or a
 local kind cluster from the quickstart on 80/443). Find it with
 `Get-NetTCPConnection -LocalPort 5432 -State Listen` (Windows) or
@@ -236,7 +278,18 @@ ready or was recreated. Run `docker compose --profile den restart den-backend`.
 failed` usually means a database volume from an older setup; on a dev
 machine `docker compose --profile den down -v` starts fresh.
 
-**`Bind for 0.0.0.0:9000 failed: port is already allocated`.** Another
+**`dependency failed to start: container conservices-den-backend is unhealthy`.**
+`/den-server healthcheck` failed for too long. Read
+`docker compose --profile den logs den-backend`. An `unknown command` or
+`exec: "/den-server healthcheck"` error means your `den/` checkout is older
+than the healthcheck subcommand: pull it (`./scripts/workspace.ps1 pull`)
+and rebuild with `--build`.
+
+**A device on your network cannot open `http://<your-ip>:3001`.** On
+purpose: the stack binds its ports to `127.0.0.1` (see
+[How the stack protects your computer](#how-the-stack-protects-your-computer)).
+
+**`Bind for 127.0.0.1:9000 failed: port is already allocated`.** Another
 container or program holds port 9000. Find it with `docker ps` and
 `Get-NetTCPConnection -LocalPort 9000 -State Listen` (Windows) or
 `sudo lsof -i :9000`, stop it, then run the `up` command again.

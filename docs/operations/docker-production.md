@@ -1,15 +1,16 @@
 # Full stack on Docker (production)
 
-**Goal:** run Den and its platform on one Linux server with Docker Compose,
-safely enough for a small convention, using the same pinned images as on
-Kubernetes.
+**Goal:** run Den, Keycloak and the modules on one Linux server with Docker
+Compose, safely enough for a small convention, using the same pinned images
+as on Kubernetes.
 
-Kubernetes is the recommended way to run Con Services. Some organisations
-have one server and no Kubernetes; for them, the suite can run on a single
-**Docker** host with Docker Compose, using the same published images. This
-page shows how to do that safely. It is **not** the development stack: that
-one (described in [Local development](../contributing/local-development.md))
-builds from source and uses public passwords.
+Kubernetes ([Deploy with Argo CD](../deploy/index.md)) is the recommended
+way to run Con Services. Some organisations have one server and no
+Kubernetes; for them, **Docker production** is a supported target: a tested
+compose file in the root repository, `deploy/docker/compose.production.yml`,
+with everything it needs next to it. It is **not** the development stack:
+that one ([Local development](../contributing/local-development.md)) builds
+from source and uses public passwords.
 
 !!! warning "Know what you give up"
     A single Docker host has no network policies between namespaces, no Pod
@@ -18,270 +19,328 @@ builds from source and uses public passwords.
     server and good backups. Anything bigger belongs on
     [Kubernetes](running.md).
 
-## How it differs from the development stack
+## What you get
 
-| Development stack (`docker-compose.yml`) | Production on Docker |
+| Piece | In `deploy/docker/` | What it does |
+| --- | --- | --- |
+| `compose.production.yml` | yes | Every service, pinned images (`ghcr.io/aglelectronics/<app>-<component>:MAJOR.MINOR.PATCH-BUILD`, PostgreSQL `16.15-alpine`, Keycloak `26.8.2`, Caddy `2.11.9-alpine`), healthchecks, non-root users, read-only file systems, only ports 80 and 443 published. Den always runs; each module is a Compose **profile**. |
+| `Caddyfile` | yes | The proxy: certificates from Let's Encrypt, HSTS on every host, Keycloak limited to `/realms/` and `/resources/`, the admin console only from your admin networks. |
+| `.env.example` | yes | Every setting and secret, as placeholders. Your copy `.env` is written from your secret manager. |
+| `postgres/init-databases.sh` | yes | Creates the login and database of Den, Keycloak and every enabled module, if missing. Runs on every `up`, never changes or drops anything. |
+| `web-config/*.json` | yes | Each web app's `/config.json` (sign-in address and client). |
+| `keycloak/`, `nginx/`, `access-config/` | you create them (step 4) | The clean realm, the login theme, the web apps' nginx files with the security headers, the modules' access configurations. Git ignores them. |
+
+How it differs from the development stack:
+
+| Development stack (`docker-compose.yml`) | Docker production (`deploy/docker/compose.production.yml`) |
 | --- | --- |
-| Builds every image from local source (`build:`). | Pulls published images with pinned tags (`image: ghcr.io/aglelectronics/den-backend:1.0.0-1`). |
-| Passwords written in the compose file. | Secrets in root-only env files outside Git, filled from a secret manager (see [Secrets on Docker](secrets.md#secrets-on-docker)). |
-| Keycloak in `start-dev` mode, a local S3 server (SeaweedFS, service `s3`), Mailpit, Adminer, GreenMail. | Keycloak in production mode (`start`); managed S3 and SMTP; **no** Adminer, Mailpit, GreenMail or local S3 server. |
-| Caddy with its own local certificate authority. | Caddy (or another reverse proxy) with real certificates from Let's Encrypt. |
-| Many published ports (`8090`, `5432`, `9000`, …). | Only the proxy publishes ports 80 and 443. |
-| `APP_ENV=development`. | `APP_ENV=production`, `AUTH_MODE=oidc`. |
+| Builds every image from local source. | Pulls published images with pinned tags; never `latest`. |
+| Passwords written in the compose file. | Secrets only in `.env` (mode 600), written from a secret manager. |
+| Keycloak `start-dev` with test users; local S3 server, Mailpit, Adminer, GreenMail. | Keycloak `start` with a clean realm (no people, brute-force protection, password policy); managed S3 and SMTP; **no** dev services. |
+| Caddy with its own local certificate authority. | Caddy with Let's Encrypt certificates and HSTS. |
+| Ports bound to `127.0.0.1` for your own computer. | Only the proxy publishes ports (80, 443). PostgreSQL and the apps have no published port. |
+| `APP_ENV=development`, `DEN_MODE=standalone`. | `APP_ENV=production`, `AUTH_MODE=oidc`, modules wait for Den (`DEN_MODE=required`). |
 
 ## Step 1: Prepare the host
 
-1. A Linux server with Docker Engine and the Compose plugin, a firewall that
-   allows only 22 (from your admin network), 80 and 443.
-2. DNS names for every app pointing at the server, for example
-   `auth.con.example.org`, `den.con.example.org`, `stash.con.example.org`.
-3. Managed PostgreSQL 16 (or PostgreSQL on another host you back up) and
-   managed S3 storage; any S3-compatible service works (AWS S3, Hetzner
-   Object Storage, Cloudflare R2, Backblaze B2, ...; see
-   [Production](production.md#object-storage-use-managed-s3)).
-4. A folder for secrets, owned by root:
+1. A Linux server (4 CPU cores and 8 GB RAM are enough for Den and four
+   modules) with Docker Engine 27 or later and the Compose plugin 2.30 or
+   later. Check:
 
     ```sh
-    sudo install -d -m 700 /etc/conservices
+    docker compose version
     ```
 
-## Step 2: Write the env files
-
-One file per service, readable only by root, filled from your secret
-manager as shown in [Secrets on Docker](secrets.md#secrets-on-docker).
-Non-secret settings can sit in the compose file; secrets go only in these
-files. The variables are the same as on Kubernetes:
-[Den configuration](../modules/den/configuration.md).
-
-```text
-# /etc/conservices/den-backend.env   (mode 600; values from the secret manager)
-DATABASE_URL=postgres://den:change-me@db.example.org:5432/den?sslmode=require
-S3_ACCESS_KEY_ID=change-me
-S3_SECRET_ACCESS_KEY=change-me
-KEYCLOAK_CLIENT_SECRET=change-me
-OPERATOR_TOKEN=change-me
-```
-
-```text
-# /etc/conservices/den-operator.env
-OPERATOR_TOKEN=change-me
-PG_ADMIN_URL=postgres://postgres:change-me@db.example.org:5432/postgres?sslmode=require
-BACKUP_S3_ACCESS_KEY_ID=change-me
-BACKUP_S3_SECRET_ACCESS_KEY=change-me
-FILES_S3_ACCESS_KEY_ID=change-me
-FILES_S3_SECRET_ACCESS_KEY=change-me
-```
-
-## Step 3: The compose file
-
-A hardened starting point for the platform and Den. Keep it in your own Git
-repository (it holds no secrets). Add modules the same way as Den.
-
-```yaml
-# compose.production.yml
-name: conservices
-
-x-hardening: &hardening
-  restart: unless-stopped
-  read_only: true
-  security_opt: ["no-new-privileges:true"]
-  cap_drop: ["ALL"]
-  tmpfs: ["/tmp"]
-  networks: [internal]
-
-services:
-  proxy:
-    image: caddy:2.8
-    restart: unless-stopped
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-    networks: [internal, public]
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0.7
-    restart: unless-stopped
-    command: ["start", "--import-realm"]
-    networks: [internal, egress]
-    env_file: /etc/conservices/keycloak.env   # KC_DB_PASSWORD, KC_BOOTSTRAP_ADMIN_*
-    environment:
-      KC_HOSTNAME: https://auth.con.example.org
-      KC_PROXY_HEADERS: xforwarded
-      KC_HTTP_ENABLED: "true"
-      KC_HEALTH_ENABLED: "true"
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://db.example.org:5432/keycloak?sslmode=require
-      KC_DB_USERNAME: keycloak
-    volumes:
-      - ./realm:/opt/keycloak/data/import:ro
-      - ./themes/conservices:/opt/keycloak/themes/conservices:ro
-
-  den-migrate:
-    image: ghcr.io/aglelectronics/den-backend:1.0.0-1
-    <<: *hardening
-    restart: "no"
-    entrypoint: ["/den-migrate"]
-    networks: [internal, egress]
-    env_file: /etc/conservices/den-backend.env
-    environment:
-      APP_ENV: production
-
-  den-backend:
-    image: ghcr.io/aglelectronics/den-backend:1.0.0-1
-    <<: *hardening
-    depends_on:
-      den-migrate: { condition: service_completed_successfully }
-    networks: [internal, egress]
-    env_file: /etc/conservices/den-backend.env
-    environment:
-      APP_ENV: production
-      APP_BASE_URL: https://den.con.example.org
-      HTTP_ADDR: ":8080"
-      AUTH_MODE: oidc
-      OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
-      OIDC_CLIENT_ID: den-spa
-      CORS_ALLOWED_ORIGINS: https://den.con.example.org
-      S3_ENDPOINT: https://fsn1.your-objectstorage.com
-      S3_BUCKET: example-den
-      S3_REGION: fsn1
-      KEYCLOAK_ADMIN_URL: http://keycloak:8080
-      KEYCLOAK_REALM: conservices
-      OPERATOR_URL: http://den-operator:8080
-
-  den-operator:
-    image: ghcr.io/aglelectronics/den-operator:1.0.0-1
-    <<: *hardening
-    networks: [internal, egress]
-    env_file: /etc/conservices/den-operator.env
-    environment:
-      MODULE_DB_HOST: db.example.org:5432
-      BACKUP_S3_ENDPOINT: https://s3.eu-central-1.amazonaws.com
-      BACKUP_S3_BUCKET: example-conservices-backups
-      BACKUP_S3_REGION: eu-central-1
-      BACKUP_AGE_RECIPIENTS: age1change-me
-      BACKUP_TIMEZONE: Europe/Vienna
-      FILES_S3_ENDPOINT: https://fsn1.your-objectstorage.com
-      FILES_S3_REGION: fsn1
-      FILES_S3_BUCKETS: example-den,example-stash
-
-  den-frontend:
-    image: ghcr.io/aglelectronics/den-frontend:1.0.0-1
-    # nginx runs as UID 101 on port 8080 and writes only to /tmp.
-    <<: *hardening
-    networks: [internal]
-    volumes:
-      # Den's infra/nginx.stack.conf: forwards /api/ to den-backend:8080.
-      - ./den-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # The web app's sign-in settings, served as /config.json.
-      - ./den-frontend/config.json:/etc/conservices/config.json:ro
-
-networks:
-  internal: { internal: true }   # no route out, no published ports
-  public: {}                    # the proxy's ports
-  egress: {}                    # outbound only: database, S3, SMTP
-
-volumes:
-  caddy-data: {}
-```
-
-What the hardening does:
-
-- **Only the proxy is reachable from outside.** It is the only service
-  with published ports. Everything talks on the `internal` network, which
-  has no route out. Services that must reach the managed database, S3 or
-  SMTP (`keycloak`, `den-migrate`, `den-backend`, `den-operator`) also join
-  `egress`, which has no published ports. Restrict that traffic further
-  with the host firewall or an egress proxy if you can.
-- `read_only`, `cap_drop: ALL` and `no-new-privileges` mirror Kubernetes'
-  `restricted` Pod Security. The operator needs its `/tmp` (a `tmpfs` here)
-  to be large enough for database dumps; give it a volume instead if your
-  databases are big.
-- **One Den backend container only**: backup download links live in its
-  memory, and migrations run in `den-migrate` before it starts.
-- **The published frontend image works for any domain.** Two files next to
-  the compose file make it yours:
-
-    ```sh
-    # infra/nginx.stack.conf from a checkout of github.com/AGlElectronics/den
-    # at the release you run (it names no domain)
-    mkdir den-frontend
-    cp ~/src/den/infra/nginx.stack.conf den-frontend/nginx.conf
+    ```text
+    Docker Compose version v2.40.3
     ```
 
-    ```json
-    {
-      "authMode": "oidc",
-      "oidcAuthority": "https://auth.con.example.org/realms/conservices",
-      "oidcClientId": "den-spa"
-    }
-    ```
+2. A firewall that allows only 22 (from your admin network), 80 and 443.
+3. DNS records pointing at the server for every host below your domain
+   (`con.example.org` here): `auth`, `auth-admin`, `den`, and one per module
+   you run: `hr`, `events` and `submit` (Rally), `stash`, `finance`,
+   `learn`, `wiki`, `desk`, `tasks`. A wildcard record `*.con.example.org`
+   covers them all.
+4. Managed S3 storage (AWS S3, Hetzner Object Storage, Cloudflare R2,
+   Backblaze B2, ...; see
+   [Production](production.md#object-storage-use-managed-s3)): one bucket
+   for Den and one per module that stores files (Stash, Rally, Finance,
+   Learn, Wiki, Tasks), each with its own key that may only read and write that
+   bucket; one read-only key on all of them for Den's backups; and a
+   **backup bucket at another provider or account** with its own key.
+5. An SMTP account for Keycloak's password resets and the modules' mail.
+6. An age key pair for the backups (`age-keygen -o den-backup.key`); keep
+   `den-backup.key` offline, in two places. See
+   [The encryption key](databases-and-backups.md#the-encryption-key).
 
-    Save the second one as `den-frontend/config.json`. The keys are listed
-    under [Web app settings](../modules/den/configuration.md#web-app-settings-configjson).
-    A change shows on the next page load; no restart needed.
+## Step 2: Get the files
 
-!!! note "Verify before relying on it"
-    This compose file is a reference, not a tested release artifact. Run
-    `docker compose -f compose.production.yml config` to check it, and
-    test a full start, sign-in and backup on a staging server first. Some
-    images (for example Keycloak) need writable paths; add `tmpfs` entries
-    or drop `read_only` for that service if it fails to start.
-
-## Step 4: The proxy
-
-Caddy gets real certificates from Let's Encrypt automatically when the DNS
-names point at the server:
-
-```text
-# Caddyfile
-auth.con.example.org {
-	reverse_proxy keycloak:8080
-}
-
-den.con.example.org {
-	reverse_proxy den-frontend:8080
-}
-```
-
-The web app images listen on port **8080** inside the container (nginx
-runs as a normal user, which cannot use ports below 1024). Older images
-built on `nginx:1.27-alpine` listened on port 80; if you upgrade from one
-of them, change `reverse_proxy den-frontend:80` to
-`reverse_proxy den-frontend:8080`.
-
-Add rate limiting at this proxy or in front of the server; Den has none
-built in.
-
-## Step 5: Start, upgrade, back up
+Check out the root repository at the release you run and copy
+`deploy/docker` to the server's deployment folder, for example
+`/srv/conservices`:
 
 ```sh
-docker compose -f compose.production.yml pull
-docker compose -f compose.production.yml up -d
-docker compose -f compose.production.yml ps
+git clone --depth 1 --branch v1.0.0 https://github.com/AGlElectronics/con-services.git
+git clone --depth 1 https://github.com/AGlElectronics/con-services-gitops.git
+sudo install -d -o "$USER" -m 750 /srv/conservices
+cp -r con-services/deploy/docker/. /srv/conservices/
+cd /srv/conservices
 ```
 
-- **Upgrade:** read the module's changelog, change the image tags, then
-  `pull` and `up -d` again. `den-migrate` runs before the new backend starts.
-  See [Versions and upgrades](versioning.md).
-- **Backups:** Den's operator backs up the database server and the listed
-  buckets, exactly as on Kubernetes. Follow
-  [Databases, backups and restore](databases-and-backups.md); for restores,
-  use `docker compose exec den-operator sh` instead of `kubectl exec`.
-- **Secrets changed:** rewrite the env file, then
-  `docker compose -f compose.production.yml up -d <service>`.
+You should see the files from the table above:
+
+```sh
+ls -A
+```
+
+```text
+.env.example  .gitignore  Caddyfile  compose.production.yml  postgres  web-config
+```
+
+Keep `/srv/conservices` in your own private Git repository if you like;
+`.gitignore` keeps `.env` and the generated folders out of it.
+
+## Step 3: Write `.env`
+
+`.env` holds every setting and secret. It is read by Compose, so it must sit
+next to the compose file, be readable only by you, and never be committed.
+
+1. Create it from the example with the right permissions:
+
+    ```sh
+    install -m 600 /dev/null .env && cat .env.example > .env
+    ```
+
+2. Fill it from your secret manager. Generate random values with
+   `openssl rand -hex 32` (passwords and tokens) and
+   `openssl rand -base64 32` (every `*_DEN_LINK_ENCRYPTION_KEY`, one per
+   module), store them in the secret manager first, then write `.env` from
+   there. With SOPS, for example, keep `env.sops` encrypted in your
+   deployment repository and decrypt on the server:
+
+    ```sh
+    sops --decrypt --input-type dotenv --output-type dotenv env.sops > .env
+    ```
+
+    Other options (OpenBao/Vault, 1Password, Bitwarden) are on
+    [Secrets on Docker](secrets.md#secrets-on-docker).
+
+3. Set `DOMAIN`, `ACME_EMAIL`, `ADMIN_ALLOWED_CIDRS` and the S3, SMTP and
+   backup values. Leave `BACKUP_SAME_STORAGE_AS_DATA=false` unless the
+   backup bucket is on the same S3 service as the live data (then set it to
+   `true`, and Den warns about it; see
+   [Where backups go](databases-and-backups.md#where-backups-go)).
+4. For every module you run, add its name to `COMPOSE_PROFILES` (for
+   example `COMPOSE_PROFILES=hr,stash,wiki`), uncomment its block and fill
+   it in. List in `FILES_S3_BUCKETS` the Den bucket and the bucket of every
+   module that has one, so they are backed up.
+
+The full list of secrets, what they protect and how to rotate them is the
+[inventory](secrets.md#inventory). Never put a real value into
+`.env.example` or any file you commit.
+
+## Step 4: Generate the realm and the per-installation files
+
+### The realm
+
+The realm files come from the development realm, cleaned for production
+by `keycloak-realm.py` of the GitOps repository: no test people, no
+`localhost` addresses, no password grant on the web apps, TLS required,
+self-registration off for staff, brute-force protection, a password policy
+(at least 12 characters, not the username, not the e-mail address), no
+realm roles, and `den-keycloak` limited to `manage-realm`. The same run
+writes one audience mapper on every public client (the API name on the
+access token only) and sets full group paths on every `groups` mapper, so
+a top-level group arrives as `/den-admin`. Client secrets
+and the SMTP login stay `${PLACEHOLDERS}` that Keycloak fills from its
+environment (the values from `.env`).
+
+You generate these files on the server at install time. `deploy/docker/`
+does not contain a realm JSON; Git ignores the `keycloak/` folder.
+
+```sh
+pip install pyyaml
+python3 ~/con-services-gitops/bootstrap/scripts/keycloak-realm.py \
+  --source ~/con-services/infra/keycloak \
+  --format json --domain con.example.org --smtp --out keycloak/realm
+```
+
+You should see:
+
+```text
+wrote keycloak/realm/realm-conservices.json (12 clients, users kept: ['service-account-hr-provisioner', 'service-account-den-keycloak', 'service-account-learn-provisioner'], placeholders: ['DEN_KEYCLOAK_CLIENT_SECRET', 'HR_PROVISIONER_CLIENT_SECRET', 'LEARN_PROVISIONER_CLIENT_SECRET', 'SMTP_FROM', 'SMTP_HOST', 'SMTP_PASSWORD', 'SMTP_PORT', 'SMTP_USERNAME'])
+wrote keycloak/realm/realm-attendees.json (1 clients, users kept: none, placeholders: ['SMTP_FROM', 'SMTP_HOST', 'SMTP_PASSWORD', 'SMTP_PORT', 'SMTP_USERNAME'])
+```
+
+Options: `--min-password-length 14`, `--failure-factor 5` (failed
+sign-ins before a temporary lockout), `--no-den-sync` (Den gets no rights
+in the realm; then also set `DEN_KEYCLOAK_ADMIN_URL=` empty in `.env`).
+Keycloak imports a realm only when it does not exist yet; later changes
+are made in the admin console ([Changing a running realm](../deploy/identity.md#changing-a-running-realm)).
+A realm that already exists keeps its old audience mappers and group
+paths. Add them with the GitOps steps
+[Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists),
+then sign out and sign in again.
+
+Copy the login theme (it fetches Den's brand in the browser):
+
+```sh
+mkdir -p keycloak/themes
+cp -r ~/con-services/infra/keycloak/themes/conservices keycloak/themes/
+```
+
+### Web app settings
+
+Point the web apps at your sign-in address:
+
+```sh
+sed -i 's/con\.example\.org/con.yourdomain.org/g' web-config/*.json
+```
+
+### nginx and security headers
+
+Each web app's nginx file comes from its repository at the release you run
+(`infra/nginx.stack.conf`, which finds its backend by service name). The
+security headers (Content Security Policy, frame protection, `nosniff`,
+`Referrer-Policy`, `Permissions-Policy`) come from the shared snippet with
+your addresses filled in; Stash's copy allows the camera for barcode
+scanning:
+
+```sh
+mkdir -p nginx
+for app in den hr Rally stash finance learn wiki desk tasks; do
+  curl -fsSL "https://raw.githubusercontent.com/AGlElectronics/$app/v1.0.0/infra/nginx.stack.conf" \
+    -o "nginx/$(echo "$app" | tr 'A-Z' 'a-z').conf"
+done
+sed -e 's#KEYCLOAK_ORIGIN#https://auth.con.yourdomain.org#g' \
+    -e 's#DEN_ORIGIN#https://den.con.yourdomain.org#g' \
+    ~/con-services/shared/nginx/security-headers.conf > nginx/security-headers.conf
+sed -e 's#camera=()#camera=(self)#' nginx/security-headers.conf > nginx/security-headers-stash.conf
+```
+
+Replace `v1.0.0` with each module's release tag. If a module's
+`nginx.stack.conf` does not contain
+`include /etc/nginx/snippets/security-headers.conf;` yet, add that line in
+its `server` block and in every `location` that has its own `add_header`
+(see [Nginx security headers](../concepts/shared-code.md#nginx-security-headers)).
+
+### Access configurations
+
+Stash, Rally, Learn, Wiki, Desk and Tasks read an access configuration
+(which Keycloak group gets which role). Start from the template's files:
+
+```sh
+mkdir -p access-config
+cp ~/con-services-gitops/charts/module-extras/files/access-config/*.toml access-config/
+```
+
+## Step 5: Check and start
+
+1. Check the whole configuration. This catches a missing required value in
+   `.env` and typos in the compose file:
+
+    ```sh
+    docker compose -f compose.production.yml config --quiet && echo OK
+    ```
+
+    ```text
+    OK
+    ```
+
+    An error such as `required variable OPERATOR_TOKEN is missing a value`
+    names the value to add to `.env`.
+
+2. Pull and start:
+
+    ```sh
+    docker compose -f compose.production.yml pull
+    docker compose -f compose.production.yml up -d
+    docker compose -f compose.production.yml ps
+    ```
+
+    After two to three minutes every long-running service shows `Up` and
+    `(healthy)` (module backends show only `Up`; they have no healthcheck
+    yet), and `postgres-init`, `den-migrate` and the modules' `*-migrate`
+    show `Exited (0)`.
+
+3. Check the sign-in server and the headers:
+
+    ```sh
+    curl -s https://auth.con.yourdomain.org/realms/conservices/.well-known/openid-configuration | jq -r .issuer
+    curl -sI https://den.con.yourdomain.org/ | grep -i -E 'strict-transport|content-security|x-frame'
+    ```
+
+    ```text
+    https://auth.con.yourdomain.org/realms/conservices
+    strict-transport-security: max-age=31536000; includeSubDomains
+    content-security-policy: default-src 'self'; script-src 'self'; …
+    x-frame-options: DENY
+    ```
+
+4. **First admin login.** Open `https://auth-admin.con.yourdomain.org` from
+   an address in `ADMIN_ALLOWED_CIDRS`, sign in as `temp-admin` with
+   `KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD`, create your own admin in the
+   `master` realm, then delete `temp-admin`
+   ([First admin login](../deploy/identity.md#first-admin-login)). Create
+   the first staff account in the `conservices` realm and put it in the
+   group `den-admin`.
+5. **Den:** sign in at `https://den.con.yourdomain.org`, then
+   **Backups → Back up now**; it must succeed.
+6. **Modules:** each module waits for Den. In Den, **Modules → Pair**
+   creates a pairing URL; paste it into the module's *Den connection*
+   page ([Pairing](../concepts/pairing.md)).
+
+## Step 6: Upgrade, back up, restore
+
+- **Upgrade:** read the release notes of every app you raise
+  ([Versions and upgrades](versioning.md)), change its `*_VERSION` in
+  `.env` (all images of one app share the tag), refresh its
+  `nginx/<app>.conf` from the new release, then:
+
+    ```sh
+    docker compose -f compose.production.yml config --quiet
+    docker compose -f compose.production.yml pull
+    docker compose -f compose.production.yml up -d
+    ```
+
+    The `*-migrate` services run before the new backends start.
+
+- **Backups:** Den's operator backs up every database (Den, Keycloak and
+  the modules) and the buckets in `FILES_S3_BUCKETS`, encrypted to your age
+  key, once a day, exactly as on Kubernetes; see
+  [Databases, backups and restore](databases-and-backups.md). The server
+  itself holds only `postgres-data` and the files in `/srv/conservices`;
+  keep a copy of `.env` in your secret manager and the folder in your
+  deployment repository, and a lost server is rebuilt from them plus the
+  last backup.
+- **Restore:** follow [Restore](databases-and-backups.md#restore), with
+  `docker compose -f compose.production.yml exec den-operator sh` instead
+  of `kubectl exec`, and `docker compose -f compose.production.yml stop
+  <service>` to stop what uses the data.
+- **Secrets changed:** update the secret manager, rewrite `.env`, then
+  `docker compose -f compose.production.yml up -d` (only services whose
+  values changed are recreated). Client secrets are also stored in
+  Keycloak: regenerate them there first
+  ([Secrets](secrets.md#inventory)).
+- **A new module later:** add its profile and block to `.env`, its bucket
+  to `FILES_S3_BUCKETS`, then `up -d`; `postgres-init` creates its database.
 
 ## Checklist
 
-- [ ] Only ports 80 and 443 (and SSH from your admin network) are open.
+- [ ] Only ports 80 and 443 (and SSH from your admin network) are open;
+  `docker compose -f compose.production.yml config --format json | jq '[.services[] | select(.ports)] | length'`
+  prints `1` (the proxy).
 - [ ] Pinned image tags; no `build:`; no `latest`.
-- [ ] Secrets only in root-only env files outside Git, written from a secret
-  manager.
-- [ ] Keycloak in production mode; no test accounts; real SMTP.
-- [ ] Managed PostgreSQL and S3 (AWS S3 or Hetzner Object Storage); no local S3
-  server (SeaweedFS), Adminer, Mailpit or GreenMail.
-- [ ] Backups to a different provider or account, own age key, one test
-  restore done.
+- [ ] `.env` mode 600, written from a secret manager, not in Git.
+- [ ] Keycloak realm generated at install time by `keycloak-realm.py`
+  (no realm JSON is committed under `deploy/docker/`): no test people,
+  brute-force protection and password policy on, one audience mapper per
+  public client, full group paths on the `groups` mappers; `temp-admin`
+  deleted.
+- [ ] `curl -sI` shows `strict-transport-security` and
+  `content-security-policy` on every web app.
+- [ ] Managed S3, one key per bucket; backups at another provider or
+  account; own age key, secret half offline; one test restore done.
 - [ ] Everything on [Production and security](production.md#checklist) that
   applies outside Kubernetes.
 
@@ -295,53 +354,77 @@ docker compose -f compose.production.yml ps -a
 docker compose -f compose.production.yml logs --tail 50 den-backend
 ```
 
-**`den-backend` never starts: `service "den-migrate" didn't complete successfully: exit 1`**
-: Read `docker compose -f compose.production.yml logs den-migrate`. Usually
-  a wrong `DATABASE_URL` or the database is not reachable from the `egress`
-  network (host firewall, provider allow-list).
+**`required variable … is missing a value: set … in .env`**
+: A required setting is empty. Add it to `.env` (from your secret manager)
+  and run the command again.
 
-**A service exits with `read-only file system`**
-: That image needs a writable path. Add a `tmpfs` entry for the path named
-  in the error, or drop `read_only` for that one service.
-
-**`env file /etc/conservices/den-backend.env not found`**
-: The file does not exist or you ran Compose as a user who cannot read it.
-  Run the command with `sudo`, or as the user that owns the deployment.
-
-**The web app returns `502 Bad Gateway` after an upgrade, and Caddy logs `dial tcp …:80: connect: connection refused`**
-: The web app image now listens on port 8080. Change the `reverse_proxy`
-  line for that web app to port 8080 (see [Step 4](#step-4-the-proxy)) and
-  reload Caddy:
+**A module backend keeps restarting with `DEN_LINK_ENCRYPTION_KEY is required` or `password authentication failed`**
+: Its block in `.env` is incomplete: module values are not checked by
+  `config` (a module that is not running needs none). Fill in every line of
+  the block and run `up -d` again. `password authentication failed` after
+  you changed `<MODULE>_DB_PASSWORD`: `postgres-init` never changes an
+  existing password; set it in PostgreSQL too:
 
     ```sh
-    docker compose -f compose.production.yml exec proxy caddy reload --config /etc/caddy/Caddyfile
+    docker compose -f compose.production.yml exec postgres \
+      psql -U postgres -c "ALTER ROLE hr PASSWORD 'the-new-value'"
     ```
+
+**`service "postgres-init" didn't complete successfully`**
+: Read `docker compose -f compose.production.yml logs postgres-init`.
+  `password authentication failed for user "postgres"`: `POSTGRES_PASSWORD`
+  in `.env` differs from the one the database was created with (it is only
+  used when `postgres-data` is new).
+
+**Keycloak stays `(health: starting)` and logs `Failed to import realm`**
+: The realm files are missing or were not generated for this domain. Check
+  `ls keycloak/realm` shows both JSON files and that they contain your
+  domain, then `docker compose -f compose.production.yml up -d keycloak`.
 
 **Caddy logs `obtaining certificate: … timeout during connect`**
-: Let's Encrypt cannot reach port 80 on the server. Check the DNS name
-  points at the server and that the firewall allows 80 and 443 from
+: Let's Encrypt cannot reach port 80 on the server. Check that every DNS
+  name points at the server and that the firewall allows 80 and 443 from
   anywhere.
 
+**`https://auth-admin.…` answers `403` from your admin network**
+: Caddy does not see your address in `ADMIN_ALLOWED_CIDRS`. Its access log
+  shows the address it saw: `docker compose -f compose.production.yml logs proxy | grep auth-admin`.
+  Behind NAT that is your public address; add it, then
+  `docker compose -f compose.production.yml up -d proxy`.
+
+**The web app returns `502 Bad Gateway`**
+: Its frontend is not running (its profile is missing from
+  `COMPOSE_PROFILES`) or still starting. Check `ps`. Caddy logs
+  `dial tcp …:80: connect: connection refused` when an old nginx file
+  listens on 80: the images listen on **8080**.
+
+**A module answers `401` with `invalid token` after you upgrade it**
+: The access token is missing that API's audience. Generating the realm
+  again leaves a realm Keycloak has already imported unchanged. Add the
+  audience mapper and the full group path with
+  [Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists),
+  then sign out and sign in again.
+
 **Sign-in fails with *Invalid parameter: redirect_uri* or an issuer mismatch**
-: `KC_HOSTNAME`, `OIDC_ISSUER_URL` and `oidcAuthority` in
-  `den-frontend/config.json` must use the same `https://auth.…` address. See
-  [Troubleshooting](../getting-started/troubleshooting.md#sign-in-loops-back-to-the-sign-in-page).
+: The realm was generated for another domain, or `web-config/*.json` still
+  names `con.example.org`. Fix the file and reload the page; for the realm,
+  change the client's redirect URIs in the admin console (it is imported
+  only once).
 
-**`den-backend` logs `oidc discovery … no such host` for the `auth.` name**
-: Containers resolve names through Docker, which uses the host's resolver.
-  The backend image has no shell, so test from the host instead; this must
-  print a JSON document whose `issuer` equals `OIDC_ISSUER_URL`:
+**A web app shows a blank page and the browser console says `Refused to connect … Content Security Policy`**
+: The security headers snippet still contains `KEYCLOAK_ORIGIN` or names
+  another domain. Generate `nginx/security-headers*.conf` again (step 4)
+  and restart the web apps.
 
-    ```sh
-    curl https://auth.con.example.org/realms/conservices/.well-known/openid-configuration
-    ```
-
-    Also check `den-backend` is on the `egress` network: the `internal`
-    network has no route out, not even to the server's own public address.
+**`den-backend` logs `oidc discovery … no such host` or a certificate error for `auth.`**
+: Containers reach `auth.<DOMAIN>` through the proxy (a network alias), so
+  the proxy must be healthy and have its certificate. Check
+  `docker compose -f compose.production.yml ps proxy` and the Caddy log.
 
 ## Related pages
 
 - [Secrets: Secrets on Docker](secrets.md#secrets-on-docker)
-- [Versions and upgrades](versioning.md)
-- [Databases, backups and restore](databases-and-backups.md)
 - [Production and security](production.md)
+- [Databases, backups and restore](databases-and-backups.md)
+- [Identity: Keycloak](../deploy/identity.md)
+- [Versions and upgrades](versioning.md)

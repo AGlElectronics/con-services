@@ -68,6 +68,7 @@ conservices/                       KV version 2 mount (openbao.kvPath)
 │   │   └── operator-token         generated  token
 │   ├── stash/s3                   you        (rally, learn, wiki, tasks alike)
 │   ├── learn/service-token        generated  token (wiki, tasks alike)
+│   ├── stash/den-link             generated  key (every enabled module)
 │   └── desk/secret-key            generated  key
 └── infra/
     ├── postgres/
@@ -130,7 +131,7 @@ not want the template to touch OpenBao at all, set
 | Role `external-secrets` (`openbao.auth.role`) | OpenBao | setup Job | gives `conservices-external-secrets` to ESO's service account |
 | Application `openbao-setup` (wave -5, manual sync) | `charts/openbao-setup`, in ESO's namespace | Argo CD | ServiceAccount, the Job, its script (ConfigMap) and a NetworkPolicy |
 | ClusterSecretStore `openbao` | cluster-wide, `charts/secret-store`, Application `cluster-secret-store` (wave -4) | Argo CD | `openbao.server`, KV v2 at `openbao.kvPath`, CA from `openbao.caBundle` |
-| Generator `conservices-random` and the PushSecrets `generated-*` | ESO's namespace, same Application | Argo CD | create the random values (see [Every secret](#every-secret-keys-and-values)) |
+| Generators `conservices-random` (48 letters and digits) and `conservices-random-aes-key` (43 letters and digits, the modules' 32-byte `DEN_LINK_ENCRYPTION_KEY`), and the PushSecrets `generated-*` | ESO's namespace, same Application | Argo CD | create the random values (see [Every secret](#every-secret-keys-and-values)) |
 | ExternalSecrets | next to each Secret they create, in Den's, the modules', Keycloak's, PostgreSQL's and `cert-manager` | Argo CD | one per Kubernetes Secret Con Services needs |
 
 ESO logs in with the **Kubernetes auth method**: it shows OpenBao a token of
@@ -462,7 +463,9 @@ names the entry that is missing; `openbao-seed.sh --no-prompt` (or
 
 Paths are shown with the default `openbao.kvPath: conservices`.
 **Generated** means ESO creates it: 48 random letters and digits (no
-symbols, so the values fit into database URLs unescaped). Never write these
+symbols, so the values fit into database URLs unescaped), or 43 for the
+`den-link` keys (read as unpadded base64, 43 characters are exactly the 32
+bytes an AES-256 key needs). Never write these
 yourself on a new installation. **You** means you enter it (step 4). The
 **Application** column is the Argo CD Application that stays `Degraded`
 while the entry is missing.
@@ -474,10 +477,11 @@ while the entry is missing.
 | `conservices/modules/den/operator-token` | `token` | token between Den's backend and its operator | generated | `den` | always |
 | `conservices/modules/<module>/service-token` | `token` | token HR uses to call `learn`, `wiki`, `tasks` | generated | that module, `hr` | that module enabled |
 | `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
+| `conservices/modules/<module>/den-link` | `key` | the module's `DEN_LINK_ENCRYPTION_KEY`: encrypts the Den credential it stores. Lost or replaced without a rotation: pair the module again | generated | that module | that module enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |
 | `conservices/modules/den/s3` | `access_key`, `secret_key` | S3 access key ID and secret key, read and write on bucket `<prefix>-conservices-den` only | you | `den` | always |
-| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | S3 key with **read only** access to all module buckets (Den copies files into its backups) | you | `den` | always |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-den-backups` only | you | `den` | always |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-pg-backups` only (CloudNativePG) | you | `postgres` | always |
@@ -646,7 +650,10 @@ Then force-sync the ExternalSecrets that read it and restart the
 Deployments, as above. This works for the database passwords
 (CloudNativePG changes them in PostgreSQL), the Den operator token and the
 service tokens. **Never** do it for `modules/desk/secret-key` (it encrypts
-stored mailbox passwords) or the Keycloak entries (Keycloak keeps its own
+stored mailbox passwords), for `modules/<module>/den-link` alone (the
+module could no longer read its Den credential and must be paired again;
+use the [two-step rotation](../operations/secrets.md#den-link-encryption-key))
+or the Keycloak entries (Keycloak keeps its own
 copy after the first import; regenerate a client secret in the Keycloak
 admin console, then store it with `bao kv patch`).
 

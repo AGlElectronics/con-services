@@ -587,6 +587,124 @@ ghcr.io/aglelectronics/hr-frontend 1.12.1
 ghcr.io/aglelectronics/hr-migrate 1.12.1
 ```
 
+## Smoke tests
+
+A **smoke test** starts the real, published images and calls their APIs
+end to end: sign in through Keycloak, read every module's role catalog,
+let HR provision a role into Keycloak, create a Learn course, work
+through a Tasks board. It catches what unit tests cannot: a wrong
+setting in a chart, a missing permission in the realm, a module that no
+longer answers HR.
+
+The scripts are `scripts/smoke-*.ps1` (PowerShell). They run in two places:
+
+| Where | Scripts | Addresses |
+| --- | --- | --- |
+| Your Docker Compose dev stack | all of them | the defaults (`http://localhost:8090` and so on) |
+| The nightly **Smoke** workflow (kind cluster) | `smoke-access-catalog.ps1`, `smoke-learn.ps1`, `smoke-tasks.ps1` | `SMOKE_*` variables, set by the workflow |
+
+`smoke-hr-keycloak.ps1` (reads Mailpit), `smoke-wiki.ps1` (restarts a
+Compose container) and `smoke-den-pairing.ps1` (pairs a module through
+Den's web app) need the Compose stack and run only there.
+
+### The nightly Smoke workflow
+
+`.github/workflows/smoke.yml` runs every night at 02:17 UTC and by hand
+(**Actions → Smoke → Run workflow**, with an optional module image tag,
+default `1.0.0-1`). It publishes nothing. On a GitHub-hosted
+`ubuntu-24.04` runner (kind needs Docker, which the `arc-conservices`
+runners do not have) it:
+
+1. installs pinned kind, kubectl and Helm (checksums checked);
+2. clones `stash`, `Rally`, `learn`, `desk`, `tasks` and `wiki` at the
+   release tag `vX.Y.Z` of the image tag, for their
+   `infra/access-config.toml`;
+3. runs `scripts/ci/smoke-cluster.sh up`: the
+   [Den quickstart](../getting-started/den-quickstart.md) cluster (kind,
+   Cilium, cert-manager, trust-manager, `overlays/example` with Den's
+   pinned images), with a throw-away certificate authority made by
+   `openssl` instead of mkcert. Then, for every module: a namespace with
+   the platform's labels, a database role, a Secret with the dev values
+   of the Compose stack, and `helm upgrade --install` of
+   `deploy/charts/<module>` with the image tag;
+4. forwards the backends to the same localhost ports as the Compose
+   stack, but over HTTPS (`scripts/ci/smoke-cluster.sh port-forward`);
+5. runs the three smoke scripts with `SMOKE_INSECURE=1`;
+6. on failure, prints pods, events and backend logs
+   (`scripts/ci/smoke-cluster.sh diagnose`).
+
+What differs from a real installation, on purpose:
+
+- the modules run with `den.mode=standalone` (pairing is not part of the
+  run) and one web app replica;
+- the charts' own NetworkPolicies are off (`networkPolicy.enabled=false`):
+  their defaults select the GitOps platform (CloudNativePG, Garage), not
+  the trial's `postgres` and `s3`. The trial platform's policies still
+  apply on its side. The charts' policies are checked statically by the
+  [deploy validation workflow](#the-deploy-validation-workflow);
+- every secret is a public dev value.
+
+### Run a smoke script against something else
+
+Each script reads its addresses from `SMOKE_*` variables
+(`scripts/smoke-lib.ps1`) and falls back to the Compose dev ports:
+
+| Variable | Default | Points at |
+| --- | --- | --- |
+| `SMOKE_KEYCLOAK` | `http://localhost:8085` | Keycloak (token endpoint, admin API) |
+| `SMOKE_DEN_API` | `http://localhost:8090` | Den backend |
+| `SMOKE_HR_API` | `http://localhost:8110` | HR backend |
+| `SMOKE_STASH_API` | `http://localhost:8088` | Stash backend |
+| `SMOKE_EVENTS_API` | `http://localhost:8100` | Rally backend |
+| `SMOKE_LEARN_API` | `http://localhost:8120` | Learn backend |
+| `SMOKE_FINANCE_API` | `http://localhost:8130` | Finance backend |
+| `SMOKE_WIKI_API` | `http://localhost:8140` | Wiki backend |
+| `SMOKE_DESK_API` | `http://localhost:8150` | Desk backend |
+| `SMOKE_TASKS_API` | `http://localhost:8160` | Tasks backend |
+| `SMOKE_TASKS_WEB` | `http://localhost:3009` | Tasks web app (`smoke-tasks.ps1`) |
+| `SMOKE_INSECURE` | unset | `1` accepts self-signed certificates (PowerShell 7 only) |
+
+`smoke-access-catalog.ps1` reads all nine catalogs (Den, HR, Rally as
+`events`, Stash, Learn, Finance, Desk, Tasks, Wiki). A module that is not
+running fails the run; leave it out with `-Skip`:
+
+```powershell
+./scripts/smoke-access-catalog.ps1 -Skip desk,tasks
+```
+
+The output looks like this (the role counts depend on the versions):
+
+```text
+den     12 roles (3 assignable)
+hr      4 roles (2 assignable)
+events  9 roles (7 assignable)
+stash   11 roles (9 assignable)
+...
+desk    skipped
+tasks   skipped
+HR sees: stash status=ok
+...
+Provision stash:conops_lead → group stash-conops-lead: succeeded (temp pw issued)
+Den admin API as member: 403 OK
+Den dashboard as member includes brand: True primary=#4f46e5
+```
+
+To reproduce the nightly run on a Linux machine with Docker (it creates a
+kind cluster named `conservices`; delete it afterwards with
+`kind delete cluster --name conservices`):
+
+```sh
+for repo in stash Rally learn desk tasks wiki; do
+  git clone --depth 1 --branch v1.0.0 "https://github.com/AGlElectronics/$repo.git" "modules/$repo"
+done
+bash scripts/ci/smoke-cluster.sh up
+bash scripts/ci/smoke-cluster.sh port-forward
+SMOKE_INSECURE=1 SMOKE_KEYCLOAK=https://127.0.0.1:8443 SMOKE_DEN_API=https://127.0.0.1:8090 \
+  SMOKE_HR_API=https://127.0.0.1:8110 ... pwsh ./scripts/smoke-access-catalog.ps1
+```
+
+(the full list of variables is in the `env:` block of `smoke.yml`).
+
 ## Troubleshooting
 
 **`error parsing called workflow ... workflow was not found`** (or *not accessible*)
@@ -694,6 +812,27 @@ ghcr.io/aglelectronics/hr-migrate 1.12.1
   missing. Install them once on every node that runs runner pods:
   `sudo apt-get install -y qemu-user-static binfmt-support` (or
   `docker run --privileged --rm tonistiigi/binfmt --install arm64`).
+
+**Smoke: `Module access configurations` fails with *Remote branch v1.0.0 not found***
+: A module has no release tag for that version yet. Run the workflow by
+  hand with a module image tag whose `vX.Y.Z` exists in every module
+  repository.
+
+**Smoke: `rollout status` of a module backend times out**
+: Open the **Diagnose** step. `ImagePullBackOff`: the image tag is not
+  published (check `ghcr.io/aglelectronics/<module>-backend`).
+  `CrashLoopBackOff` with a database error: the role or the Secret's
+  `DATABASE_URL` is wrong. With an OIDC error: Keycloak was not ready yet
+  or the host alias `auth.conservices.test → 10.96.0.100` is missing.
+
+**Smoke: a catalog fails with `401` or `403`**
+: The module's catalog now needs HR's service token or a staff sign-in and
+  the realm's `admin` user lacks the role. Check the module's
+  [role catalog](../concepts/role-catalog.md) contract and the dev realm.
+
+**Smoke script on Windows PowerShell: *SMOKE_INSECURE=1 needs PowerShell 7***
+: `-SkipCertificateCheck` exists only in PowerShell 7. Install `pwsh` or
+  point the script at plain HTTP addresses.
 
 ## Related pages
 

@@ -1,0 +1,8 @@
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+  "oidcClientId": "stash-spa",
+  "oidcScope": "openid profile email",
+  "apiBaseUrl": "",
+  "publicClaimEnabled": false
+}

@@ -16,7 +16,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - conservices-postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/01-init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh:ro
@@ -31,16 +31,22 @@ services:
   # user (hr/hr, stash/stash, den/den, events/events, finance/finance) or
   # postgres/postgres.
   adminer:
-    image: adminer:latest
+    image: adminer:6.3.0
     container_name: conservices-adminer
     restart: unless-stopped
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     ports:
-      - "8095:8080"
+      - "127.0.0.1:8095:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    # The image already runs as the non-root user "adminer".
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   # LOCAL DEV ONLY S3-compatible storage — production uses a managed S3
   # service. SeaweedFS in its single-process "mini" mode: S3 API on :9000
@@ -65,7 +71,7 @@ services:
       AWS_ACCESS_KEY_ID: conservices
       AWS_SECRET_ACCESS_KEY: conservicesdev
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     volumes:
       - conservices-s3-data:/data
     healthcheck:
@@ -79,12 +85,19 @@ services:
   # DEV mail catcher — Keycloak sends set-password / onboarding emails here.
   # Inbox UI: https://mail.conservices.test (or http://localhost:8025)
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.33.1
     container_name: conservices-mailpit
     restart: unless-stopped
+    # Messages live in memory (no volume), so any non-root user works.
+    user: "1000:1000"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
 
   # DEV ONLY mail server for Desk (profile desk). Unlike Mailpit it keeps
   # real mailboxes Desk can read over IMAP. Mail sent to any address over
@@ -93,10 +106,22 @@ services:
   # (IMAP, plain) and greenmail:3025 (SMTP); Desk's replies still go out
   # through Mailpit so they can be inspected there.
   greenmail:
-    image: greenmail/standalone:latest
+    image: greenmail/standalone:2.1.15
     container_name: conservices-greenmail
     restart: unless-stopped
     profiles: ["desk"]
+    # The image already runs as the non-root user "greenmail" and has bash
+    # but no curl or wget.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/service/readiness HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     environment:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all
@@ -105,10 +130,10 @@ services:
         -Dgreenmail.users.login=email
         -Dgreenmail.verbose
     ports:
-      - "3025:3025"
-      - "3143:3143"
-      - "3993:3993"
-      - "8096:8080"
+      - "127.0.0.1:3025:3025"
+      - "127.0.0.1:3143:3143"
+      - "127.0.0.1:3993:3993"
+      - "127.0.0.1:8096:8080"
 
   # DEV Keycloak — import realm conservices with SPA clients + test users.
   keycloak:
@@ -134,7 +159,7 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
-      - "8085:8080"
+      - "127.0.0.1:8085:8080"
     volumes:
       - ./infra/keycloak/realm-conservices.json:/opt/keycloak/data/import/realm-conservices.json:ro
       # DEV stub of the website's attendee accounts (separate from staff).
@@ -147,7 +172,7 @@ services:
       postgres:
         condition: service_healthy
       mailpit:
-        condition: service_started
+        condition: service_healthy
     # Management interface :9000 (in-container only; host 9000 is the s3 service).
     healthcheck:
       test:
@@ -163,13 +188,23 @@ services:
   # ── Local HTTPS entry point: https://<app>.conservices.test ──────────────
   # Hosts file + CA trust on Windows: scripts/setup-local-dns.ps1 (admin).
   # The aliases let containers reach the same public URLs through the proxy.
+  # Runs as root: its data volume (local CA and certificates) was created by
+  # root, and the container keeps only the capability to bind 80 and 443.
   proxy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine
     container_name: conservices-proxy
     restart: unless-stopped
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    healthcheck:
+      # Caddy's admin API, inside the container only.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
     volumes:
       - ./infra/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
       - conservices-caddy-data:/data
@@ -194,10 +229,11 @@ services:
   # Copies the proxy's root certificate where backends can trust it
   # (SSL_CERT_DIR=/caddy-ca) without seeing the CA's private key.
   proxy-ca:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine
     container_name: conservices-proxy-ca
     depends_on:
-      - proxy
+      proxy:
+        condition: service_healthy
     restart: "no"
     volumes:
       - conservices-caddy-data:/data:ro
@@ -263,7 +299,7 @@ services:
       - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8088:8080"
+      - "127.0.0.1:8088:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -281,8 +317,13 @@ services:
     restart: unless-stopped
     depends_on:
       - stash-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3000:8080"
+      - "127.0.0.1:3000:8080"
 
   # ── HR (OIDC + Keycloak user provisioning against shared realm) ───────────
   hr-migrate:
@@ -379,7 +420,7 @@ services:
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8110:8080"
+      - "127.0.0.1:8110:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -397,8 +438,13 @@ services:
     restart: unless-stopped
     depends_on:
       - hr-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3003:8080"
+      - "127.0.0.1:3003:8080"
 
   # ── Finance (invoices + money tracking; OIDC against local Keycloak) ──────
   finance-migrate:
@@ -456,7 +502,7 @@ services:
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8130:8080"
+      - "127.0.0.1:8130:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -474,8 +520,13 @@ services:
     restart: unless-stopped
     depends_on:
       - finance-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3006:8080"
+      - "127.0.0.1:3006:8080"
 
   # Den — profile: docker compose --profile den --profile events up --build
   # Unified backend image: /den-server (default) + /den-migrate (entrypoint override).
@@ -532,10 +583,13 @@ services:
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: den-spa
       OIDC_AUDIENCE: den-spa
-      # Den pushes the login branding into the realm (service account den-keycloak).
+      # Den keeps the realm's display name equal to the organisation name
+      # (service account den-keycloak); the login theme pulls the rest of the
+      # brand from Den's public brand endpoint.
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: den-keycloak-dev-secret
-      # Module databases + backups (docs/operations.md). Empty URL = off.
+      # Module databases + backups (docs/operations/databases-and-backups.md).
+      # Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: den-operator-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3001,https://den.conservices.test
@@ -543,14 +597,21 @@ services:
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8090:8080"
+      - "127.0.0.1:8090:8080"
     extra_hosts:
       - "localhost:host-gateway"
+    # The image is distroless: the binary probes its own /livez.
+    healthcheck:
+      test: ["CMD", "/den-server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # Den operator — the only service with the Postgres admin login. Creates and
   # drops module databases for Den and backs up the whole suite (all
   # databases + module buckets), encrypted, to object storage. No published
-  # port: only Den calls it. See docs/operations.md.
+  # port: only Den calls it. See docs/operations/databases-and-backups.md.
   den-operator:
     profiles: ["den"]
     build:
@@ -573,6 +634,7 @@ services:
       # DEV: same S3 server as the live data. Production: a different provider
       # or location, or it isn't really a backup.
       BACKUP_S3_ENDPOINT: http://s3:9000
+      BACKUP_SAME_STORAGE_AS_DATA: "true"
       BACKUP_S3_BUCKET: conservices-backups
       BACKUP_S3_ACCESS_KEY_ID: conservices
       BACKUP_S3_SECRET_ACCESS_KEY: conservicesdev
@@ -581,7 +643,14 @@ services:
       FILES_S3_ENDPOINT: http://s3:9000
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
-      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
+      # Every module bucket created by the s3 service (its -bucket list).
+      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev
+    healthcheck:
+      test: ["CMD", "den-operator", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   den-frontend:
     profiles: ["den"]
@@ -596,9 +665,15 @@ services:
       - ./infra/frontend-config/den.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
-      - den-backend
+      den-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3001:8080"
+      - "127.0.0.1:3001:8080"
 
   events-migrate:
     profiles: ["events"]
@@ -677,7 +752,7 @@ services:
       - ./Rally/infra/access-config.toml:/etc/rally/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8100:8080"
+      - "127.0.0.1:8100:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -696,8 +771,13 @@ services:
     restart: unless-stopped
     depends_on:
       - events-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3002:8080"
+      - "127.0.0.1:3002:8080"
 
   # Public event submission site (attendee-facing, own host and login realm).
   events-submit:
@@ -717,8 +797,13 @@ services:
     restart: unless-stopped
     depends_on:
       - events-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3004:8080"
+      - "127.0.0.1:3004:8080"
 
   # ── Learn — profile: docker compose --profile learn up --build ────────────
   # Training module (courses, enrolments, completion, quizzes). Files live in
@@ -752,7 +837,7 @@ services:
       s3:
         condition: service_healthy
       mailpit:
-        condition: service_started
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -807,7 +892,7 @@ services:
       - ./learn/infra/access-config.toml:/etc/learn/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8120:8080"
+      - "127.0.0.1:8120:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -826,8 +911,13 @@ services:
     restart: unless-stopped
     depends_on:
       - learn-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3005:8080"
+      - "127.0.0.1:3005:8080"
 
   # ── Desk — profile: docker compose --profile desk up --build ──────────────
   # Shared support inboxes (FreeScout-style). Dev mail: GreenMail holds the
@@ -859,9 +949,9 @@ services:
       desk-migrate:
         condition: service_completed_successfully
       mailpit:
-        condition: service_started
+        condition: service_healthy
       greenmail:
-        condition: service_started
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -897,7 +987,7 @@ services:
       - ./desk/infra/access-config.toml:/etc/desk/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8150:8080"
+      - "127.0.0.1:8150:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -916,8 +1006,13 @@ services:
     restart: unless-stopped
     depends_on:
       - desk-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3008:8080"
+      - "127.0.0.1:3008:8080"
 
   # ── Tasks — profile: docker compose --profile tasks up --build ────────────
   # Project and task tracking (ClickUp-style spaces, lists, boards).
@@ -985,7 +1080,7 @@ services:
       - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8160:8080"
+      - "127.0.0.1:8160:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -1004,8 +1099,13 @@ services:
     restart: unless-stopped
     depends_on:
       - tasks-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3009:8080"
+      - "127.0.0.1:3009:8080"
 
   # ── Tasks dev copy — profile: docker compose --profile tasks-dev up --build ─
   # Development instance against the tasks_dev database so the live Tasks
@@ -1076,7 +1176,7 @@ services:
       - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
     ports:
-      - "8161:8080"
+      - "127.0.0.1:8161:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -1096,8 +1196,13 @@ services:
     restart: unless-stopped
     depends_on:
       - tasks-dev-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3010:8080"
+      - "127.0.0.1:3010:8080"
 
   # ── Wiki — profile: docker compose --profile wiki up --build ──────────────
   # Notion-style pages in private and team spaces; content lives in S3.
@@ -1172,7 +1277,7 @@ services:
       - conservices-caddy-ca:/caddy-ca:ro
       - conservices-wiki-buffer:/var/lib/wiki/buffer
     ports:
-      - "8140:8080"
+      - "127.0.0.1:8140:8080"
     extra_hosts:
       - "localhost:host-gateway"
 
@@ -1191,8 +1296,13 @@ services:
     restart: unless-stopped
     depends_on:
       - wiki-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
-      - "3007:8080"
+      - "127.0.0.1:3007:8080"
 
 volumes:
   conservices-postgres-data:

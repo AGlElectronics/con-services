@@ -30,35 +30,42 @@ where the values are kept changes:
 Con Services programs read their settings from **environment variables**
 only; they do not support `*_FILE` variables, and the backend images have no
 shell, so Docker's `secrets:` (files under `/run/secrets`) cannot feed them
-directly. On a production Docker host:
+directly. The supported [Docker production](docker-production.md) setup
+reads every setting and secret from one file, `.env`, next to
+`deploy/docker/compose.production.yml`; Compose fills them into each
+service's environment, and each service gets only the values its
+`environment:` names.
 
-1. Keep one env file per service in a folder outside the Git checkout, for
-   example `/etc/conservices/den-backend.env`, owned by root with mode
-   `600`:
-
-    ```sh
-    sudo install -d -m 700 /etc/conservices
-    sudo install -m 600 /dev/null /etc/conservices/den-backend.env
-    ```
-
-2. Fill those files from your secret manager when you deploy, instead of
-   typing values by hand. For example with Vault:
+1. Create `.env` readable only by the deploying user:
 
     ```sh
-    vault kv get -format=json secret/conservices/den/backend \
-      | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' \
-      | sudo tee /etc/conservices/den-backend.env > /dev/null
+    install -m 600 /dev/null .env
     ```
 
-    SOPS-encrypted env files in Git (`sops -d den-backend.enc.env`) or your
-    password manager's CLI work the same way.
+2. Fill it from your secret manager when you deploy, instead of typing
+   values by hand. For example with OpenBao or Vault, keeping the whole
+   file as the entry `secret/conservices/docker` with one property per
+   variable:
 
-3. Reference them with `env_file:` in the compose file, as the
-   [hardened example](docker-production.md) does.
+    ```sh
+    bao kv get -format=json secret/conservices/docker \
+      | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' > .env
+    ```
 
-The same rules as on Kubernetes apply: never commit the files, give each
-service only its own file, and restart the service after changing one
-(`docker compose up -d <service>`).
+    A SOPS-encrypted file in your deployment repository
+    (`sops --decrypt --input-type dotenv --output-type dotenv env.sops > .env`)
+    or your password manager's CLI work the same way.
+
+3. Check it: `docker compose -f compose.production.yml config --quiet`
+   fails with `required variable … is missing a value` for every platform
+   value still empty.
+
+The same rules as on Kubernetes apply: never commit `.env` (the folder's
+`.gitignore` excludes it), keep the secret manager as the source, and run
+`docker compose -f compose.production.yml up -d` after changing a value so
+the affected services are recreated. A plain `.env` on the server is the
+weakest link: restrict SSH access, encrypt the disk, and do not copy the
+file anywhere else.
 
 ## Why a secret manager
 
@@ -120,7 +127,7 @@ gives you:
 
 **GitOps reference: OpenBao paths of the platform.** In
 [con-services-gitops](../deploy/index.md) every secret below is read from
-OpenBao (KV v2 mounted at `kv`) by External Secrets.
+OpenBao (its own KV v2 mount, `conservices/` by default) by External Secrets.
 External Secrets creates the random ones (PushSecrets, never replacing an
 existing value) and you enter the provider credentials, only for the
 modules and options enabled in `cluster.yaml`
@@ -133,12 +140,13 @@ Entries marked *rotatable* can be rotated by deleting them
 | `conservices/infra/postgres/superuser` | `password` (user `postgres`) | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` | CloudNativePG, Den operator | generated; rotatable (CNPG applies the new password) |
 | `conservices/infra/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); `DATABASE_URL` of the application; `keycloak-db` | CloudNativePG, each application | generated; rotatable, then restart the application |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | Barman Cloud plugin (WAL archive, base backups) | your S3 provider; rotate there, then `bao kv put` |
-| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
+| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, backup bucket only |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, read-only on the module buckets |
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
 | `conservices/modules/<module>/service-token` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
+| `conservices/modules/<module>/den-link` (every enabled module) | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | the module's backend (shared `denlink`) | generated (43 letters and digits = 32 bytes as unpadded base64); rotate with the [two-step rotation](#den-link-encryption-key), never by deleting the entry alone |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` (user `temp-admin`) | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR, Learn | Keycloak, Den, HR, Learn | generated; to rotate, regenerate in Keycloak, then `bao kv patch` |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; you enter it |
@@ -183,7 +191,7 @@ with each module's docs):
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
-| Finance | `DATABASE_URL` | `conservices-finance` |
+| Finance | `DATABASE_URL`, `S3_*` keys | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
 
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
@@ -225,6 +233,12 @@ else is lost.
 2. Store it in the module's entry of your secret manager, for example
    `vault kv patch secret/conservices/stash/backend DEN_LINK_ENCRYPTION_KEY=<value>`,
    so it reaches `stash-secrets` (see [Add a module's secrets](#add-a-modules-secrets)).
+   The Argo CD template skips steps 1 and 2: it generates the key in
+   OpenBao (`conservices/modules/<module>/den-link`, property `key`) and
+   wires it into `<module>-secrets`. To rotate it there, write the current
+   value as `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` into the module's Secret
+   values (add it to the module's ExternalSecret in
+   `charts/module-extras`), then `bao kv patch` a new `key`.
 3. Restart the module. A credential stored before is encrypted on its
    first read; the log says `den link: re-encrypted the stored credential with the current key`.
 
@@ -311,10 +325,11 @@ that come from a provider. Both only for what `cluster.yaml` enables.
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | delete the entry; restart both Den deployments |
 | `conservices/modules/learn/service-token`, `.../wiki/service-token`, `.../tasks/service-token` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | delete the entry; restart HR and the module |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
+| `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | generated | two steps, see [Den link encryption key](#den-link-encryption-key); deleting the entry alone makes the module pair again |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (first realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR and Learn | generated | regenerate in the Keycloak admin console, then `bao kv patch conservices/infra/keycloak/clients <client>=-` and restart the module |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` (first realm import only) | your mail provider | at the provider, then in Keycloak: **Realm settings → Email** |
-| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |
+| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | S3 provider, **read-only** on all module buckets | as above |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | S3 provider, own key for the Den backup bucket | as above |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | S3 provider, own key for the PostgreSQL backup bucket | as above; CloudNativePG picks up the new key by itself |

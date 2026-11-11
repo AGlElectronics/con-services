@@ -239,6 +239,10 @@ frontend:
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
 # web app and checks its certificate against internalTLS.caConfigMap.
 route:
+  # Headers the Gateway sets on every response of this route. HSTS: browsers
+  # use only HTTPS for this host (the Gateway terminates TLS). {} turns it off.
+  responseHeaders:
+    Strict-Transport-Security: "max-age=31536000; includeSubDomains"
   enabled: true
   host: den.conservices.test
   # The Gateway's listener must allow routes from this namespace.

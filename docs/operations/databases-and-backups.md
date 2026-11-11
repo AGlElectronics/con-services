@@ -193,12 +193,39 @@ happens when:
 - Pre-drop backups are never deleted automatically.
 - Pruning runs after every successful backup.
 
-**Where to keep them.** In production, point `BACKUP_S3_*` at a **different
-provider or account** from the one holding the live data, for example live
-files in Hetzner Object Storage and backups in AWS S3, or the other way
-round. Both are S3-compatible and the recommended storage for real
-installations; the in-cluster S3 server (SeaweedFS) is for local trials only. A backup that
-disappears together with the server it protects is not a backup.
+### Where backups go
+
+In production, point `BACKUP_S3_*` at a **different provider or account**
+from the one holding the live data, for example live files in Hetzner
+Object Storage and backups in AWS S3, or the other way round. Both are
+S3-compatible and the recommended storage for real installations; the
+in-cluster S3 server (SeaweedFS) is for local trials only. A backup that
+disappears together with the server it protects is not a backup: one
+provider outage, a closed account or a leaked key would take the data and
+its backups together.
+
+Using the same S3 service still works, and is fine for a trial. It is
+flagged so nobody relies on it by accident:
+
+- **Argo CD template:** when `s3.backup.endpoint` in `cluster.yaml` is
+  empty or equals `s3.endpoint`, the Application `den` shows
+  **Warning: backups** on its page in Argo CD, and `install-root` prints a
+  warning. Rendering does not fail. Fix it by setting `s3.backup` to the
+  other provider:
+
+    ```yaml
+    s3:
+      backup:
+        endpoint: https://s3.eu-central-1.amazonaws.com
+        region: eu-central-1
+        fqdns: ["s3.eu-central-1.amazonaws.com"]
+    ```
+
+- **Den:** Den's operator gets `BACKUP_SAME_STORAGE_AS_DATA` (`"true"` or
+  `"false"`), set by the Argo CD template from the comparison above and by
+  you elsewhere (the Compose dev stack sets `"true"`). With `"true"` Den
+  shows a warning on its Backups page. The flag only drives the warning;
+  backups run the same either way.
 
 ## What is not backed up
 
@@ -402,6 +429,7 @@ Operator (`den-operator`):
 | `BACKUP_S3_USE_PATH_STYLE` | `true` | `false` for providers that need virtual-host style. |
 | `BACKUP_AGE_RECIPIENTS` | required for backups | Comma-separated age public keys. |
 | `BACKUP_TIMEZONE` | `UTC` | Time zone of the daily backup hour. |
+| `BACKUP_SAME_STORAGE_AS_DATA` | `false` | `true` when the backup bucket lives on the same S3 service as the live data; Den then warns on its Backups page ([Where backups go](#where-backups-go)). Set by the Argo CD template. |
 | `FILES_S3_ENDPOINT`, `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY`, `FILES_S3_REGION`, `FILES_S3_USE_PATH_STYLE` | | Live file storage to copy from. |
 | `FILES_S3_BUCKETS` | none | Comma-separated buckets to include in every backup. |
 | `OPERATOR_ADDR` | `:8080` | Listen address. |
