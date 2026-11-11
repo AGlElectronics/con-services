@@ -67,6 +67,21 @@ led by Den's MAJOR; see
   `*.conservices.test` through Caddy (`scripts/setup-local-dns.ps1`).
   Module backends default to `DEN_MODE=standalone`; settings are in
   `.env.example`.
+- Docker Compose: Finance stores its invoice and credit note PDFs in the
+  dev bucket `finance-data-dev`, which Den's operator now copies into its
+  backups (`FILES_S3_BUCKETS`). The dev Keycloak realm has Finance's four
+  role groups `finance_admin` (user `admin`), `finance_approver` (`alice`)
+  and `finance_bookkeeper` (`bob`) and `finance_read-only`, replacing
+  `finance-admin`; `FINANCE_APPROVAL_THRESHOLD_CENTS` in `.env` changes
+  how much needs a second person. An existing dev realm gets the groups
+  from `infra/keycloak/apply-mvp.sh`.
+- `scripts/smoke-finance.ps1`: checks Finance's money loop against the
+  running stack (roles, issuing with a stored PDF, a payment approved by a
+  second person, a credit note and refund, a closed month, the audit log).
+- Docs: Finance's [Bookkeeping](docs/modules/finance/bookkeeping.md) guide,
+  and the Finance bucket in [Buckets and keys](docs/deploy/data.md#buckets-and-keys),
+  the [secrets inventory](docs/operations/secrets.md) and the
+  [network policy flows](docs/operations/network-policies.md).
 - `scripts/workspace.ps1` and `scripts/workspace.sh`: clone, update and
   check the root repository and all module and GitOps repositories in one
   go ([Local development](docs/contributing/local-development.md#the-workspace)).
