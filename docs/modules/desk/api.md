@@ -230,19 +230,20 @@ curl -s --cacert /etc/conservices-internal-ca/ca.crt \
   "roles": [
     {"key": "organization_admin", "label": "Desk admin",
      "description": "Desk admin: creates, configures and deletes mailboxes; full access to every mailbox (read, answer, delete, email any address from them); retention, audit log and module settings.",
-     "group": "desk-admin", "assignable": true, "scope": "organization:demo-org",
+     "group": "desk-admin", "group_display": "desk-admin", "assignable": true, "default": false,
+     "scope": "organization", "privileged": true, "dynamic": false,
      "permissions": ["mailbox.manage", "settings.manage"]},
     {"key": "desk_registration_viewer", "label": "Registration viewer",
      "description": "Reads the conversations of Registration (registration@example.org).",
-     "group": "desk-registration-viewer", "assignable": true, "scope": "mailbox:registration",
+     "group": "desk-registration-viewer", "group_display": "desk-registration-viewer", "assignable": true, "default": false, "scope": "mailbox", "privileged": false, "dynamic": true,
      "permissions": [], "note": "registration@example.org"},
     {"key": "desk_registration_manager", "label": "Registration manager",
      "description": "Works Registration (registration@example.org): reply, note, assign, close, tags, saved replies, signature and auto-reply; can start conversations with any address from it.",
-     "group": "desk-registration-manager", "assignable": true, "scope": "mailbox:registration",
+     "group": "desk-registration-manager", "group_display": "desk-registration-manager", "assignable": true, "default": false, "scope": "mailbox", "privileged": false, "dynamic": true,
      "permissions": [], "note": "registration@example.org"},
     {"key": "desk_registration_delete", "label": "Registration delete",
      "description": "Deletes and restores emails and conversations of Registration (registration@example.org); deleted mail also goes to the provider's trash.",
-     "group": "desk-registration-delete", "assignable": true, "scope": "mailbox:registration",
+     "group": "desk-registration-delete", "group_display": "desk-registration-delete", "assignable": true, "default": false, "scope": "mailbox", "privileged": true, "dynamic": true,
      "permissions": [], "note": "registration@example.org"}
   ]
 }
