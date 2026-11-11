@@ -159,6 +159,11 @@ nav:
       - Desk:
           - modules/desk/index.md
           - Setup: modules/desk/setup.md
+          - Google Workspace: modules/desk/google-workspace.md
+          - IMAP and SMTP mailboxes: modules/desk/imap.md
+          - Access: modules/desk/access.md
+          - User guide: modules/desk/user-guide.md
+          - Operations: modules/desk/operations.md
           - Configuration: modules/desk/configuration.md
           - API reference: modules/desk/api.md
       - Tasks:

@@ -17,17 +17,12 @@ The Argo CD path installs Desk together with Den and the other modules; see [Den
 
 | Needs | Why |
 | --- | --- |
-| PostgreSQL 16 database and a login that owns it | Everything, including email attachments. Plan its size accordingly. |
-| A long random `DESK_SECRET_KEY` | Encrypts the mailbox passwords stored in the database. **Keep it forever**: with a different key, stored passwords cannot be read and must be typed in again. |
-| An IMAP account per support address | Desk reads new mail from it (port 993, or 143 with STARTTLS). |
-| An SMTP server | For replies: per mailbox, or the module-wide fallback (`SMTP_*`). |
-| An OpenID Connect sign-in server (Keycloak) | Public client `desk-spa`, groups `desk-admin` and `desk-agent`. |
-
-!!! warning "Microsoft 365 and Gmail"
-    Desk logs in to IMAP and SMTP with a username and password. Microsoft 365
-    and Gmail increasingly refuse passwords (they want OAuth2, which Desk
-    does not support yet). Use an app password where your provider allows
-    it, or a mail host that accepts IMAP passwords.
+| PostgreSQL 16 database and a login that owns it | Conversations, customers, settings, audit log. |
+| An S3 bucket (`desk-data`) and keys that can only reach it | Attachments, inline images and the original emails. Required: the backend does not start without it. |
+| A random `DESK_SECRET_KEY` of at least 32 characters | Encrypts the IMAP and SMTP passwords stored in the database. Keep it in your secret manager; it can be [rotated](operations.md#rotate-desk_secret_key). |
+| Where the mail lives | **Google Workspace** (recommended; Desk creates the mailboxes there, see [Google Workspace](google-workspace.md)), or an IMAP and SMTP account per support address ([IMAP and SMTP](imap.md)). |
+| Optionally an SMTP server and a sender address | Module-wide `SMTP_*` for IMAP mailboxes without their own server, and `NOTIFY_FROM` for Desk's own emails (purge reminders, notifications). |
+| An OpenID Connect sign-in server (Keycloak) | Public client `desk-spa`, group `desk-admin`, and per mailbox the groups `desk-<slug>-viewer`, `-manager`, `-delete` ([Access](access.md)). |
 
 ## Option 1: Kubernetes platform (recommended)
 
@@ -41,7 +36,14 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
    the platform's internal CA, and the platform's PostgreSQL refuses
    connections without TLS.
 
-2. **Create the namespace.** The `app.kubernetes.io/part-of` label lets
+2. **Create the bucket and add it to backups.** Create the bucket
+   `desk-data` in the platform's S3 and keys that can only reach it. Add
+   `desk-data` to the Den operator's `FILES_S3_BUCKETS`, so Den's backups
+   include attachments and original emails. The platform's Kustomize base
+   (`deploy/kubernetes/base/data/s3.yaml`) already creates `desk-data` for
+   the local trial cluster.
+
+3. **Create the namespace.** The `app.kubernetes.io/part-of` label lets
    trust-manager copy the internal CA into it ([Internal TLS](#internal-tls)).
 
     ```sh
@@ -52,15 +54,20 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
       pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted
     ```
 
-3. **Store the secrets** in your secret manager and let an `ExternalSecret`
+4. **Store the secrets** in your secret manager and let an `ExternalSecret`
    create `desk-secrets` (see [Secrets](../../operations/secrets.md)):
 
     ```sh
     vault kv put secret/conservices/desk/backend \
       DATABASE_URL='postgres://desk:change-me@postgres.conservices-data.svc.cluster.local:5432/desk?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
-      DESK_SECRET_KEY="$(openssl rand -hex 32)" \
+      DESK_SECRET_KEY="$(openssl rand -base64 32)" \
+      S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
       SMTP_PASSWORD=change-me
     ```
+
+    `SMTP_PASSWORD` is only needed with a module-wide SMTP server that
+    wants a login. For Google Workspace, also store the service account
+    key as `desk-google` ([Google Workspace, step 6](google-workspace.md#set-it-up)).
 
     ```yaml
     apiVersion: external-secrets.io/v1
@@ -76,17 +83,19 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
         - extract: { key: conservices/desk/backend }
     ```
 
-4. **Create the access config** from `infra/access-config.toml` in the Desk
-   repository:
+5. **Create the access config** from `infra/access-config.toml` in the Desk
+   repository (set `organization` to your organization's slug):
 
     ```sh
     kubectl create configmap desk-access-config -n conservices-desk \
       --from-file=access-config.toml=access-config.toml
     ```
 
-5. **Install the chart.** The default values allow outbound IMAP and SMTP to
-   any address; narrow `networkPolicy.extraEgress` to your mail provider if
-   you can.
+6. **Install the chart.** The default values reach the platform's S3
+   (bucket `desk-data`) and allow outbound IMAP and SMTP to any address;
+   narrow `networkPolicy.extraEgress` to your mail provider if you can. For
+   Google Workspace add the `google` values from
+   [Google Workspace, step 7](google-workspace.md#set-it-up).
 
     ```yaml
     # my-desk.yaml
@@ -98,7 +107,9 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
       APP_BASE_URL: https://desk.example.org
       OIDC_ISSUER_URL: https://auth.example.org/realms/conservices
       CORS_ALLOWED_ORIGINS: https://desk.example.org
-      SMTP_HOST: smtp.example.org      # fallback for mailboxes without their own
+      S3_BUCKET: desk-data
+      NOTIFY_FROM: "Desk <desk@example.org>"   # purge reminders, notifications
+      SMTP_HOST: smtp.example.org              # for IMAP mailboxes without their own, and NOTIFY_FROM
       SMTP_USERNAME: desk@example.org
     route:
       host: desk.example.org
@@ -115,21 +126,25 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
     cluster needs cert-manager, trust-manager and the platform's internal
     CA; see [Internal TLS](#internal-tls).
 
-6. **Pair with Den:** Den: **Modules → Pair** on the Desk row; Desk (as
+7. **Pair with Den:** Den: **Modules → Pair** on the Desk row; Desk (as
    `desk-admin`): **Settings → Den connection**, paste, **Connect**.
 
-7. **Add the first mailbox.** In Desk as `desk-admin`: **Mailboxes**. Enter
-   the name and address (for example `Support`, `support@example.org`), a
-   signature (`{agent.name}` is replaced by the person replying), the
-   **Incoming mail (IMAP)** server, port, security and login, and optionally
-   the **Outgoing mail (SMTP)** server. Click **Create mailbox**, then test
-   the connection on the mailbox card. The result shows whether IMAP and
-   SMTP logins worked, and which SMTP server is used.
+8. **Add the first mailbox.** In Desk as `desk-admin`: **Mailboxes → New
+   mailbox**. Enter the name and address (for example `Support`,
+   `support@example.org`), pick the connector and a signature
+   (`{agent.name}` is replaced by the person replying), then **Create
+   mailbox**. The details per connector are on
+   [Google Workspace](google-workspace.md#set-it-up) (step 9) and
+   [IMAP and SMTP](imap.md#add-an-imap-mailbox).
 
-8. **Verify:** send an email to the address. Within `FETCH_INTERVAL`
-   (or right away with "fetch now" on the mailbox card) it appears in the
+9. **Give people access.** In HR (or Keycloak) add the support staff to
+   `desk-support-manager` (answer) and, where needed,
+   `desk-support-delete` (delete); see [Access](access.md).
+
+10. **Verify:** send an email to the address. Within `FETCH_INTERVAL`
+   (or right away with **Fetch now** on the mailbox card) it appears in the
    **Inbox** under **Unassigned**. Reply; within about 10 seconds (the undo
-   window) the reply leaves through SMTP.
+   window) the reply leaves.
 
     ```sh
     kubectl get certificate -n conservices-desk
@@ -155,7 +170,8 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
 ## Option 2: Standalone on Kubernetes
 
 Follow [Run one module on Kubernetes](../../getting-started/standalone-kubernetes.md)
-with these Desk values. Desk needs no bucket.
+with these Desk values. Desk needs a bucket with keys for it, for example
+at Hetzner Object Storage.
 
 ```yaml
 den: { mode: standalone }   # no Den: do not wait for pairing
@@ -164,9 +180,16 @@ config:
   OIDC_ISSUER_URL: https://login.example.org/realms/conservices
   CORS_ALLOWED_ORIGINS: https://desk.example.org
   DEN_INTERNAL_URL: ""
+  S3_ENDPOINT: https://fsn1.your-objectstorage.com
+  S3_BUCKET: example-desk
+  S3_REGION: fsn1
 networkPolicy:
   den:  { enabled: false }
-  data: { enabled: false }
+  data:
+    enabled: false
+    s3:
+      external:
+        fqdns: ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
   allowFromNamespaces: []
   extraEgress:
     - to: [{ ipBlock: { cidr: 10.20.0.0/24 } }]     # your database subnet
@@ -177,8 +200,11 @@ networkPolicy:
         - { protocol: TCP, port: 587 }
 ```
 
-The secret `desk-secrets` holds `DATABASE_URL` and `DESK_SECRET_KEY`.
-**Back up the database yourself**; it contains every email.
+The secret `desk-secrets` holds `DATABASE_URL`, `DESK_SECRET_KEY`,
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. Desk does not create the
+bucket outside development: create it first. **Back up the database and
+the bucket yourself**; together they hold every email. Without Den,
+retention is set under **Settings → Retention** ([Operations](operations.md#retention)).
 
 Internal TLS stays on by default and needs cert-manager, trust-manager and
 an issuer in your cluster. Without them, turn it off or bring your own
@@ -246,6 +272,10 @@ in `not_after`.
 | `ha.podDisruptionBudget`, `ha.topologySpread`, `priorityClassName` | `true`, `true`, `""` | PodDisruptionBudget and spreading over nodes for the web app (two replicas); see [High availability](../../operations/helm.md#high-availability). |
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
 | `imagePullSecrets` | `[]` | Pull Secrets for private images on every pod, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
+| `google.enabled`, `google.existingSecret`, `google.secretKey`, `google.mountPath` | `false`, `desk-google`, `service-account.json`, `/etc/desk-google` | Mounts the Google service account key and sets `GOOGLE_SERVICE_ACCOUNT_FILE`; see [Google Workspace](google-workspace.md). |
+| `networkPolicy.google.enabled` / `.fqdns` / `.cidrs` / `.port` | `false` / Gmail, Admin SDK, OAuth2 and `www.googleapis.com` / `[]` / `443` | Egress from the backend to Google's APIs: a `CiliumNetworkPolicy` `desk-backend-google` by host name with Cilium, `ipBlock` rules from `cidrs` otherwise. |
+| `networkPolicy.data.s3.enabled` | `true` | Egress to the platform's S3 (Garage) for the bucket in `config.S3_BUCKET`. |
+| `networkPolicy.extraEgress` | IMAP and SMTP ports to `0.0.0.0/0` | Mail servers of IMAP mailboxes and `SMTP_HOST`. Narrow it, or `[]` with only Google mailboxes. |
 | `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
 
 ### Without cert-manager
@@ -310,8 +340,9 @@ then add:
     <<: *hardening
     depends_on:
       desk-migrate: { condition: service_completed_successfully }
-    networks: [internal, egress]               # egress: database and mail servers
-    env_file: /etc/conservices/desk-backend.env  # DATABASE_URL, DESK_SECRET_KEY, SMTP_PASSWORD
+    networks: [internal, egress]               # egress: database, S3, mail servers, Google
+    # DATABASE_URL, DESK_SECRET_KEY, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, SMTP_PASSWORD
+    env_file: /etc/conservices/desk-backend.env
     environment:
       APP_ENV: production
       APP_BASE_URL: https://desk.con.example.org
@@ -326,9 +357,19 @@ then add:
       SMTP_PORT: "587"
       SMTP_SECURITY: starttls
       SMTP_USERNAME: desk@example.org
+      NOTIFY_FROM: "Desk <desk@example.org>"
+      S3_ENDPOINT: https://fsn1.your-objectstorage.com
+      S3_BUCKET: example-desk
+      S3_REGION: fsn1
       DEN_INTERNAL_URL: http://den-backend:8080
+      # Google Workspace (optional; see the Google Workspace page):
+      # GOOGLE_WORKSPACE_DOMAIN: example.org
+      # GOOGLE_ADMIN_USER: desk-admin@example.org
+      # GOOGLE_SHARED_MAILBOX: desk@example.org
+      # GOOGLE_SERVICE_ACCOUNT_FILE: /etc/desk-google/service-account.json
     volumes:
       - ./desk/access-config.toml:/etc/desk/access-config.toml:ro
+      # - /etc/conservices/desk-google.json:/etc/desk-google/service-account.json:ro
 
   desk-frontend:
     image: ghcr.io/aglelectronics/desk-frontend:1.0.0-1
@@ -353,7 +394,8 @@ image names no domain. Keys: [Web app settings](configuration.md#web-app-setting
 ```
 
 One `desk-backend` container only. Proxy block:
-`desk.con.example.org { reverse_proxy desk-frontend:8080 }`.
+`desk.con.example.org { reverse_proxy desk-frontend:8080 }`. Create the
+bucket before the first start, and back it up with the database.
 
 ## Option 4: Development on Docker
 
@@ -367,9 +409,11 @@ This also starts **GreenMail**, a test mail server: the mailboxes
 `support@conservices.test` (password `support`) and
 `registration@conservices.test` (password `registration`) at IMAP
 `greenmail:3143`. Replies go out through **Mailpit** (`mailpit:1025`),
-where you can read them in a browser. Open <https://desk.conservices.test>
+where you can read them in a browser. Attachments go to the dev S3 bucket
+`desk-data-dev`. Open <https://desk.conservices.test>
 (or <http://localhost:3008>). For a mailbox, use IMAP host `greenmail`,
-port `3143`, security **None (dev only)**.
+port `3143`, security **None (dev only)**; the stack allows the private
+addresses of `greenmail` and `mailpit` with `DESK_ALLOWED_MAIL_HOSTS`.
 
 On its own, with development sign-in:
 
@@ -383,25 +427,70 @@ docker compose -f infra/docker-compose.yml up --build
 | backend | 8150 |
 | frontend | 3008 |
 | PostgreSQL (standalone stack only) | 5440 |
+| S3, SeaweedFS (standalone stack only; dev key `desk` / `deskdev`) | 9040 |
+| GreenMail SMTP / IMAP (standalone stack: `support@desk.test`) | 3025 / 3143 |
+
+**Try the Google flow without Google:** set `GOOGLE_WORKSPACE_DOMAIN=desk.test`,
+`GOOGLE_SHARED_MAILBOX=desk@desk.test` and `GOOGLE_FAKE=true` in the
+backend's environment. Desk then uses an in-memory Google Workspace: you can
+create `google_user` and `google_group` mailboxes, delete, restore and purge
+them. No real mail arrives. `GOOGLE_FAKE` is refused outside
+`APP_ENV=development`.
+
+**Smoke test:** with the platform stack running (`--profile desk`), run
+from the root of the repository:
+
+```powershell
+pwsh scripts/smoke-desk.ps1
+```
+
+It signs in as `admin` and `bob`, creates a throwaway IMAP mailbox for
+`registration@conservices.test` on GreenMail, sends a customer mail into it,
+waits for the conversation, undoes one reply and sends another (visible in
+Mailpit), adds a note, checks that `bob` gets `404`, and tries the
+conversation trash. Afterwards it moves the mailbox to the trash and purges
+it. A good run ends with:
+
+```text
+SMOKE OK (8 steps)
+```
+
+If it stops at step 2 with `409`, a Desk mailbox for
+`registration@conservices.test` already exists; delete and purge it, or
+pass another GreenMail user with `-MailboxEmail` and `-MailboxPassword`.
+If step 3 fails with *this server is on a private or internal network
+address*, the backend runs without `DESK_ALLOWED_MAIL_HOSTS`: recreate it
+with `docker compose --profile desk up -d desk-backend`.
 
 ## Why the backend runs one replica
 
-The IMAP fetcher and the reply sender run inside the backend process. Two
-replicas would fetch the same mailboxes twice and race over the same queued
-replies. The Helm chart refuses any `backend.replicas` other than 1.
+The mail fetcher, the reply sender and the daily jobs run inside the
+backend process. Two replicas would fetch the same mailboxes twice. The
+Helm chart refuses any `backend.replicas` other than 1.
 
 ## Troubleshooting
 
-**The backend does not start: "DESK_SECRET_KEY is required outside
-APP_ENV=development".** Set the key in `desk-secrets`.
+**The backend does not start: "invalid config: …".** The message lists
+every setting that is wrong; the fixes are in
+[Configuration, Troubleshooting](configuration.md#troubleshooting). The
+usual ones after an upgrade are the `S3_*` settings and a `DESK_SECRET_KEY`
+shorter than 32 characters.
 
-**Mailbox passwords stopped working after a redeploy.** `DESK_SECRET_KEY`
-changed. Put the old key back, or type every mailbox password in again.
+**The backend does not start: `bucket "desk-data" does not exist; create it
+first`.** Create the bucket (step 2). Outside development Desk never
+creates it.
 
-**The mailbox shows a fetch error / connection test fails with a timeout.**
-The network policy blocks the mail server: check `extraEgress` ports
-(993, 143, 465, 587) and addresses. With "authentication failed", check the
-login, and whether your provider needs an app password.
+**Mailbox passwords stopped working after a redeploy ("the stored password
+cannot be decrypted").** `DESK_SECRET_KEY` changed without the old key in
+`DESK_SECRET_KEY_PREVIOUS`. Put the old key there, restart and run
+`/server reencrypt` ([Rotate DESK_SECRET_KEY](operations.md#rotate-desk_secret_key)).
+
+**The mailbox shows a fetch error / connection test fails.** See
+[IMAP and SMTP, Troubleshooting](imap.md#troubleshooting) or
+[Google Workspace, Troubleshooting](google-workspace.md#troubleshooting).
+
+**Staff sign in but see no mailboxes.** They need a mailbox's role; see
+[Access](access.md).
 
 **Replies stay "queued" or show "Not sent".** No SMTP server: the mailbox
 has none and `SMTP_HOST` is empty, or the server refused. The thread shows
