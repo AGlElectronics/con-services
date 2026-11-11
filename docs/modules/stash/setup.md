@@ -91,12 +91,14 @@ namespace/conservices-stash labeled
 
 ### 4. Create the secret from your secret manager
 
-Stash needs one Kubernetes Secret, `stash-secrets`, with three keys:
+Stash needs one Kubernetes Secret, `stash-secrets`, with these keys:
 
 | Key | Value |
 | --- | --- |
 | `DATABASE_URL` | The URL Den showed in step 2. |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Storage keys that can reach only the `stash-data` bucket. |
+| `DEN_LINK_ENCRYPTION_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). The backend pod does not start without it. |
+| `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASSWORD` | Optional. The token lets HR read the role catalog (32 characters or more, the same value in HR). `TELEGRAM_BOT_TOKEN` turns on the Telegram bot. `SMTP_PASSWORD` logs in to Stash's own mail server; leave it out when Den provides SMTP, or when the server needs no password. |
 
 Store them in your secret manager and let the External Secrets Operator
 create the Secret. With Vault (the full walkthrough, including the
@@ -105,7 +107,8 @@ create the Secret. With Vault (the full walkthrough, including the
 ```sh
 vault kv put secret/conservices/stash/backend \
   DATABASE_URL='postgres://stash:change-me@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
-  S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me
+  S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
+  DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
 ```yaml
@@ -275,10 +278,14 @@ paired, and the organisation name in Stash's settings becomes read-only
 
 ### 10. Sign in and check access
 
-Sign in as someone in a Stash group (for example `stash-logistics-lead`).
-They should see Items and Sign-outs. Someone in no bound group can sign
-in but has no permissions, so every page answers "permission denied". If
-that happens for the wrong person, see [Troubleshooting](#troubleshooting).
+Sign in as someone in a Stash group (for example `stash-logistics-lead`,
+or a group named after a role key such as `stash_volunteer`). They should
+see Items and Sign-outs. Someone in no Stash group can sign in but sees
+*no Stash role yet*. If that happens for the wrong person, see
+[Troubleshooting](#troubleshooting). Then go through the
+[checklist after installing](admin-guide.md#after-installing-checklist),
+and, to use them, set up the [Telegram bot](admin-guide.md#telegram-notifications-for-guests)
+and [overdue emails](admin-guide.md#overdue-returns).
 
 ### Local trial with Kustomize
 
@@ -325,8 +332,8 @@ these defaults.
 3. **Sign-in.** In your OIDC provider, create a public client for the web
    app (redirect URI `https://stash.example.org/auth/callback`, web origin
    `https://stash.example.org`) and groups matching the bindings in your
-   access config (for example `stash-admin`). Stash reads groups from the
-   `groups` claim (or `roles`).
+   access config (for example `stash-admin`). Stash reads groups only from
+   the `groups` claim (`OIDC_GROUPS_CLAIM`); it does not merge in `roles`.
 4. **Namespace, secret, access config, certificate:** steps 3 to 5 above,
    with your own database URL and storage keys. For a managed database,
    end the URL in `?sslmode=verify-full&sslrootcert=<path to the provider's CA>`
@@ -350,12 +357,17 @@ these defaults.
       CORS_ALLOWED_ORIGINS: https://stash.example.org
       OIDC_ISSUER_URL: https://login.example.org/realms/example
       OIDC_CLIENT_ID: stash
-      OIDC_AUDIENCE: stash
+      # Access tokens must carry this audience. Add an audience mapper for it.
+      OIDC_AUDIENCE: stash-api
       S3_ENDPOINT: https://s3.eu-central-1.amazonaws.com
       S3_BUCKET: example-stash
       S3_REGION: eu-central-1
       S3_USE_PATH_STYLE: "false"
       DEN_INTERNAL_URL: ""
+    frontend:
+      securityHeaders:
+        # Empty: scheme and host of OIDC_ISSUER_URL, for the Content Security Policy.
+        keycloakOrigin: ""
     networkPolicy:
       den: { enabled: false }
       data: { enabled: false }
@@ -528,7 +540,12 @@ EOF
     DATABASE_URL=postgres://stash:change-me@db.example.org:5432/stash?sslmode=require
     S3_ACCESS_KEY_ID=change-me
     S3_SECRET_ACCESS_KEY=change-me
+    DEN_LINK_ENCRYPTION_KEY=change-me
     ```
+
+    `DEN_LINK_ENCRYPTION_KEY` is 32 random bytes, base64
+    (`openssl rand -base64 32`), one key for this installation. Without it
+    the backend refuses to start.
 
 2. Copy `stash/infra/access-config.toml` to `./stash/access-config.toml`
    next to the compose file.
@@ -547,7 +564,7 @@ EOF
           AUTH_MODE: oidc
           OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
           OIDC_CLIENT_ID: stash-spa
-          OIDC_AUDIENCE: stash-spa
+          OIDC_AUDIENCE: stash-api
           ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
           CORS_ALLOWED_ORIGINS: https://stash.con.example.org
           S3_ENDPOINT: https://fsn1.your-objectstorage.com
@@ -562,6 +579,8 @@ EOF
         image: ghcr.io/aglelectronics/stash-frontend:1.0.0-1
         <<: *hardening
         networks: [internal]
+        environment:
+          KEYCLOAK_ORIGIN: https://auth.con.example.org
         volumes:
           - ./stash-frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
           - ./stash-frontend/config.json:/etc/conservices/config.json:ro
@@ -614,7 +633,13 @@ docker compose -f infra/docker-compose.yml up --build
 ```
 
 Open <http://localhost:3000>. In `AUTH_MODE=dev` every request is the
-`dev-admin` user with all permissions.
+`dev-admin` user with all permissions, created on the first request. To
+try another role, set `localStorage["stash.devUser"]` in the browser to
+`bob:volunteer` and reload, or send the header yourself:
+
+```sh
+curl -s http://localhost:8080/api/me -H "X-Dev-User: bob:volunteer"
+```
 
 ```sh
 curl -s http://localhost:8080/api/health
@@ -624,11 +649,50 @@ curl -s http://localhost:8080/api/health
 {"status":"ok","database":"ok","version":"dev","uptime_sec":5}
 ```
 
+### Check it works: the smoke script
+
+`scripts/smoke-stash.ps1` (in the `con-services` checkout) runs Stash's
+main flows end to end against a running backend: the role catalog, settings
+validation, an item with a generated code, a sign-out that goes out, is
+refused when too many units are asked for, comes back with one damaged unit
+and is closed, a Lost & Found report (public view and audit log redaction),
+CSV formula escaping, safe file downloads and the audit page cap. It leaves
+a retired item, a removed report and a department named `Smoke dept …`
+behind; use a development installation.
+
+1. **Full local stack** (Keycloak sign-in). The script creates two
+   throwaway Keycloak users in the groups `stash-admin` and
+   `stash-readonly` and deletes them at the end. It signs in to Keycloak's
+   admin console with the dev default password; set
+   `KEYCLOAK_ADMIN_PASSWORD` in your shell if yours differs.
+
+    ```powershell
+    ./scripts/smoke-stash.ps1
+    ```
+
+2. **Stash on its own** (`AUTH_MODE=dev`, header sign-in):
+
+    ```powershell
+    ./scripts/smoke-stash.ps1 -BaseUrl http://localhost:8080 -Auth dev
+    ```
+
+Each check prints a line; the last one is:
+
+```text
+stash smoke: OK
+```
+
+The public Lost & Found check is skipped (and says so) when
+`PUBLIC_LOSTFOUND_CLAIM_ENABLED` is off. A failing check stops the script
+with the reason, for example `the guest name leaks into the audit log for a
+read-only user`.
+
 ## Troubleshooting
 
 **The backend exits with `invalid config: …`.** It lists every missing
 setting at once, for example `DATABASE_URL is required; S3_ENDPOINT is
-required`. Check that the Secret exists and has all three keys
+required`. Check that the Secret exists and has `DATABASE_URL`, the two S3
+keys and `DEN_LINK_ENCRYPTION_KEY`
 (`kubectl get secret stash-secrets -n conservices-stash -o jsonpath='{.data}'`
 shows the key names), and see [Configuration](configuration.md).
 
@@ -637,7 +701,8 @@ config ConfigMap is missing or not mounted. Create `stash-access-config`
 (step 5).
 
 **The pod stays `CreateContainerConfigError`.** A referenced Secret or
-ConfigMap does not exist yet. `kubectl describe pod -n conservices-stash -l app.kubernetes.io/component=backend`
+ConfigMap does not exist yet, or `stash-secrets` has no
+`DEN_LINK_ENCRYPTION_KEY`. `kubectl describe pod -n conservices-stash -l app.kubernetes.io/component=backend`
 names it.
 
 **The backend exits with `tls: TLS_CERT_FILE and TLS_KEY_FILE must be set

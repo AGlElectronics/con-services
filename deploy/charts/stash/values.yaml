@@ -23,7 +23,13 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY. This chart never creates Secrets.
+# S3_SECRET_ACCESS_KEY and DEN_LINK_ENCRYPTION_KEY (32 random bytes, base64;
+# encrypts the stored Den credential; the backend pod does not start without
+# it unless config.APP_ENV is development). Optional keys:
+# DEN_LINK_ENCRYPTION_KEY_PREVIOUS (only during a key rotation),
+# HR_SERVICE_TOKEN (lets HR read the role catalog), TELEGRAM_BOT_TOKEN
+# (Lost & Found bot) and SMTP_PASSWORD (overdue emails). This chart never
+# creates Secrets. Docs: https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: stash-secrets
 
 # Stash's access config (roles, permissions, OIDC group bindings).
@@ -45,7 +51,15 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: stash-spa
-  OIDC_AUDIENCE: stash-spa
+  # Access tokens must carry this audience (the realm's audience mapper on
+  # stash-spa adds it); ID tokens are refused.
+  OIDC_AUDIENCE: stash-api
+  # The token claim with the person's groups (roles is never merged in),
+  # full or last (compare only the last path segment), and a parent group
+  # removed before matching (e.g. /con2026; empty: none).
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  OIDC_GROUP_PREFIX: ""
   CORS_ALLOWED_ORIGINS: https://stash.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -145,6 +159,18 @@ frontend:
   #   publicClaimEnabled  config.PUBLIC_LOSTFOUND_CLAIM_ENABLED == "true"
   # Docs: https://aglelectronics.github.io/con-services/modules/stash/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may contact besides the app, for the Content Security
+  # Policy nginx sends (scheme + host, no path; several separated by spaces).
+  # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # Empty: scheme and host of the web app's sign-in address (oidcAuthority).
+    keycloakOrigin: ""
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
+    # EXTRA_FRAME_SRC is not a value. The chart sets it to empty: Stash
+    # does not embed sandboxed HTML. Silent sign-in frames
+    # /silent-callback.html through a second snippet.
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -250,6 +276,34 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
+  # Lost & Found Telegram bot (TELEGRAM_BOT_TOKEN): the backend long-polls
+  # https://api.telegram.org. Cilium (gateway.cilium: true): a toFQDNs rule
+  # in the CiliumNetworkPolicy "stash-backend-external". Other CNIs: ipBlock
+  # rules for cidrs, Telegram's published ranges
+  # (https://core.telegram.org/resources/cidr.txt; check them when you
+  # upgrade). Harmless without a token: the backend then never calls out.
+  telegram:
+    enabled: true
+    fqdns: ["api.telegram.org"]
+    cidrs:
+      - 91.108.4.0/22
+      - 91.108.8.0/22
+      - 91.108.12.0/22
+      - 91.108.16.0/22
+      - 91.108.20.0/22
+      - 91.108.56.0/22
+      - 149.154.160.0/20
+      - 185.76.151.0/24
+      - 91.105.192.0/23
+    port: 443
+  # SMTP server for overdue-return emails (host set in Stash's settings or
+  # Den's). Off by default; turn on and name the host (Cilium) or its
+  # addresses (other CNIs).
+  smtp:
+    enabled: false
+    fqdns: []  # e.g. ["smtp.example.org"]
+    cidrs: []  # e.g. ["203.0.113.25/32"]
+    ports: [587, 465]
   # Other module backends allowed to call Stash's backend (HR reads
   # GET /api/role-catalog).
   allowFromNamespaces:

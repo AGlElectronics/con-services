@@ -16,26 +16,6 @@ Learn, Wiki, Desk, Tasks) start at `1.0.0` too, each with its own version
 led by Den's MAJOR; see
 [Versions and upgrades](docs/operations/versioning.md).
 
-### Changed
-
-- HR's chart expects access tokens for audience `hr-api`, lists
-  `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN` on `existingSecret`,
-  fills nginx security-header origins from env (never a filled-in
-  ConfigMap), and allows the backend to call Photon
-  (`networkPolicy.addressLookup`). `/silent-callback.html` uses the
-  frame-self snippet so the app can frame its silent sign-in page;
-  `EXTRA_FRAME_SRC` stays empty. The Wiki chart allows its backend to
-  call HR's group directory.
-- Development Compose sets `OIDC_AUDIENCE=hr-api` on HR and the dev-only
-  `HR_SERVICE_TOKEN` (`dev-only-hr-service-token-change-me-0000000000`) on HR and on
-  every module that checks role-catalog calls. `scripts/smoke-hr-keycloak.ps1`
-  sends the access token.
-- [Secrets](docs/operations/secrets.md) records `HR_SERVICE_TOKEN` (shared
-  by HR, Wiki, Finance, Rally, Tasks, Stash, Learn and Desk) and
-  `HR_DIRECTORY_TOKEN` (HR and Wiki). [Google Workspace](docs/modules/hr/google-workspace.md)
-  describes the Cloud and Admin console steps for the connector, which
-  runs when the service-account key is mounted.
-
 ### Added
 
 - Development: the `conservices` realm has the groups `hr-viewer` (read-only
@@ -44,6 +24,17 @@ led by Den's MAJOR; see
   (`HR_DIRECTORY_URL`, and `HR_DIRECTORY_TOKEN` on both backends with the
   dev-only value `hr-directory-dev-token`). An existing dev stack picks up
   the new groups only after the realm is re-imported.
+- Stash on Kubernetes (Kustomize): the CiliumNetworkPolicy
+  `stash-backend-external` lets `stash-backend` reach `api.telegram.org` on
+  443 for Stash's Lost & Found Telegram bot; nothing is sent without
+  `TELEGRAM_BOT_TOKEN`. The example overlay's `stash-secrets` has the
+  optional keys `TELEGRAM_BOT_TOKEN` and `SMTP_PASSWORD` (empty, dev only).
+  See [Network policies](docs/operations/network-policies.md#every-allowed-flow)
+  and [Secrets](docs/operations/secrets.md#inventory).
+- Docker Compose: `stash-backend` reads `STASH_TELEGRAM_BOT_TOKEN` and
+  `STASH_SMTP_PASSWORD` from `.env` (both optional) and runs its background
+  jobs (`JOBS_ENABLED=true`). For overdue emails in development, point
+  Stash's SMTP settings at `mailpit:1025` with security `none`.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
@@ -320,6 +311,23 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- HR's chart expects access tokens for audience `hr-api`, lists
+  `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN` on `existingSecret`,
+  fills nginx security-header origins from env (never a filled-in
+  ConfigMap), and allows the backend to call Photon
+  (`networkPolicy.addressLookup`). `/silent-callback.html` uses the
+  frame-self snippet so the app can frame its silent sign-in page;
+  `EXTRA_FRAME_SRC` stays empty. The Wiki chart allows its backend to
+  call HR's group directory.
+- Development Compose sets `OIDC_AUDIENCE=hr-api` on HR and the dev-only
+  `HR_SERVICE_TOKEN` (`dev-only-hr-service-token-change-me-0000000000`) on HR and on
+  every module that checks role-catalog calls. `scripts/smoke-hr-keycloak.ps1`
+  sends the access token.
+- [Secrets](docs/operations/secrets.md) records `HR_SERVICE_TOKEN` (shared
+  by HR, Wiki, Finance, Rally, Tasks, Stash, Learn and Desk) and
+  `HR_DIRECTORY_TOKEN` (HR and Wiki). [Google Workspace](docs/modules/hr/google-workspace.md)
+  describes the Cloud and Admin console steps for the connector, which
+  runs when the service-account key is mounted.
 - Den's Helm chart and Kustomize nginx include the shared
   `security-headers-frame-self.conf` for `/silent-callback.html` (same-origin
   framing for silent sign-in). The image copies that template; it no longer
@@ -336,6 +344,11 @@ led by Den's MAJOR; see
   attendee realm's server (`ATTENDEE_OIDC_ISSUER_URL`) and
   `S3_PUBLIC_BASE_URL`; images may load from that bucket.
   `frontend.cspConnectSrc` is added to `connect-src` only.
+- Stash's web app may frame `/silent-callback.html` from Stash itself, so
+  a reload can finish silent sign-in. The Helm chart, the Kustomize nginx
+  config and the dev Compose service leave `EXTRA_FRAME_SRC` empty. Every
+  other page stays unframeable, and both header snippets keep
+  `camera=(self)`.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.
@@ -367,6 +380,20 @@ led by Den's MAJOR; see
   per-module view, and the SMTP password only from
   `GET /api/v1/integrations/module-settings/secrets` (Den's secret
   `DEN_SMTP_PASSWORD`, not the database).
+- **BREAKING:** Stash's Helm chart (still `1.0.0`; there is no chart
+  release tag yet), Kustomize manifests and Docker Compose follow the
+  token contract. `OIDC_AUDIENCE` is `stash-api`. `stash-secrets` must
+  include `DEN_LINK_ENCRYPTION_KEY` or the backend pod does not start,
+  unless `APP_ENV` is `development`. The web app container needs
+  `KEYCLOAK_ORIGIN` (the chart takes it from the sign-in address when
+  `frontend.securityHeaders.keycloakOrigin` is empty).
+  `scripts/smoke-stash.ps1` sends access tokens, and its role-catalog
+  call is signed in. The OpenBao guide lists `modules/stash/telegram`,
+  `modules/stash/smtp` (both optional) and `modules/hr/service-token`
+  (generated when HR is enabled; Stash receives it when Stash is enabled
+  too). What to change on an
+  existing installation is in
+  [Stash's changelog](https://github.com/AGlElectronics/stash/blob/main/CHANGELOG.md).
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,

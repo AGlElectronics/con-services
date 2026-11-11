@@ -190,7 +190,7 @@ with each module's docs):
 
 | Module | Secrets | Namespace |
 | --- | --- | --- |
-| Stash | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `conservices-stash` |
+| Stash | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `DEN_LINK_ENCRYPTION_KEY` (required outside development); optional `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN` (role catalog, same value as HR), `TELEGRAM_BOT_TOKEN` (its own Lost & Found bot) and `SMTP_PASSWORD` (overdue-return emails), all in `stash-secrets` | `conservices-stash` |
 | HR | `DATABASE_URL`, `DEN_LINK_ENCRYPTION_KEY`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `HR_SERVICE_TOKEN`, `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, `HR_DIRECTORY_TOKEN` (optional), SMTP password if any; with Google Workspace, the service-account key in its own Secret `hr-google-workspace` (key `credentials.json`) | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `HR_DIRECTORY_TOKEN` (optional) | `conservices-wiki` |
@@ -223,6 +223,17 @@ rotate it by creating a new key for the service account in Google Cloud,
 storing it, restarting HR and deleting the old key. See
 [Google Workspace](../modules/hr/google-workspace.md).
 
+**Stash's bot token and SMTP password.** `TELEGRAM_BOT_TOKEN` belongs to a
+bot only Stash uses (never share it with Rally or Learn: Telegram allows one
+reader of a bot's messages). Whoever holds it can read guests' messages to
+the bot and write to them. Rotate it by sending `/revoke` to
+[@BotFather](https://t.me/BotFather), storing the new token and restarting
+`stash-backend`; linked guests stay linked. `SMTP_PASSWORD` is the login of
+the SMTP server in Stash's settings: change it at the mail provider, store
+it, restart `stash-backend`. Both are optional; empty values switch the
+feature off. Dev values: empty in `overlays/example-stash/secrets.yaml` and
+`.env.example`.
+
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;
 its changelog says when, and its chart then lists the key under
@@ -233,7 +244,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally checks it from its first release (`rally-secrets`, key `HR_SERVICE_TOKEN`). Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally and Stash 1.0 read it (`rally-secrets` and `stash-secrets`, key `HR_SERVICE_TOKEN`). The GitOps template generates one value when HR is enabled; Stash receives it when Stash is enabled too. Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
 
 ### HR service token
 
@@ -528,12 +539,18 @@ module's `values.yaml` under `existingSecret`):
     vault kv put secret/conservices/stash/backend \
       DATABASE_URL='postgres://stash:change-me@db.example.org:5432/stash?sslmode=require' \
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
-      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+      TELEGRAM_BOT_TOKEN=change-me SMTP_PASSWORD=change-me
     ```
 
-    `DEN_LINK_ENCRYPTION_KEY` is read from the Stash release that adopts the
-    shared `denlink` ([Den link encryption key](#den-link-encryption-key));
-    an older Stash ignores it.
+    Stash 1.0 reads `DEN_LINK_ENCRYPTION_KEY` and refuses to start without
+    it unless `APP_ENV=development`
+    ([Den link encryption key](#den-link-encryption-key)).
+    `TELEGRAM_BOT_TOKEN` and `SMTP_PASSWORD` are optional (leave them out
+    without the Telegram bot or overdue emails). Add `HR_SERVICE_TOKEN`
+    (32 characters or more, the same value HR has) when HR should read the
+    role catalog without a staff sign-in. The `ExternalSecret` below copies
+    every key of the entry, so nothing else changes.
 
 2. Give the namespace read access to that path only:
 

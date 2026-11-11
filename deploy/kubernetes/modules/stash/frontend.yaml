@@ -38,6 +38,22 @@ spec:
       containers:
         - name: frontend
           image: ghcr.io/aglelectronics/stash-frontend:1.0.0-1
+          # Origins the Content Security Policy allows besides the app,
+          # filled into both header snippets by the image's entrypoint at
+          # start-up. For your own domain, patch them from an overlay.
+          # EXTRA_FRAME_SRC stays empty. /silent-callback.html is framed
+          # by Stash itself.
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: https://auth.conservices.test
+            - name: DEN_ORIGIN
+              value: ""
+            - name: S3_ORIGIN
+              value: ""
+            - name: EXTRA_CONNECT_SRC
+              value: ""
+            - name: EXTRA_FRAME_SRC
+              value: ""
           ports:
             - name: https
               containerPort: 8080
@@ -87,6 +103,9 @@ spec:
             # nginx-unprivileged: nginx.pid and temporary files
             - name: tmp
               mountPath: /tmp
+            # The security headers written at start-up (read-only root file system).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
             # No subPath: renewed certificates must show up in place.
             - name: tls
               mountPath: /etc/conservices-tls
@@ -95,6 +114,8 @@ spec:
               mountPath: /etc/conservices-internal-ca
               readOnly: true
       volumes:
+        - name: nginx-snippets
+          emptyDir: {}
         - name: nginx-conf
           configMap:
             name: stash-frontend-nginx

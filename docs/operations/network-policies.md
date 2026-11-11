@@ -119,6 +119,8 @@ belong to which.
 | Wiki backend (`conservices-wiki`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.allowFromNamespaces`; Wiki: `networkPolicy.extraEgress` for now) | The Wiki's share dialog lists HR's groups (`GET /api/internal/directory/groups`). |
 | HR backend | Photon (`photon.komoot.io`) | 443 | Helm (`networkPolicy.addressLookup`, on unless address search is unused) | Address suggestions. The browser calls HR; the backend calls Photon. |
 | HR backend | Google's APIs (`admin.googleapis.com`, `oauth2.googleapis.com`) | 443 | Helm, only with `googleWorkspace.enabled` (`networkPolicy.googleApis`) | Google Workspace connector. |
+| `stash-backend` | `api.telegram.org` (internet) | 443 | both (Kustomize: CiliumNetworkPolicy `stash-backend-external`; Helm: `networkPolicy.telegram`, default on) | The Lost & Found Telegram bot long-polls for guests' `/start` and `/stop` messages and sends notifications. Cilium: `toFQDNs`; other CNIs (Helm, `gateway.cilium: false`): `ipBlock` rules for Telegram's published ranges. Nothing is sent without `TELEGRAM_BOT_TOKEN`. |
+| `stash-backend` | your SMTP server | 587, 465 | Helm (`networkPolicy.smtp`, default off); Kustomize: add the host to `stash-backend-external` | Overdue-return emails. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the

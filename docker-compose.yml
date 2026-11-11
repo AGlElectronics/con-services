@@ -293,14 +293,27 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: stash-spa
-      OIDC_AUDIENCE: stash-spa
+      # Access tokens only; the realm's audience mapper on stash-spa adds stash-api.
+      OIDC_AUDIENCE: stash-api
+      # Groups only from this claim (roles is never merged in).
+      OIDC_GROUPS_CLAIM: groups
+      OIDC_GROUP_MATCH: full
+      OIDC_GROUP_PREFIX: ""
       # DEV ONLY. The token HR sends to read this module's role catalog.
-      # Same value on every module; at least 32 characters.
-      HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      # Same value on every module; at least 32 characters. Override with
+      # STASH_HR_SERVICE_TOKEN. Empty: only signed-in staff can read it.
+      HR_SERVICE_TOKEN: ${STASH_HR_SERVICE_TOKEN:-dev-only-hr-service-token-change-me-0000000000}
       ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3000,https://stash.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
+      JOBS_ENABLED: "true"
+      # Optional Lost & Found Telegram bot (dev: your own test bot from
+      # @BotFather); also turn it on in Stash's Settings.
+      TELEGRAM_BOT_TOKEN: ${STASH_TELEGRAM_BOT_TOKEN:-}
+      # Overdue emails: in Stash's Settings use host mailpit, port 1025,
+      # security "none"; mailpit needs no password (UI on localhost:8025).
+      SMTP_PASSWORD: ${STASH_SMTP_PASSWORD:-}
     volumes:
       - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
@@ -317,6 +330,11 @@ services:
         NGINX_CONF: nginx.stack.conf
         STASH_VERSION: dev
     container_name: conservices-stash-frontend
+    environment:
+      # Content Security Policy: the browser may talk to the dev Keycloak.
+      # EXTRA_FRAME_SRC stays empty (the image default). Silent sign-in
+      # frames /silent-callback.html from Stash itself.
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/stash.json:/etc/conservices/config.json:ro
