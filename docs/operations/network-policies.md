@@ -103,8 +103,9 @@ belong to which.
 | `den-backend`, `den-operator`, module backend with a bucket | Garage pods (`app.kubernetes.io/name: garage`) in `conservices-data` | 3900 | Helm (`networkPolicy.data.s3`) | Buckets, through Garage's TLS sidecar. |
 | `finance-backend` (`conservices-finance`) | Garage pods in `conservices-data`, or external S3 | 3900 (external: 443) | Helm (`networkPolicy.data.s3`, on by default since Finance stores PDFs) | Writing and reading the PDFs of issued invoices and credit notes. The S3 side must admit `conservices-finance` like the other modules with a bucket. |
 | `den-backend`, `den-operator`, module backend | external S3 (for example `*.your-objectstorage.com`) | 443 | Helm, only when `networkPolicy.data.s3.external` is set | Buckets at a managed S3 provider. Cilium: the `CiliumNetworkPolicy` `<name>-external-s3` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `external.cidrs`. Checked against public CAs, not the internal CA. |
+| `learn-backend` | Telegram Bot API (`api.telegram.org`) | 443 | Helm, only with `networkPolicy.telegram.enabled` | Telegram reminders. Cilium: the `CiliumNetworkPolicy` `learn-telegram` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.telegram.cidrs`. Off by default, like `TELEGRAM_BOT_TOKEN`. |
 | `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for the optional realm name sync ([Keycloak sync](../modules/den/admin-guide.md#keycloak-sync)). Not needed when the sync is off. |
-| `den-backend` | module backends (namespaces `conservices.io/tier: module`, pods `app.kubernetes.io/component: backend`) | 8080 | both (Helm: `networkPolicy.allowToModules`) | `GET /api/role-catalog` (who sees a module on the portal) and `GET /api/portal/todos` (with the module's credential), at the module's `internal_url`. Each module's own policy must admit `den-backend` too (Stash: done). |
+| `den-backend` | module backends (namespaces `conservices.io/tier: module`, pods `app.kubernetes.io/component: backend`) | 8080 | both (Helm: `networkPolicy.allowToModules`) | `GET /api/role-catalog` (who sees a module on the portal) and `GET /api/portal/todos` (with the module's credential), at the module's `internal_url`. Each module's own policy must admit `den-backend` too (Stash and Learn: done). |
 | `den-backend` | `den-operator` | 8080 | both | Backups and module databases (bearer `OPERATOR_TOKEN`). |
 | `den-backend` | `postgres` | 5432 | Kustomize | Den's own database (also the `migrate` initContainer). |
 | `den-backend` | `s3` | 9000 | Kustomize | Den's bucket (branding assets). |
@@ -181,14 +182,15 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Tasks | `/api/internal/departments` (department hook) | Done in the HR and Tasks charts. |
 | Wiki | HR | `GET /api/internal/directory/groups` (with `HR_DIRECTORY_TOKEN`) | HR's ingress in its chart (`allowFromNamespaces: [conservices-wiki]`); the Wiki's egress through its `networkPolicy.extraEgress` until the Wiki chart has its own value ([Set up HR, step 5](../modules/hr/setup.md#5-open-the-network-paths-hr-needs)). |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080; ingress rule on Stash done, the other modules' manifests and charts must admit `den-backend` from `conservices-den`. |
+| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash in Kustomize and Learn's chart (`networkPolicy.den`: namespace `conservices-den`, pod `den-backend`, backend port 8080) are done; the other modules' manifests and charts must admit `den-backend` from `conservices-den`. |
+| Den backend | Learn | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Ingress in the Learn chart (`networkPolicy.den`). Egress from `conservices-den` is Den's rule to every module backend on 8080 (Helm: `networkPolicy.allowToModules`). |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Already allowed on both sides, port 8080: HR chart egress `networkPolicy.den` (on by default) and Den ingress from every module backend (Helm `networkPolicy.allowFromModules`, Kustomize `den-backend`). |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 
 Calls that come from the **browser**, not from a pod, go through the
 Gateway and need no policy of their own, for example Den's web app calling
 Learn's API. The portal's to-do list is **not** such a call any more: Den's
-backend collects it (row above).
+backend collects it (rows above).
 
 Example: the ingress rule a module adds so Den can call it (goes into the
 module's namespace, next to its other rules for the backend):
@@ -317,6 +319,22 @@ spec:
 This one policy covers both `den-backend` and `den-operator` (both carry
 `app.kubernetes.io/name: den`). Add the same in each module namespace that
 uses S3, with that module's selector.
+
+### Telegram (Learn reminders)
+
+Learn sends Telegram reminders through the Bot API at `api.telegram.org`.
+With the Learn chart, turn the egress on together with the bot token:
+
+```yaml
+networkPolicy:
+  telegram:
+    enabled: true
+    fqdns: ["api.telegram.org"]   # Cilium: CiliumNetworkPolicy learn-telegram
+    cidrs: []                     # other CNIs, e.g. ["149.154.160.0/20", "91.108.4.0/22"]
+```
+
+Without this rule the backend logs `notification delivery failed` with a
+timeout, and the reminder is not counted as delivered.
 
 ## Rules for a new module
 

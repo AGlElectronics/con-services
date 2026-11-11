@@ -953,11 +953,13 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: learn-spa
-      OIDC_AUDIENCE: learn-spa
+      # Access tokens only; the audience mapper on learn-spa adds learn-api.
+      OIDC_AUDIENCE: learn-api
+      # Groups come only from this claim. full: the whole path must match.
+      OIDC_GROUPS_CLAIM: groups
+      OIDC_GROUP_MATCH: full
       # DEV ONLY. The token HR sends to read this module's role catalog.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
-      # Den's SPA calls Learn directly (my-learning widgets).
-      OIDC_EXTRA_AUDIENCES: den-spa
       ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3005,https://learn.conservices.test,https://den.conservices.test,http://localhost:3001
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -974,6 +976,10 @@ services:
       KEYCLOAK_REALM: conservices
       KEYCLOAK_CLIENT_ID: learn-provisioner
       KEYCLOAK_CLIENT_SECRET: learn-provisioner-dev-secret
+      # keycloak: groups and people from the admin API above; off: never.
+      GROUP_DIRECTORY: ${LEARN_GROUP_DIRECTORY:-keycloak}
+      # Groups trainers may link (apply-mvp.sh creates /learn/demo-cohort).
+      LEARN_LINKABLE_GROUPS: ${LEARN_LINKABLE_GROUPS:-/learn/*}
       # Learn's own notices. Dev: Mailpit; prod: real SMTP.
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
@@ -981,6 +987,9 @@ services:
       SMTP_FROM_NAME: Con Services
       # Shared secret for HR -> Learn service calls (qualification holdings).
       LEARN_SERVICE_TOKEN: learn-service-dev-token
+      # DEV ONLY. Keys the anonymous-feedback dedupe hash; real installations
+      # keep it in their secret manager (see the Secrets page).
+      LEARN_FEEDBACK_PEPPER: learn-feedback-dev-pepper
       # Empty = Telegram notifications disabled.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     volumes:
@@ -1003,6 +1012,11 @@ services:
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/learn.json:/etc/conservices/config.json:ro
+    environment:
+      # Origins the Content Security Policy allows besides the app itself.
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
+      DEN_ORIGIN: https://den.conservices.test
+      S3_ORIGIN: https://s3.conservices.test
     restart: unless-stopped
     depends_on:
       - learn-backend

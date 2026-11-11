@@ -402,6 +402,29 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- toPrettyJson $out -}}
 {{- end -}}
 
+{{/* KEYCLOAK_ORIGIN of the web app's Content Security Policy: frontend.securityHeaders.keycloakOrigin,
+else scheme and host of the sign-in address the web app uses (/config.json oidcAuthority). */}}
+{{- define "learn.keycloakOrigin" -}}
+{{- $h := .Values.frontend.securityHeaders | default dict -}}
+{{- if $h.keycloakOrigin -}}
+{{- $h.keycloakOrigin -}}
+{{- else -}}
+{{- $authority := (include "learn.frontendConfig" . | fromJson).oidcAuthority | default "" -}}
+{{- with $authority }}{{ with urlParse . }}{{ printf "%s://%s" .scheme .host }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* S3_ORIGIN: frontend.securityHeaders.s3Origin, else scheme and host of config.S3_PUBLIC_BASE_URL. */}}
+{{- define "learn.s3Origin" -}}
+{{- $h := .Values.frontend.securityHeaders | default dict -}}
+{{- if $h.s3Origin -}}
+{{- $h.s3Origin -}}
+{{- else -}}
+{{- $pub := .Values.config.S3_PUBLIC_BASE_URL | default "" -}}
+{{- with $pub }}{{ with urlParse . }}{{ printf "%s://%s" .scheme .host }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* DEN_MODE of the backend from den.mode: "required" or "standalone". */}}
 {{- define "learn.denMode" -}}
 {{- $mode := (.Values.den | default dict).mode | default "required" -}}

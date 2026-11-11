@@ -35,6 +35,24 @@ led by Den's MAJOR; see
   `STASH_SMTP_PASSWORD` from `.env` (both optional) and runs its background
   jobs (`JOBS_ENABLED=true`). For overdue emails in development, point
   Stash's SMTP settings at `mailpit:1025` with security `none`.
+- The development Keycloak realms send **full group paths**. Every web
+  app client's groups mapper in `infra/keycloak/realm-conservices.json`
+  has `full.path` true, and `infra/keycloak/apply-mvp.sh` sets the same
+  on realms that were imported earlier. A top-level group still matches
+  its short name (the leading `/` is stripped). Nested groups such as
+  `/learn/demo-cohort` match only by full path.
+- Learn in the shared Docker stack: `GROUP_DIRECTORY`
+  (`LEARN_GROUP_DIRECTORY`, default `keycloak`), `LEARN_LINKABLE_GROUPS`
+  (default `/learn/*`) and a dev-only `LEARN_FEEDBACK_PEPPER`. The dev
+  Keycloak script (`infra/keycloak/apply-mvp.sh`) creates the
+  `learn-manager` group (training managers) and a `/learn` parent group
+  with `/learn/demo-cohort` for trainers to link.
+- Documentation: user guides for Learn learners, trainers and admins;
+  the Learn feedback pepper (`conservices/modules/learn/feedback-pepper`)
+  in the secrets inventory and the OpenBao layout; Learn's egress to the
+  Telegram Bot API on the network-policy page. `scripts/smoke-learn.ps1`
+  now also covers quizzes, media uploads, in-person sessions with QR
+  check-in, and certificates.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
@@ -368,6 +386,10 @@ led by Den's MAJOR; see
   so a reload can finish silent sign-in. The Helm chart and the dev
   Compose service leave `EXTRA_FRAME_SRC` empty. Every other page stays
   unframeable.
+- Learn's Helm chart admits `den-backend` from `conservices-den` on the
+  backend port, so Den can call `GET /api/portal/todos`. Den's egress to
+  module backends is still added with Den's release. See
+  [Calls between modules](docs/operations/network-policies.md#calls-between-modules).
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

@@ -90,6 +90,16 @@ spec:
             matchLabels:
               app.kubernetes.io/component: backend
         {{- end }}
+        {{- if $np.den.enabled }}
+        # Den's backend calls GET /api/portal/todos with the pairing credential.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.den.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: den
+              app.kubernetes.io/component: backend
+        {{- end }}
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
   egress:
@@ -123,8 +133,54 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- $tg := $np.telegram | default dict }}
+    {{- if and $tg.enabled $tg.cidrs }}
+    # Telegram Bot API (reminders).
+    - to:
+        {{- range $tg.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ $tg.port | default 443 }} }
+    {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- include "learn.externalS3Policy" (dict "root" . "components" (list "backend")) }}
+{{- $tg := $np.telegram | default dict }}
+{{- if and $tg.enabled $tg.fqdns ($np.gateway | default dict).cilium }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: learn-telegram
+  namespace: {{ $ns }}
+  labels:
+    {{- include "learn.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: learn
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        {{- range $tg.fqdns }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - port: {{ $tg.port | default 443 | quote }}
+              protocol: TCP
+{{- end }}
 {{- end }}

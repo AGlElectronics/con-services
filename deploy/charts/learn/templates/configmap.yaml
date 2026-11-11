@@ -1,4 +1,8 @@
 {{- $tls := .Values.internalTLS.enabled -}}
+{{- $gd := .Values.config.GROUP_DIRECTORY | default "keycloak" -}}
+{{- if not (has $gd (list "keycloak" "off")) -}}
+{{- fail (printf "config.GROUP_DIRECTORY must be keycloak or off, not %q" $gd) -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -93,12 +97,17 @@ data:
             proxy_send_timeout 120s;
             proxy_buffering off;
         }
+        # Browser security headers (CSP and friends, from con-services
+        # shared/nginx) in every location that serves the app, never on
+        # /api/: the backend sends its own stricter headers there.
         location = /manifest.webmanifest {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             types {} default_type "application/manifest+json";
             try_files $uri =404;
         }
         location = /brand.json {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             try_files $uri =404;
         }
@@ -106,16 +115,25 @@ data:
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
         location /static/ {
             expires 1y;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "public, immutable" always;
             try_files $uri =404;
         }
+        # Hidden iframe target for oidc-client-ts silent renew. Framed by
+        # Learn itself; every other location stays unframeable.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
+            add_header Cache-Control "no-cache" always;
+        }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
         }
     }

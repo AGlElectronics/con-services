@@ -69,6 +69,7 @@ conservices/                       KV version 2 mount (openbao.kvPath)
 │   ├── stash/s3                   you        (rally, learn, wiki, tasks alike)
 │   ├── learn/service-token        generated  token (wiki, tasks alike)
 │   ├── stash/den-link             generated  key (every enabled module)
+│   ├── learn/feedback-pepper      generated  pepper
 │   └── desk/secret-key            generated  key
 └── infra/
     ├── postgres/
@@ -479,7 +480,7 @@ application runs without them and the feature stays off.
 | `conservices/modules/<module>/service-token` | `token` | token HR uses to call `learn`, `wiki`, `tasks` | generated | that module, `hr` | that module enabled |
 | `conservices/modules/hr/service-token` | `hr_service_token` | `HR_SERVICE_TOKEN`: the same value in `hr-secrets` and in each enabled module that checks it (Stash does). It allows only catalog reads | generated | `hr` and those modules | HR enabled |
 | `conservices/modules/hr/directory-token` | `hr_directory_token` | `HR_DIRECTORY_TOKEN`: Wiki sends it when it asks HR for groups | generated | `hr`, `wiki` | HR enabled |
-| `conservices/modules/learn/feedback-pepper` | `pepper` | Secret mixed into Learn's anonymous feedback codes | generated | `learn` | Learn enabled |
+| `conservices/modules/learn/feedback-pepper` | `pepper` | key of the hash that stops a person giving anonymous feedback on a course twice (`LEARN_FEEDBACK_PEPPER`); rotating it lets everyone give feedback once more | generated | `learn` | Learn enabled |
 | `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY`: 43 letters and digits, which is 32 bytes as unpadded base64. Encrypts the Den credential that module stores. One per module, never shared. Lost or replaced without a rotation: pair the module again | generated | that module | that module enabled |
 | `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |

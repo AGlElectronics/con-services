@@ -13,7 +13,7 @@ every problem.
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` (from `values.yaml` `config:`) | Every setting below that is not a secret. The chart adds `ACCESS_CONFIG_PATH`. |
-| Secret `learn-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET`, `LEARN_SERVICE_TOKEN`, `SMTP_PASSWORD`, `TELEGRAM_BOT_TOKEN`. |
+| Secret `learn-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET`, `LEARN_SERVICE_TOKEN`, `LEARN_FEEDBACK_PEPPER`, `DEN_LINK_ENCRYPTION_KEY`; optionally `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN`, `SMTP_PASSWORD`, `TELEGRAM_BOT_TOKEN`. See [Secrets](../../operations/secrets.md). |
 | ConfigMap `learn-access-config` | The access config file. |
 | Secrets `learn-backend-tls`, `learn-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -24,23 +24,29 @@ every problem.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. |
+| `APP_ENV` | `production` | no | no | Only `development` allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs. Anything else turns on the secret checks: `LEARN_FEEDBACK_PEPPER` and `DEN_LINK_ENCRYPTION_KEY` are required, and `LEARN_FEEDBACK_PEPPER`, `LEARN_SERVICE_TOKEN` and `HR_SERVICE_TOKEN` must look like real secrets. Local Compose sets `development` explicitly. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address. |
 | `HTTP_ADDR` | `:8080` | no | no | Listen address inside the container. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3005` | no | no | Comma-separated browser origins. **Include Den's address**, because Den's web app calls Learn. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3005` | no | no | Comma-separated browser origins that may call the API. In production the web app is same-origin, so this matters for the dev server. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `PUBLIC_BASE_URL` | none | recommended | no | Browser-facing Learn address used in emails, certificates, QR codes and portal to-do links. |
-| `AUTH_MODE` | `dev` | no | no | `oidc` for real sign-in; `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers (local only). |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` checks access tokens. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. Outside development those headers are removed and are not allowed through CORS. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer URL. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `learn-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Normally `learn-spa`. |
-| `OIDC_EXTRA_AUDIENCES` | none | no | no | Comma-separated extra token audiences accepted, for example `den-spa` so Den's web app can show Learn to-dos. |
+| `OIDC_AUDIENCE` | `learn-api` | no | no | Audience every person's access token must carry (Keycloak audience mapper on `learn-spa`, access tokens only). ID tokens are refused. `GET /api/portal/todos` does not take this token: Den's backend calls it with the pairing credential. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | no | The only token claim groups are read from. The `roles` claim is never merged in. |
+| `OIDC_GROUP_MATCH` | `full` | no | no | `full`: the whole group path must match. `last`: only the last segment. Anything else stops the backend. |
+| `OIDC_GROUP_PREFIX` | none | no | no | Optional parent removed before matching, for example `/con2026`. |
+| `HR_SERVICE_TOKEN` | none | no | **yes** | Lets HR read `GET /api/role-catalog` without a sign-in. Must equal HR's `HR_SERVICE_TOKEN` and, outside development, be at least 32 characters. Empty: only a staff sign-in can read the catalog. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the [access config file](#access-config-file). |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `learn-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). |
+| `DEN_ALLOWED_HOSTS` | none | no | no | Hosts a pasted pairing URL may use when `DEN_INTERNAL_URL` is empty. In development, localhost and `*.conservices.test` are always allowed. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | **yes**, unless `APP_ENV=development` | **yes** | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts the stored Den credential (AES-256-GCM). One key per module; see [Secrets](../../operations/secrets.md#den-link-encryption-key). A credential stored in plain text is encrypted on the first read. |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The old key during a rotation. Values sealed with it are re-encrypted with the current key on the next read. |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 
@@ -60,18 +66,22 @@ every problem.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `SMTP_HOST` | none | no | no | SMTP server for reminders and notices. **Empty turns email off.** |
-| `SMTP_PORT` | `587` | no | no | SMTP port. |
-| `SMTP_USERNAME` | none | no | no | SMTP login. |
-| `SMTP_PASSWORD` | none | no | **yes** | SMTP password. |
+| `SMTP_HOST` | none | no | no | Learn's own SMTP server for reminders and notices. Used only when Den does not set `smtp.host`. **Empty, and Den sets no host, turns email off.** |
+| `SMTP_PORT` | `587` | no | no | SMTP port of Learn's own server. |
+| `SMTP_USERNAME` | none | no | no | SMTP login of Learn's own server. |
+| `SMTP_PASSWORD` | none | no | **yes** | Password for Learn's own server. Ignored while Den sets `smtp.host`. When Den sets `smtp.password_set`, Learn fetches the password from Den and keeps it in memory. |
 | `SMTP_FROM` | none | with SMTP | no | Sender address, for example `no-reply@example.org`. |
 | `SMTP_FROM_NAME` | none | no | no | Sender name, for example `Con Services`. |
-| `KEYCLOAK_BASE_URL` | none | for group sync | no | Keycloak address for read-only admin API calls, on the platform `https://keycloak.conservices-identity.svc.cluster.local:8443`. Group sync runs only when all four `KEYCLOAK_*` are set. |
+| `KEYCLOAK_BASE_URL` | none | for group sync | no | Keycloak address for read-only admin API calls, on the platform `https://keycloak.conservices-identity.svc.cluster.local:8443`. Group sync runs only when all four `KEYCLOAK_*` are set and `GROUP_DIRECTORY` is `keycloak`. |
 | `KEYCLOAK_REALM` | none | for group sync | no | `conservices`. |
 | `KEYCLOAK_CLIENT_ID` | none | for group sync | no | `learn-provisioner`. |
 | `KEYCLOAK_CLIENT_SECRET` | none | for group sync | **yes** | That client's secret. Regenerate the public development value before production. |
-| `LEARN_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `GET /api/internal/holdings`. **Empty turns that endpoint off** (`404`). Same value on HR. |
-| `TELEGRAM_BOT_TOKEN` | none | no | **yes** | Telegram notifications (a stub so far). Empty turns them off. |
+| `GROUP_DIRECTORY` | `keycloak` | no | no | Where Learn reads groups and people from. `keycloak`: the Keycloak Admin API above (group picker, group sync, people who never signed in). `off`: never, whatever `KEYCLOAK_*` says; use it with an identity provider that has no such API. With `off`, group links only match the groups people sign in with, and the group-link panels show a warning. The suite's install template sets it from the identity mode. Any other value stops the backend. |
+| `LEARN_LINKABLE_GROUPS` | `/learn/*` | no | no | Comma-separated full group paths trainers may see and link to courses. `/learn/*` is every group below `/learn` (not `/learn` itself), `/teams/red` exactly that group, `*` every group. Holders of `course.manage` may link any group. Case and the leading `/` don't matter. |
+| `LEARN_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `GET /api/internal/holdings`. **Empty turns that endpoint off** (`404`). Same value on HR. Outside `APP_ENV=development` the backend refuses to start when it is shorter than 32 characters, has fewer than 10 different characters or contains a placeholder such as `dev-token` or `change-me`; generate one with `openssl rand -hex 32`. |
+| `LEARN_FEEDBACK_PEPPER` | dev-only value in `development`, else none | **yes**, outside development | **yes** | Secret key of the hash that stops a person giving anonymous feedback twice without storing who they are. Same strength rules as `LEARN_SERVICE_TOKEN`. Changing it lets everyone give anonymous feedback on each course once more. |
+| `TELEGRAM_BOT_TOKEN` | none | no | **yes** | Bot token from @BotFather. Turns Telegram reminders on; admins switch delivery off and on in **Settings** without removing it. Empty turns Telegram off. On Kubernetes the backend needs egress to `api.telegram.org` (Helm: `networkPolicy.telegram`). |
+| `TELEGRAM_API_URL` | `https://api.telegram.org` | no | no | Bot API origin. Change it only for an outbound proxy or a test server. |
 
 ### Internal TLS
 
@@ -112,6 +122,7 @@ up on the next page load without rebuilding or restarting anything.
 | `oidcScope` | `"openid profile email"` | Scopes requested at sign-in. |
 | `apiBaseUrl` | `""` | Address put in front of every API call (`/api/...`). Leave empty: nginx serves the app and forwards `/api/` on the same address. Only set it when the API lives on another origin, for example `https://api.example.org`. |
 | `productName` | `""` (shows `Learn`) | Name shown until Den's brand has loaded. |
+| `monitorSession` | `true` | Watches the sign-in session at the identity provider in a hidden frame and signs the web app out when it ends there (OIDC session management). Set `false` for an identity provider without `check_session_iframe`, or when browsers block its third-party cookies and people are signed out at random. Must be `true` or `false`, not a string. |
 
 Keys you leave out keep their default; unknown keys are ignored. The image
 ships a placeholder file with empty `oidcAuthority` and `oidcClientId`: the
@@ -212,24 +223,49 @@ docker build -f infra/Dockerfile.frontend \
 ```
 
 The local dev server (`npm run dev`) has no `/config.json`; it uses
-`VITE_AUTH_MODE`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_SCOPE`, `VITE_API_BASE_URL` (for example `http://localhost:8120`), `VITE_PRODUCT_NAME` from the environment or `.env` instead. Image builds
+`VITE_AUTH_MODE`, `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_SCOPE`, `VITE_API_BASE_URL` (for example `http://localhost:8120`), `VITE_PRODUCT_NAME` and `VITE_OIDC_MONITOR_SESSION` (`false` turns session monitoring off) from the environment or `.env` instead. Image builds
 ignore these.
 
 
 ## Access config file
 
+The access config (`infra/access-config.toml`, mounted from the ConfigMap
+`learn-access-config`) maps Keycloak groups to roles. The shipped file:
+
 | Keycloak group | Role | Permissions |
 | --- | --- | --- |
-| `learn-admin` | `organization_admin` | `course.manage`, `enrol.manage`, `settings.manage`, `report.view` |
+| `learn-admin` | `organization_admin` | every permission below |
 | `learn-trainer` | `trainer` | `course.teach`, `enrol.manage` |
-| `learn-coordinator` | `coordinator` | `report.view` |
+| `learn-manager` | `training_manager` | `staff.manage` |
+| `learn-coordinator` | `coordinator` | `report.view`, `qualification.manage` |
 
 | Permission | Allows |
 | --- | --- |
-| `course.manage` | Every course. |
-| `course.teach` | Create courses; edit and run the courses you staff. |
-| `enrol.manage` | Enrol people. |
+| `course.manage` | Every course: edit, publish, archive, enrol, reset quizzes, link any group. Sees email addresses. |
+| `course.teach` | Create courses; edit and run the courses you staff (where you are a trainer). |
+| `enrol.manage` | Add and remove **learners** on courses you may edit. Never trainers. |
+| `staff.manage` | Add and remove **trainers** on every course (the **Course roles** page). The last trainer of a course always stays. Sees email addresses. |
+| `qualification.manage` | Create, edit and delete qualifications, see every certificate, revoke certificates (the **Qualifications** page). |
 | `report.view` | Completion and qualification reports for all courses. |
-| `settings.manage` | The Den connection; running reminders by hand. |
+| `settings.manage` | Module settings (Den connection, Telegram, retention, erasure), the audit log, running reminders by hand. |
 
-Reading a published course needs an **enrolment**, not a role.
+Reading a published course needs an **enrolment**, not a role. The
+top-level `organization` in the file is everyone's home organization: the
+people picker only finds people of the caller's organizations.
+
+## Module settings (in the app)
+
+Some settings are changed by admins in **Settings** and stored in Learn's
+database, not in environment variables (`GET|PUT /api/v1/settings`, see the
+[API reference](api.md#module-settings)):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Telegram on/off | on | Off stops Telegram delivery while keeping `TELEGRAM_BOT_TOKEN`. Has no effect without the token. |
+| Anonymise people inactive for (days) | `1095` | People who have neither signed in nor been in a synced group for this long are anonymised; `0` never. |
+| Delete audit entries after (days) | `730` | `0` never. |
+
+The retention defaults are **pending legal review**: check them against
+your organisation's retention duties. While Learn is paired with Den, Den's
+module settings win: `retention.inactive_users_days` and
+`learn.audit_log_days`. Those fields are then read-only in Learn.
