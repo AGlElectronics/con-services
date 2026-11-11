@@ -21,29 +21,32 @@ memory**.
 Concretely, Stash aims to:
 
 - **Answer "where is it and who has it?" in one scan.** Every item has a
-  barcode, a location and a managing department; a sign-out records which
-  department took how many, when, and when it should be back.
+  barcode or QR label, a location and a managing department; a sign-out
+  records which department took how many, when, and when it should be
+  back. A QR label opens the item in any phone's camera.
 - **Make hand-outs fast at the busiest moment.** A sign-out can be created
   and confirmed in one step at the counter, with optional barcode scanning
   to stop the wrong item leaving.
-- **Close the loop after the event.** Returns record what came back, what
-  was used up, lost or damaged, so next year's budget and packing list
-  start from facts.
+- **Plan and close the loop.** Packing lists say what goes where and turn
+  into sign-outs; returns record what came back, what was used up, lost or
+  damaged; overdue returns are flagged in the app and by email; purchase
+  records and requests show what was bought and what is still needed.
 - **Run the Lost & Found desk.** Guests' lost items and handed-in finds are
-  logged with photos and report numbers, matched, and handed back, with an
-  optional public page where guests can check for their item themselves.
-- **Keep departments responsible for their own kit.** Permissions can be
-  granted per department, so a department lead manages their equipment
-  without being able to change everyone else's.
+  logged with photos and report numbers, matched, and handed back. Guests
+  can link their report to Stash's Telegram bot and be told when it turns
+  up, and an optional public page lets them check for their item.
+- **Protect guests' data.** Lost & Found reports are deleted on a schedule
+  after closing or after the convention, and guest data never shows in the
+  audit log to people who cannot see Lost & Found.
 - **Be accountable.** Every change is in an audit log and in the item's
-  history, and everything can be exported as CSV.
+  history; items can be imported from and exported to spreadsheets.
 
 ## Who uses it
 
 | Person | Uses Stash to |
 | --- | --- |
 | Logistics team | Add items, print barcode labels, move stock between locations, record damage and loss. |
-| Department leads and volunteers | Sign equipment out to their department and return it. |
+| Department leads and volunteers | Scan, sign equipment out and back in, pack for events, ask for gear ([Volunteer and front-desk guide](volunteer-guide.md)). Roles are global: a lead handles every department's gear. |
 | Front desk (ConOps) | Log found items, look up lost-item reports, hand items back. |
 | Guests (optional) | Look up their own Lost & Found report on the public claim page. |
 | Administrators | Departments, categories, locations, settings, exports, the audit log and the [Den connection](../../concepts/pairing.md). |
@@ -123,8 +126,9 @@ Tags have the form `MAJOR.MINOR.PATCH-BUILD`, for example `1.0.0-1`; see
 ## In this section
 
 - [Setup](setup.md): install Stash in each of the five postures.
-- [Admin guide](admin-guide.md): roles, settings, Den connection, everyday admin tasks.
-- [Configuration](configuration.md): every environment variable.
+- [Admin guide](admin-guide.md): roles, settings, retention, Telegram, emails, Den connection, everyday admin tasks.
+- [Volunteer and front-desk guide](volunteer-guide.md): scanning, labels, signing gear out and back in, packing lists, Lost & Found.
+- [Configuration](configuration.md): every environment variable, the access config file, settings Den manages.
 - [API reference](api.md): every HTTP endpoint.
 
 Design decisions: Stash's [ADRs](https://github.com/AGlElectronics/stash/tree/main/docs/adr).

@@ -54,27 +54,22 @@ recomputed **on every request** from the token's `groups` (or `roles`)
 claim and the access config file, so removing someone from a group takes
 effect immediately. See [Authentication](../../concepts/authentication.md).
 
-**Global and department permissions.** A role is granted either
-**globally** or **in one department**. On this page:
-
-| Phrase | Meaning |
-| --- | --- |
-| *any* | You hold the permission globally or in at least one department. |
-| *global* | You hold it globally. |
-| *scoped* | You hold it globally, **or** in the department that manages the item (`managed_by_department_id`). |
+**Roles are global.** A role's permissions apply to every department and
+every item; no permission is limited to one department.
 
 **Built-in roles** (an access config may redefine them; see
 [Admin guide](admin-guide.md#who-can-do-what)):
 
-| Role | Main permissions |
+| Role (catalog key) | Main permissions |
 | --- | --- |
-| `admin` | Everything. |
-| `inventory_manager` | All `item.*` and `signout.*`, `department/location/category.manage`, `audit.view`, `export.create`, `file.upload`. |
-| `dept_lead` | `item.view`, `item.damage`, `item.lose`, all `signout.*`, `file.upload`, `audit.view`, `export.create`. |
-| `volunteer` | `item.view`, `signout.view`, `signout.create`, `signout.return`. |
-| `readonly` | `item.view`, `signout.view`, `audit.view`. |
-| `frontdesk` | `lostfound.view`, `lostfound.create`, `lostfound.resolve`, `file.upload`. |
-| `conops_lead` | All `lostfound.*`, `audit.view`, `export.create`, `file.upload`. |
+| `admin` (`stash_admin`) | Everything. |
+| `inventory_manager` (`stash_inventory_manager`) | All `item.*` and `signout.*`, `department/location/category.manage`, `audit.view`, `export.create`, `file.upload`, `request.create`, `request.manage`. |
+| `dept_lead` (`stash_dept_lead`) | `item.view`, `item.damage`, `item.lose`, all `signout.*`, `file.upload`, `audit.view`, `export.create`, `request.create`. |
+| `volunteer` (`stash_volunteer`) | `item.view`, `signout.view`, `signout.create`, `signout.return`, `request.create`. |
+| `readonly` (`stash_readonly`) | `item.view`, `signout.view`, `audit.view`. |
+| `frontdesk` (`stash_frontdesk`) | `lostfound.view`, `lostfound.create`, `lostfound.resolve`, `lostfound.notify`, `file.upload`. |
+| `conops_lead` (`stash_conops_lead`) | All `lostfound.*`, `audit.view`, `export.create`, `file.upload`. |
+| `conops_readonly` (`stash_conops_readonly`) | `lostfound.view`. |
 
 ### Getting a token
 
@@ -151,7 +146,7 @@ categories, locations, files and the audit log return `{"items": [...]}`.
 | `quantity_owned` | Units owned in total, including damaged and lost ones. |
 | `parent_container_id` | The container item it sits in, if any. |
 | `parent_group_id` | The group item it belongs to, if any. |
-| `managed_by_department_id` | The department responsible for it; decides *scoped* permissions. |
+| `managed_by_department_id` | The department responsible for it (for filtering and reports; it does not limit who may change the item). |
 | `needed_by_department_id` | The department that uses it. |
 | `serial_number`, `asset_tag`, `qr_code` | Codes a scanner can find it by. |
 | `purchase_price`, `replacement_cost` | Decimal strings. |
@@ -183,8 +178,11 @@ database is unreachable.
 ### `GET /api/role-catalog`
 
 Who may call: anyone. HR reads it to offer Stash roles when onboarding
-someone. It lists every role from the access config with its permissions
-and the identity provider group that grants it.
+someone. It lists every role once, with key `stash_<role>`, scope `global`
+(roles are never limited to a department), its permissions, and the group
+that grants it: the first group bound to the role in `access-config.toml`,
+otherwise the key itself (a group named `stash_<role>` always grants the
+role).
 
 ```sh
 curl -s $STASH/api/role-catalog
@@ -196,19 +194,17 @@ curl -s $STASH/api/role-catalog
   "display_name": "Stash",
   "description": "Inventory, sign-outs and Lost & Found.",
   "roles": [
-    {"key": "admin", "label": "Admin",
+    {"key": "stash_admin", "label": "Admin",
      "description": "Everything in Stash, including access and settings.",
      "group": "stash-admin", "assignable": true, "scope": "global",
      "permissions": ["access.manage", "audit.view", "category.manage", "..."]},
-    {"key": "readonly", "label": "Readonly",
+    {"key": "stash_readonly", "label": "Readonly",
      "description": "Read-only view of inventory, sign-outs and the audit log.",
      "group": "stash-readonly", "assignable": true, "scope": "global",
      "permissions": ["audit.view", "item.view", "signout.view"]}
   ]
 }
 ```
-
-A role with no bound group has `"assignable": false` and a `note`.
 
 ### `GET /api/brand`, `GET /api/brand/{role}`
 
@@ -233,23 +229,22 @@ URLs once paired, otherwise `"source": "standalone"`.
 Lets guests check whether their lost item was handed in. These routes
 **only exist** when `PUBLIC_LOSTFOUND_CLAIM_ENABLED=true`; otherwise every
 path is `404`. They only ever show reports that are `type = found`,
-`status = open` and not deleted, and only these fields: no contact details,
-no internal notes.
+`status = open` and not deleted, and only three fields: the report number,
+the item name and the day it was reported. Description, location, photo,
+contact details and notes stay private, so the guest proves ownership by
+describing the item at the desk.
 
 | Method and path | Returns |
 | --- | --- |
-| `GET /api/public/lostfound/?q=&limit=&offset=` | `{"items":[…],"total":N}`; `q` matches item name, description and location; `limit` default 20, max 50; newest first. |
+| `GET /api/public/lostfound/?q=&limit=&offset=` | `{"items":[…],"total":N}`; `q` matches the item name only; `limit` default 20, max 50; newest first. |
 | `GET /api/public/lostfound/{reportNumber}` | One report, or `404`. |
-| `GET /api/public/lostfound/{reportNumber}/photo` | Its photo (`Cache-Control: public, max-age=3600`), or `404`. |
 
 ```sh
 curl -s "$STASH/api/public/lostfound/?q=umbrella"
 ```
 
 ```json
-{"items":[{"report_number":"LF-0042","item_name":"Blue umbrella","description":"Folding, wooden handle",
-  "location":"Hall B entrance","date_reported":"2026-11-06T10:15:00Z",
-  "photo_url":"/api/public/lostfound/LF-0042/photo"}],"total":1}
+{"items":[{"report_number":"LF-0042","item_name":"Blue umbrella","date_reported":"2026-11-06"}],"total":1}
 ```
 
 ---
@@ -258,10 +253,9 @@ curl -s "$STASH/api/public/lostfound/?q=umbrella"
 
 ### `GET /api/me`
 
-Who may call: signed in. Your identity, department memberships and
-**effective permissions** (global and department ones combined), so the web
-app can hide what you cannot do. Precise department checks stay on the
-server.
+Who may call: signed in. Your identity, your roles (catalog keys) and the
+**permissions** they give you, so the web app can hide what you cannot do.
+The server checks every request anyway. Roles are global.
 
 ```sh
 curl -s $STASH/api/me -H "Authorization: Bearer $TOKEN"
@@ -273,16 +267,13 @@ curl -s $STASH/api/me -H "Authorization: Bearer $TOKEN"
   "display_name": "Lena Logistics",
   "email": "lena@example.org",
   "oidc_subject": "6f1d2a7e-1c8b-4f0e-9d55-8c1b2f9a0e11",
-  "memberships": [
-    {"department_id": null, "role": "inventory_manager"},
-    {"department_id": "0c5e3e57-…", "role": "dept_lead"}
-  ],
-  "permissions": ["audit.view", "item.create", "item.edit", "item.view", "signout.create", "..."],
-  "primary_department_id": "0c5e3e57-…"
+  "roles": ["stash_inventory_manager"],
+  "permissions": ["audit.view", "item.create", "item.edit", "item.view", "signout.create", "..."]
 }
 ```
 
-`department_id: null` means a global membership.
+In dev mode, `X-Dev-User: bob:volunteer` signs in with only that role
+(`"roles": ["stash_volunteer"]`); an unknown role answers `403`.
 
 ### `GET /api/me/preferences`, `PUT /api/me/preferences`
 
@@ -298,9 +289,9 @@ tell "nothing" from "not allowed".
 
 | Field | Shown with |
 | --- | --- |
-| `overdue_signouts`, `active_signouts`, `partially_returned_signouts`, `recent_signouts` (last 5) | `signout.view` (any) |
-| `low_stock_items`, `damaged_items` | `item.view` (any) |
-| `open_lostfound_reports` | `lostfound.view` (any) |
+| `overdue_signouts`, `active_signouts`, `partially_returned_signouts`, `recent_signouts` (last 5) | `signout.view` |
+| `low_stock_items`, `damaged_items` | `item.view` |
+| `open_lostfound_reports` | `lostfound.view` |
 
 ```json
 {"overdue_signouts":2,"active_signouts":14,"partially_returned_signouts":3,"recent_signouts":[…],
@@ -310,33 +301,54 @@ tell "nothing" from "not allowed".
 ### `GET /api/settings`, `PATCH /api/settings`
 
 `GET`: any signed-in person (the web app adapts to them). `PATCH`:
-`access.manage` (global). `PATCH` merges the JSON object you send into the
-stored settings; keys you leave out keep their value.
+`access.manage`. `PATCH` validates every key of the JSON object you send and
+merges it into the stored settings; keys you leave out keep their value. A
+change is audited as `settings.update` (entity type `settings`) with the
+stored values before and after.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `force_barcode_on_signout` | `false` | Every sign-out line must carry a scanned code that belongs to the item. |
-| `organization_name` | `""` | Label for exports. **Managed by Den** while paired (read-only here). |
+| `organization_name` | `""` | Label for exports, up to 120 characters. Managed by Den while paired. |
 | `default_item_owner` | `""` | Owner filled in on new items. |
-| `default_currency` | `EUR` | ISO 4217 code used as the item form default. |
-| `barcode_prefix`, `barcode_width` | `ST`, `6` | Format of generated asset tags (`ST000042`). |
-| `preserve_sacred_lostfound` | `false` | Protects report `LF-0001` (the event's running joke) from edits and deletion. |
-| `managed_by`, `managed_keys` | | Read-only: `"den"` and the keys Den controls, while paired. |
+| `default_currency` | `EUR` | Three capital letters (ISO 4217). |
+| `barcode_prefix`, `barcode_width` | `ST`, `6` | Generated asset tags (`ST000042`): prefix up to 8 letters, digits or `-`; width 3 to 12. |
+| `preserve_sacred_lostfound` | `false` | Easter egg: report `LF-0001` can no longer be edited or removed, and retention skips it. |
+| `con_end_date` | `""` | Last day of the convention, `YYYY-MM-DD`. Den: `stash_con_end_date`. |
+| `lostfound_retention_mode` | `after_close` | `after_close`, `after_con` or `off` ([Retention](admin-guide.md#lost-found-retention)). Den: `stash_lostfound_retention_mode`. |
+| `lostfound_retention_hours` | `720` | 1 to 87600. Den: `stash_lostfound_retention_hours`. |
+| `lostfound_retention_days` | `30` | 1 to 3650. Den: `stash_lostfound_retention_days`. |
+| `user_inactive_days` | `0` | Anonymise people who have not signed in for this many days; 0 = never. |
+| `telegram_enabled` | `false` | The Lost & Found Telegram bot (also needs `TELEGRAM_BOT_TOKEN`). |
+| `overdue_email_enabled` | `false` | Daily overdue-return emails. |
+| `overdue_notify_emails` | `""` | Comma-separated addresses for the daily digest, at most 20. |
+| `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_tls` | `""`, `587`, `""`, `""`, `starttls` | Email server; `smtp_tls` is `starttls`, `tls` or `none`. Den: `stash_smtp_*`. The password is `SMTP_PASSWORD`. |
+| `managed_by`, `managed_keys` | | Read-only: `"den"` and the keys Den controls, while paired. Ignored in `PATCH`. |
 
 ```sh
 curl -s -X PATCH $STASH/api/settings -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" -d '{"force_barcode_on_signout":true}'
+  -H "Content-Type: application/json" \
+  -d '{"lostfound_retention_mode":"after_con","con_end_date":"2026-08-16","lostfound_retention_days":14}'
 ```
 
-Response `200`: the full settings. Errors: `400` invalid JSON; `403`;
-`409 "organization_name is managed in Den (Admin → Organisation)"`.
+Response `200`: the full effective settings.
+
+Errors: `400` the body is not a JSON object or is larger than 64 KiB; `403`
+without `access.manage`; `422 validation_failed` with one message per key in
+`details`, for unknown keys, wrong values and keys managed in Den:
+
+```json
+{"error":{"code":"validation_failed","message":"invalid settings: default_currency, is_admin",
+  "details":{"default_currency":"must be a three-letter ISO 4217 code such as EUR","is_admin":"unknown setting"}}}
+```
 
 ---
 
 ## Departments, categories, locations
 
 These three are simple lookup lists with the same shape. Reads need
-`item.view` (any).
+`item.view` or `signout.view`. Only their manage permission may create,
+rename or delete them; item roles pick existing entries.
 
 | Resource | Object | Create also accepts |
 | --- | --- | --- |
@@ -346,10 +358,10 @@ These three are simple lookup lists with the same shape. Reads need
 
 | Method and path | Who | Response |
 | --- | --- | --- |
-| `GET /api/<resource>` | `item.view` (any) | `{"items":[…]}` |
-| `GET /api/<resource>/{id}` | `item.view` (any) | the object |
-| `POST /api/<resource>` | global `<resource>.manage`, **or** global `item.create` or `item.edit` (so the item form can create one on the fly) | `201` the object |
-| `PATCH /api/<resource>/{id}` | global `department.manage` / `category.manage` / `location.manage` | `200` the object |
+| `GET /api/<resource>` | `item.view` or `signout.view` | `{"items":[…]}` |
+| `GET /api/<resource>/{id}` | `item.view` or `signout.view` | the object |
+| `POST /api/<resource>` | `department.manage` / `category.manage` / `location.manage` | `201` the object |
+| `PATCH /api/<resource>/{id}` | same | `200` the object |
 | `DELETE /api/<resource>/{id}` | same | `204` |
 
 Bodies: `{"name": "…", "description": "…"}` (create requires `name`).
@@ -378,7 +390,7 @@ too deep"`; `409` for a duplicate name or deleting something still in use
 
 ### `GET /api/items`
 
-Who may call: `item.view` (any).
+Who may call: `item.view`.
 
 | Query | Meaning |
 | --- | --- |
@@ -402,8 +414,7 @@ Errors: `401`, `403`, `400` when a filter id is not a UUID.
 
 ### `POST /api/items`
 
-Who may call: `item.create`, globally or in the department you set as
-`managed_by_department_id`.
+Who may call: `item.create`.
 
 | Field | Required | Notes |
 | --- | --- | --- |
@@ -411,10 +422,10 @@ Who may call: `item.create`, globally or in the department you set as
 | `item_type` | yes | `asset`, `consumable`, `container`, `grouped`. |
 | `quantity_owned` | no | Not negative. |
 | `description`, `size`, `unit`, `condition`, `status`, `owner`, `notes` | no | `status` defaults to `available`; `owner` to the `default_item_owner` setting. |
-| `category_id` **or** `category_name` | no | A name creates the category if it does not exist. |
-| `location_id` **or** `location_name` | no | Same. |
-| `managed_by_department_id` **or** `managed_by_department_name` | no | Same. |
-| `needed_by_department_id` **or** `needed_by_department_name` | no | Same. |
+| `category_id` **or** `category_name` | no | A name matches an existing category (case-insensitive). If none exists it is created only for people with `category.manage`; others get `422 "category \"X\" does not exist; pick an existing one or ask someone with category.manage to add it"`. |
+| `location_id` **or** `location_name` | no | Same, with `location.manage`. |
+| `managed_by_department_id` **or** `managed_by_department_name` | no | Same, with `department.manage`. |
+| `needed_by_department_id` **or** `needed_by_department_name` | no | Same, with `department.manage`. |
 | `parent_container_id`, `parent_group_id` | no | Item ids. |
 | `serial_number`, `asset_tag`, `qr_code` | no | Unique when set. |
 | `purchase_price`, `replacement_cost` | no | Decimal strings, e.g. `"12.50"`. |
@@ -443,19 +454,99 @@ written.
 | Status | When |
 | --- | --- |
 | `400` | `"date must be YYYY-MM-DD"`, bad JSON. |
-| `403` | No `item.create` for that department. |
+| `403` | No `item.create`. |
 | `409` | Duplicate code (`asset_tag`, `serial_number`, `qr_code`). |
-| `422` | `"name is required"`, `"item_type must be asset, consumable, container or grouped"`, `"quantity_owned cannot be negative"`. |
+| `422` | `"name is required"`, `"item_type must be asset, consumable, container or grouped"`, `"quantity_owned cannot be negative"`, a department, category or location name that does not exist (see above). |
+
+### `POST /api/items/import`
+
+Who may call: `item.create` or `item.edit`; each row is checked again
+(`item.create` for new items, `item.edit` for changes, `item.adjust` for a
+different `quantity_owned`).
+
+Creates and changes many items from a CSV file: as the request body
+(`Content-Type: text/csv`) or as the field `file` of a
+`multipart/form-data` form. At most 5 MiB and 5,000 rows. The first line
+names the columns (any order, case-insensitive):
+
+| Column | Meaning |
+| --- | --- |
+| `id` | Empty: create a new item. An item id: change that item. |
+| `name`, `description`, `item_type` (or `type`), `size`, `unit`, `condition`, `owner`, `notes`, `supplier`, `purchase_url`, `serial_number`, `asset_tag`, `qr_code`, `purchase_currency` | As in `POST /api/items`. |
+| `quantity_owned`, `minimum_quantity` | Whole numbers, 0 or more. On a change, a different `quantity_owned` is recorded as an adjustment (`CSV import`). New items default to 1. |
+| `purchase_price`, `replacement_cost` | Amounts, `12.50` or `12,50`. |
+| `purchase_date`, `expiry_date` | `YYYY-MM-DD`. |
+| `category` (or `category_name`), `location` (or `location_path`, last segment used), `managed_by_department` (or `managed_by_department_name`), `needed_by_department` (or `needed_by_department_name`) | Names of existing entries (created only with the manage permission). |
+| `category_id`, `location_id`, `managed_by_department_id`, `needed_by_department_id` | Ids instead of names. |
+
+The other columns of `GET /api/export/items.csv` (`status`,
+`quantity_damaged`, `quantity_lost`, `created_at`, `parent_container_id`,
+`parent_container_name`) are ignored, so an export can be edited and
+imported again; any other column is refused. An empty cell leaves the field
+as it is. A leading `'` that the export put before `=`, `+`, `-` or `@` is
+removed.
+
+`?dry_run=true` checks every row in a transaction that is then rolled back:
+nothing is saved. Without it, all rows are saved, or none when any row has a
+problem.
+
+```sh
+curl -s -X POST "$STASH/api/items/import?dry_run=true" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: text/csv" --data-binary @items.csv
+```
+
+```json
+{"dry_run":true,"applied":false,"created":12,"updated":3,"failed":1,
+ "rows":[{"row":2,"action":"create","item_id":"…","name":"Cable drum"},
+         {"row":7,"action":"error","name":"Ladder","errors":["purchase_date must be a date like 2026-08-14"]}]}
+```
+
+`row` is the spreadsheet line (2 is the first data line). With
+`dry_run=true` the item ids are the ones the rows would have had.
+
+| Status | When |
+| --- | --- |
+| `200` | Dry run (with or without problems), or a successful import (`"applied": true`). |
+| `413 payload_too_large` | The file is larger than 5 MiB. |
+| `422` | `unknown columns: colour` (with `details.unknown_columns`), no `name` or `id` column, more than 5,000 rows, or (real import only) `"2 of 40 rows have problems; nothing was saved"` with the report in `details`. |
+
+### `GET /api/items/{id}/purchases`, `POST /api/items/{id}/purchases`
+
+Who may call: `GET` `item.view`; `POST` `item.adjust`. What was bought for
+an item. With `add_to_stock: true` the quantity is added to
+`quantity_owned` (recorded as an adjustment in the item's history). Audited
+as `item.purchase`.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `quantity` | yes | 1 or more. |
+| `purchased_on` | no | `YYYY-MM-DD`, default today. |
+| `unit_price` | no | Amount, `7.50` or `7,50`. |
+| `currency` | no | Three letters, default `EUR`. |
+| `supplier`, `reference` (invoice or order number), `note` | no | |
+| `add_to_stock` | no | Default `false`. |
+
+```sh
+curl -s -X POST $STASH/api/items/$ITEM/purchases -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"quantity":10,"unit_price":"7.50","supplier":"Tape Co","reference":"INV-1","add_to_stock":true}'
+```
+
+```json
+{"id":"…","item_id":"…","purchased_on":"2026-11-11","quantity":10,"unit_price":"7.50","currency":"EUR",
+ "supplier":"Tape Co","reference":"INV-1","added_to_stock":true,"note":"","created_at":"2026-11-11T16:00:00Z"}
+```
+
+`GET` returns `{"items":[…]}`, newest first. Errors: `404` unknown item;
+`422` quantity, date, price or currency invalid.
 
 ### `GET /api/items/{id}`
 
-Who may call: `item.view` (any). The Item, or `404`.
+Who may call: `item.view`. The Item, or `404`.
 
 ### `PATCH /api/items/{id}`
 
-Who may call: `item.edit` (scoped). Moving the item to another managing
-department also needs `item.edit` in **that** department. Send only what
-changes; fields are the same as create (except `quantity_owned` and
+Who may call: `item.edit`. Send only what changes; fields are the same as create (except `quantity_owned` and
 `status`, which change through the [lifecycle actions](#lifecycle-actions)).
 To **clear** an optional field send its clear flag, because an empty value
 means "leave unchanged":
@@ -474,7 +565,7 @@ Response `200`: the Item.
 
 ### `GET /api/items/{id}/availability`
 
-Who may call: `item.view` (any). How many units can be signed out right
+Who may call: `item.view`. How many units can be signed out right
 now.
 
 ```json
@@ -483,7 +574,7 @@ now.
 
 ### `GET /api/items/{id}/history`
 
-Who may call: `item.view` (any). The item's event log, newest first.
+Who may call: `item.view`. The item's event log, newest first.
 
 | Query | Meaning |
 | --- | --- |
@@ -503,10 +594,10 @@ Who may call: `item.view` (any). The item's event log, newest first.
 
 | Method and path | Who | Body | Response |
 | --- | --- | --- | --- |
-| `GET /api/items/by-barcode/{code}` | `item.view` (any) | none | The Item whose `asset_tag`, `qr_code` or `serial_number` is `{code}` (URL-encode it), asset tag first. `404` when none. |
-| `GET /api/items/barcodes/peek-next` | `item.create` or `item.edit` (any) | none | `{"next":"ST000043","format":"AW######"}`: the next generated code, **without** using it. (`format` is a fixed legacy label; the real format comes from the `barcode_prefix`/`barcode_width` settings.) |
-| `POST /api/items/{id}/assign-barcode` | `item.edit` (scoped) | none | `{"item": Item, "code": "ST000043"}`: generates the next code and stores it as `asset_tag`. |
-| `POST /api/items/{id}/set-barcode` | `item.edit` (scoped) | `{"code":"ST000099"}` | The Item: stores a pre-printed sticker's code as `asset_tag`. |
+| `GET /api/items/by-barcode/{code}` | `item.view` | none | The Item whose `asset_tag`, `qr_code` or `serial_number` is `{code}` (URL-encode it), asset tag first. `404` when none. |
+| `GET /api/items/barcodes/peek-next` | `item.create` or `item.edit` | none | `{"next":"ST000043","format":"AW######"}`: the next generated code, **without** using it. (`format` is a fixed legacy label; the real format comes from the `barcode_prefix`/`barcode_width` settings.) |
+| `POST /api/items/{id}/assign-barcode` | `item.edit` | none | `{"item": Item, "code": "ST000043"}`: generates the next code and stores it as `asset_tag`. |
+| `POST /api/items/{id}/set-barcode` | `item.edit` | `{"code":"ST000099"}` | The Item: stores a pre-printed sticker's code as `asset_tag`. |
 
 ```sh
 curl -s "$STASH/api/items/by-barcode/ST000042" -H "Authorization: Bearer $TOKEN"
@@ -519,8 +610,7 @@ another item already has the code.
 ### Lifecycle actions
 
 Each action changes quantities or state, writes a history event and
-returns the updated Item (`200`). All are **scoped** to the item's
-managing department.
+returns the updated Item (`200`).
 
 | Method and path | Permission | Body | Effect |
 | --- | --- | --- | --- |
@@ -550,8 +640,8 @@ curl -s -X POST $STASH/api/items/6f1c2a4e-0b7d-4a7e-9a51-2f7e9c1d0a11/damage \
 
 | Method and path | Who | Body | Response |
 | --- | --- | --- | --- |
-| `POST /api/items/{id}/primary-image` | `item.edit` (scoped) | `{"file_id": "…"}` | `204` |
-| `DELETE /api/items/{id}/primary-image` | `item.edit` (scoped) | none | `204` |
+| `POST /api/items/{id}/primary-image` | `item.edit` | `{"file_id": "…"}` | `204` |
+| `DELETE /api/items/{id}/primary-image` | `item.edit` | none | `204` |
 
 The file must be an `image` file attached to this item (see [Files](#files));
 otherwise `422 "file does not belong to this item"` or `"only image files
@@ -611,17 +701,17 @@ out.
 
 ### `GET /api/signouts`
 
-Who may call: `signout.view` (any). Query: `q`, `status`,
+Who may call: `signout.view`. Query: `q`, `status`,
 `to_department_id`, `from_department_id`, `limit`, `offset`. Returns
 `{"items":[sign-out without items…],"total":N}`.
 
 ### `GET /api/signouts/{id}`
 
-Who may call: `signout.view` (any). The sign-out with its lines.
+Who may call: `signout.view`. The sign-out with its lines.
 
 ### `POST /api/signouts`
 
-Who may call: `signout.create` (any). With `"confirm": true` the sign-out
+Who may call: `signout.create`. With `"confirm": true` the sign-out
 goes straight to `signed_out` and availability drops immediately (the "fast
 sign-out").
 
@@ -663,7 +753,7 @@ Response `201`: the sign-out (see above).
 
 ### Sign-out actions
 
-| Method and path | Permission (any) | Body | From status | Response |
+| Method and path | Permission | Body | From status | Response |
 | --- | --- | --- | --- | --- |
 | `POST /api/signouts/{id}/confirm` | `signout.confirm` | none | `draft`, `prepared` | `200`, now `signed_out` |
 | `POST /api/signouts/{id}/return` | `signout.return` | see below | `signed_out`, `partially_returned` | `200` |
@@ -703,25 +793,33 @@ signout"`, `"settled quantity would exceed signed-out quantity"`.
   "photo_file_id": "f9e8…", "location": "Hall B entrance",
   "date_reported": "2026-11-06T10:15:00Z", "reported_by_user_id": "4a5b…",
   "contact_name": "", "contact_info": "", "returned_to": "",
-  "resolution_note": "", "created_at": "2026-11-06T10:15:00Z", "updated_at": "2026-11-06T10:15:00Z"
+  "resolution_note": "", "telegram_linked": false,
+  "created_at": "2026-11-06T10:15:00Z", "updated_at": "2026-11-06T10:15:00Z"
 }
 ```
 
 `type` is `lost` or `found`; `status` is `open`, `returned` (handed back to
-its owner) or `closed` (unclaimed, disposed, donated).
+its owner) or `closed` (unclaimed, disposed, donated). `telegram_linked` is
+`true` once the guest linked the report to the Telegram bot; the chat id
+itself never leaves the backend. Reports are deleted by the
+[retention](admin-guide.md#lost-found-retention) job.
 
-| Method and path | Permission (any) | Response |
+| Method and path | Permission | Response |
 | --- | --- | --- |
 | `GET /api/lostfound/?type=&status=&q=&limit=&offset=` | `lostfound.view` | `{"items":[…],"total":N}` |
 | `GET /api/lostfound/by-number/{reportNumber}` | `lostfound.view` | the report |
 | `GET /api/lostfound/{id}` | `lostfound.view` | the report |
 | `POST /api/lostfound/` | `lostfound.create` | `201` the report |
 | `PATCH /api/lostfound/{id}` | `lostfound.view`, plus the checks below | `200` the report |
-| `DELETE /api/lostfound/{id}` | `lostfound.delete` | `204`; the report is removed from every list but kept in the audit log. `403` for `LF-0001` while `preserve_sacred_lostfound` is on. |
+| `DELETE /api/lostfound/{id}` | `lostfound.delete` | `204`; the report is removed from every list (retention deletes it for good later). `403` for `LF-0001` while `preserve_sacred_lostfound` is on. |
+| `GET /api/lostfound/telegram` | `lostfound.view` | `{"enabled":true,"configured":true,"bot_username":"examplecon_lostfound_bot"}` |
+| `POST /api/lostfound/{id}/notify` | `lostfound.notify` | `{"sent":true}` |
 
 **Create.** `type` (required), `item_name` (required), `description`,
 `location`, `date_reported` (RFC 3339; default now), `contact_name`,
-`contact_info`, `photo_file_id` (an image file).
+`contact_info`. Upload the photo after creating the report (to
+`entity_type=lostfound`, `entity_id=<report id>`), then set
+`photo_file_id` with `PATCH`; `photo_file_id` on create is `422`.
 
 ```sh
 curl -s -X POST $STASH/api/lostfound/ -H "Authorization: Bearer $TOKEN" \
@@ -749,15 +847,51 @@ Errors: `403` (missing one of the permissions above, or `"LF-0001 is the
 sacred test item and cannot be edited"` with `preserve_sacred_lostfound`
 on), `404`, `422` (`"type must be 'lost' or 'found'"`, `"status must be
 'open', 'returned' or 'closed'"`, `"item_name is required"`, `"photo_file_id
-must reference an image file"`).
+must reference an image file"`, `"photo_file_id must be a photo uploaded to
+this report"`).
+
+### `POST /api/lostfound/{id}/notify`
+
+Who may call: `lostfound.notify`. Sends a Telegram message to the guest who
+linked the report (they sent `/start LF0042` to Stash's bot). The body is
+optional; without `message` (or with an empty one) the standard text is
+sent: *News about your Lost & Found report LF-0042 (Blue umbrella): please
+come to the Lost & Found desk.* Audited as `lostfound.notify` with the
+message length, not its text.
+
+```sh
+curl -s -X POST $STASH/api/lostfound/b1c2d3e4-…/notify -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"message":"Your umbrella is at the info desk in Hall A."}'
+```
+
+```json
+{"sent":true}
+```
+
+| Status | When |
+| --- | --- |
+| `404` | No such report. |
+| `409` | `"the Telegram bot is off (Settings → Privacy and notifications) or TELEGRAM_BOT_TOKEN is not set"`, `"the guest has not linked this report on Telegram yet"`, or `"Telegram did not accept the message; the guest may have blocked the bot"`. |
+| `422` | `message` longer than 1,000 characters. |
+
+**The bot.** Guests talk to the bot, not to the API: `/start LF0042` (also
+`LF-0042`, `lf42`, or the number alone) links the report and answers
+*Linked to Lost & Found report LF-0042…*; an unknown number answers *We could
+not find report …*; `/stop` unlinks the chat from every report. Only private
+chats are served. Audited as `lostfound.telegram_link` and
+`lostfound.telegram_unlink`.
 
 ---
 
 ## Files
 
 Photos and documents attached to an **item** or a **Lost & Found report**,
-stored in the module's bucket. Limits: **25 MB** for `file_type=image`
-(which must have an `image/*` content type), **50 MB** for other types.
+stored in the module's bucket under `stash/<entity_type>/<entity_id>/`.
+Limits: **25 MB** for `file_type=image`, **50 MB** for other types; a
+multipart upload larger than 51 MiB is refused with `413
+payload_too_large` before it is read. An image must really be a PNG, JPEG,
+GIF, WebP, AVIF or BMP: Stash checks the bytes, not the name, and stores the
+detected type. SVG is not accepted as an image (upload it as `attachment`).
 
 `file_type` is one of `image` (default), `receipt`, `invoice`, `manual`,
 `warranty`, `attachment`. `entity_type` is `item` or `lostfound`; anything
@@ -765,13 +899,13 @@ else is `400 "unsupported entity_type"`.
 
 Access follows the entity: reading needs `item.view` / `lostfound.view`
 (any); writing needs `file.upload` plus `item.create` or `item.edit` /
-`lostfound.create` or `lostfound.edit` (any).
+`lostfound.create` or `lostfound.edit`.
 
 **File object:**
 
 ```json
 {"id":"e1f2a3b4-…","entity_type":"item","entity_id":"6f1c2a4e-…","file_type":"image",
- "storage_key":"items/6f1c2a4e-…/e1f2a3b4-….jpg","original_filename":"power-strip.jpg",
+ "storage_key":"stash/item/6f1c2a4e-…/9d8c7b6a-….jpg","original_filename":"power-strip.jpg",
  "content_type":"image/jpeg","size_bytes":482113,"uploaded_by":"4a5b…","created_at":"2026-11-06T09:30:00Z"}
 ```
 
@@ -794,9 +928,10 @@ curl -s -X POST $STASH/api/files/upload -H "Authorization: Bearer $TOKEN" \
 ```
 
 Response `201`: the File. Errors: `400` (no `file`, no `entity_type`,
-`entity_id` not a UUID, bad form), `403`, `422` (`"file too large (max …
-bytes)"`, `"file_type=image requires an image/* content_type"`, `"invalid
-file_type"`).
+`entity_id` not a UUID, bad form), `403`, `404` (no such item or report),
+`413` (larger than 51 MiB), `422` (`"file too large (max … bytes)"`,
+`"file_type=image requires an image/* content_type"`, `"images must be PNG,
+JPEG, GIF, WebP, AVIF or BMP"`, `"invalid file_type"`).
 
 ### Direct-to-storage upload (two steps)
 
@@ -808,7 +943,11 @@ For large files the browser can upload straight to the bucket:
 2. `PUT` the bytes to `upload_url`.
 3. `POST /api/files/` with `{"entity_type","entity_id","file_type",
    "storage_key","original_filename","content_type","size_bytes",
-   "set_as_primary"}` registers it and returns `201` with the File.
+   "set_as_primary"}` registers it and returns `201` with the File. The
+   `storage_key` must be the one from step 1: a key outside
+   `stash/<entity_type>/<entity_id>/` is refused with `422 "storage_key does
+   not belong to this item; use the key from presign-upload"`, so nobody can
+   attach (and later delete) another entity's object.
 
 The bucket must be reachable from the browser for this path; when it is
 not (the usual Kubernetes setup), use `/api/files/upload`.
@@ -818,9 +957,28 @@ not (the usual Kubernetes setup), use `/api/files/upload`.
 | Method and path | Who | Response |
 | --- | --- | --- |
 | `GET /api/files/?entity_type=&entity_id=&file_type=` | view access on the entity | `{"items":[File…]}`; `entity_type` and `entity_id` required |
-| `GET /api/files/{id}/raw` | view access on its entity | The bytes, streamed through the backend, `inline`, `Cache-Control: private, max-age=300` |
+| `GET /api/files/{id}/raw` | view access on its entity | The bytes, streamed through the backend, `Cache-Control: private, max-age=300` (see below) |
 | `GET /api/files/{id}/download` | view access on its entity | `{"url","expires_at"}`: a short-lived presigned link to the bucket |
-| `DELETE /api/files/{id}` | `file.upload` and write access on its entity | `204` |
+| `DELETE /api/files/{id}` | `file.upload` and write access on its entity | `204`; the stored object is removed only if it lies in the entity's own folder |
+
+`/raw` sends PNG, JPEG, GIF, WebP, AVIF and BMP images inline (so
+`<img src>` works) with their type. Everything else, PDFs, SVG and HTML
+included, comes as `Content-Type: application/octet-stream` with
+`Content-Disposition: attachment`. Every response has
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+default-src 'none'; sandbox`, so nothing uploaded can run in the browser.
+
+```sh
+curl -sI $STASH/api/files/e1f2a3b4-…/raw -H "Authorization: Bearer $TOKEN"
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="manual.pdf"
+X-Content-Type-Options: nosniff
+Content-Security-Policy: default-src 'none'; sandbox
+```
 
 ---
 
@@ -828,15 +986,17 @@ not (the usual Kubernetes setup), use `/api/files/upload`.
 
 ### `GET /api/audit-log/`
 
-Who may call: `audit.view` (**global**). Every change in Stash with before
-and after values, newest first.
+Who may call: `audit.view`. Every change in Stash with before and after
+values (JSON objects, or `null`), newest first. For people **without**
+`lostfound.view`, guest data in Lost & Found entries (names, contacts,
+notes, descriptions, photo filenames) shows as `"[redacted]"`.
 
 | Query | Meaning |
 | --- | --- |
-| `action` | For example `item.update`, `signout.create`, `lostfound.return`. |
-| `entity_type`, `entity_id` | What was changed. |
+| `action` | For example `item.update`, `signout.create`, `lostfound.return`, `settings.update`, `den.pair`, `export.items`. |
+| `entity_type`, `entity_id` | What was changed: `item`, `signout`, `lostfound`, `file`, `department`, `category`, `location`, `settings`, `den`, `export`, `user`, `request`, `packing_list`. Settings, Den and export entries use the id `00000000-0000-0000-0000-000000000000`. |
 | `actor` | A user id. |
-| `limit`, `offset` | Default 100. |
+| `limit`, `offset` | Default 100; `limit` is capped at 500 and below 1 counts as 1; a negative `offset` counts as 0. The response echoes the values used. |
 
 ```sh
 curl -s "$STASH/api/audit-log/?entity_type=item&limit=1" -H "Authorization: Bearer $TOKEN"
@@ -845,19 +1005,115 @@ curl -s "$STASH/api/audit-log/?entity_type=item&limit=1" -H "Authorization: Bear
 ```json
 {"items":[{"id":"a1…","actor_user_id":"4a5b…","actor_oidc_subject":"6f1d…","actor_display_name":"Lena Logistics",
   "action":"item.update","entity_type":"item","entity_id":"6f1c2a4e-…",
-  "before":{"minimum_quantity":5},"after":{"minimum_quantity":8},"note":"","created_at":"2026-11-06T11:00:00Z"}]}
+  "before":{"minimum_quantity":5},"after":{"minimum_quantity":8},"note":"","created_at":"2026-11-06T11:00:00Z"}],
+ "limit":1,"offset":0}
 ```
 
-### `GET /api/export/items.csv`, `GET /api/export/signouts.csv`
+### Exports
 
-Who may call: `export.create` (**global**). CSV downloads
-(`Content-Disposition: attachment; filename="items-20261106.csv"`).
-`items.csv` contains every non-retired item with department names and
-location paths resolved (`?parent_container_id=` limits it to one
-container's contents). `signouts.csv` contains every sign-out.
+Who may call: `export.create` (the Lost & Found datasheet also needs
+`lostfound.view`). CSV downloads with `Content-Disposition: attachment`.
+Every download is audited (`export.items`, `export.signouts`,
+`export.lostfound`, `export.report`) with the number of rows. Text cells
+starting with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading
+`'` so spreadsheets do not run them as formulas (plain numbers such as `-5`
+are left alone).
+
+| Method and path | Contents |
+| --- | --- |
+| `GET /api/export/items.csv` | Every non-retired item with department names and location paths (`?parent_container_id=` limits it to one container's contents). Can be imported again. |
+| `GET /api/export/signouts.csv` | Every sign-out. |
+| `GET /api/export/lostfound.csv` | The Lost & Found datasheet, including guest contacts. |
+| `GET /api/export/reports` | `{"items":[{"key","title","description"}]}`: the reports below. |
+| `GET /api/export/reports/{report}.csv` | `low-stock` (available below minimum), `damaged`, `lost`, `expiring` (expiry within 60 days or past), `retired`, `overdue-signouts`. Unknown report: `404`. |
 
 ```sh
-curl -s -OJ $STASH/api/export/items.csv -H "Authorization: Bearer $TOKEN"
+curl -s -OJ $STASH/api/export/reports/low-stock.csv -H "Authorization: Bearer $TOKEN"
+```
+
+```text
+id,name,asset_tag,category,managed_by_department,quantity_owned,quantity_damaged,quantity_lost,quantity_signed_out,quantity_available,minimum_quantity,expiry_date,condition
+6f1c2a4e-…,Power strip 6-way,ST000042,Electrical,Tech,15,1,0,11,3,5,,good
+```
+
+---
+
+## Requests: `/api/requests`
+
+People ask logistics for gear. Who may call: `request.create` or
+`request.manage` to list; `request.create` to ask; deciding needs
+`request.manage`, except that the person who asked may cancel their own
+open request. Every step is audited (`request.create`, `request.approved`,
+…).
+
+| Method and path | Body | Response |
+| --- | --- | --- |
+| `GET /api/requests?status=` | | `{"items":[…]}`, open ones first; `status` filters |
+| `POST /api/requests` | `{"title","item_id","quantity","department_id","needed_by","reason"}`; `title` or `item_id` required; `needed_by` `YYYY-MM-DD` | `201` the request |
+| `POST /api/requests/{id}/decide` | `{"status","note"}`; `status` is `approved`, `ordered`, `fulfilled`, `rejected` or `cancelled` | `200` the request |
+
+```sh
+curl -s -X POST $STASH/api/requests -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Extra radios","quantity":4,"department_id":"0c5e3e57-…","needed_by":"2026-08-14","reason":"Second stage"}'
+```
+
+```json
+{"id":"…","title":"Extra radios","quantity":4,"department_id":"0c5e3e57-…","department_name":"Stage",
+ "needed_by":"2026-08-14","reason":"Second stage","status":"open","requested_by":"4a5b…",
+ "requested_by_name":"Robin","decision_note":"","created_at":"…","updated_at":"…"}
+```
+
+Errors: `403` (deciding without `request.manage`), `404`, `409 "the request
+is already fulfilled"` (fulfilled, rejected and cancelled are final), `422`.
+
+## Packing lists: `/api/packing-lists`
+
+What goes to an event or department. Reading needs `signout.view`;
+everything else `signout.create`. Changes are audited (`packing.create`,
+`packing.update`, `packing.items`, `packing.delete`).
+
+| Method and path | Body | Response |
+| --- | --- | --- |
+| `GET /api/packing-lists` | | `{"items":[…]}` with `item_count` and `packed_count` |
+| `POST /api/packing-lists` | `{"name","department_id","event_date","notes"}` | `201` the list |
+| `GET /api/packing-lists/{id}` | | the list with `items`: `item_id`, `item_name`, `asset_tag`, `quantity`, `packed`, `note`, `available` |
+| `PATCH /api/packing-lists/{id}` | same as `POST` | `200` the list |
+| `PUT /api/packing-lists/{id}/items` | `{"items":[{"item_id","quantity","packed","note"}]}` replaces every line; `packed` 0 to `quantity`, each item once | `200` the list |
+| `POST /api/packing-lists/{id}/signout` | optional `{"to_department_id","purpose"}` (defaults: the list's department and name) | `201` a **draft** sign-out with one line per item; confirm it with `POST /api/signouts/{id}/confirm` |
+| `DELETE /api/packing-lists/{id}` | | `204`; a sign-out made from it stays |
+
+```sh
+curl -s -X PUT $STASH/api/packing-lists/$LIST/items -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"item_id":"6f1c2a4e-…","quantity":4,"packed":4,"note":""}]}'
+```
+
+With *Require barcode scan to sign out* on, creating the draft fails with
+`422 "a barcode scan is required for …"`; build that sign-out on the
+sign-out page instead.
+
+## People: `/api/users`
+
+Who may call: `user.manage`.
+
+| Method and path | Response |
+| --- | --- |
+| `GET /api/users?limit=&offset=` | `{"items":[{"id","display_name","email","last_login_at","anonymised_at","created_at"}],"total":N}`; `limit` max 500 |
+| `POST /api/users/{id}/anonymise` | `204`. Name becomes *Former user*, email and IdP subject are removed, also from the audit log and item history. `404` unknown, `409` already anonymised or yourself. Audited as `user.anonymise`. |
+
+```sh
+curl -s -X POST $STASH/api/users/4a5b6c7d-…/anonymise -H "Authorization: Bearer $TOKEN"
+```
+
+## Notifications: `GET /api/notifications`
+
+Who may call: signed in. What needs attention now. With `signout.view`:
+overdue sign-outs (oldest first); otherwise an empty list.
+
+```json
+{"overdue_signouts":[{"id":"…","signout_number":"SO-2026-00012","to_department_name":"Stage",
+  "received_by_name":"Robin","expected_return_at":"2026-08-15T18:00:00Z"}]}
 ```
 
 ---
@@ -894,8 +1150,7 @@ curl -s -X POST $STASH/api/den/pair -H "Authorization: Bearer $TOKEN" \
 
 ## All endpoints at a glance
 
-75 routes. *any* = globally or in any department; *scoped* = globally or in
-the item's managing department; *global* = globally only.
+Every permission is global: roles are not limited to a department.
 
 ### Public
 
@@ -904,7 +1159,7 @@ the item's managing department; *global* = globally only.
 | GET | `/api/health` | |
 | GET | `/api/role-catalog` | |
 | GET | `/api/brand`, `/api/brand/{role}` | |
-| GET | `/api/public/lostfound/`, `/{reportNumber}`, `/{reportNumber}/photo` | Only with `PUBLIC_LOSTFOUND_CLAIM_ENABLED=true`. |
+| GET | `/api/public/lostfound/`, `/{reportNumber}` | Only with `PUBLIC_LOSTFOUND_CLAIM_ENABLED=true`. |
 
 ### Signed in
 
@@ -914,55 +1169,69 @@ the item's managing department; *global* = globally only.
 | GET, PUT | `/api/me/preferences` | signed in |
 | GET | `/api/dashboard` | signed in (sections per permission) |
 | GET | `/api/settings` | signed in |
-| PATCH | `/api/settings` | `access.manage` (global) |
-| GET | `/api/departments`, `/api/departments/{id}` | `item.view` (any) |
-| POST | `/api/departments` | `department.manage`, `item.create` or `item.edit` (global) |
-| PATCH, DELETE | `/api/departments/{id}` | `department.manage` (global) |
-| GET | `/api/categories`, `/api/categories/{id}` | `item.view` (any) |
-| POST | `/api/categories` | `category.manage`, `item.create` or `item.edit` (global) |
-| PATCH, DELETE | `/api/categories/{id}` | `category.manage` (global) |
-| GET | `/api/locations`, `/api/locations/{id}` | `item.view` (any) |
-| POST | `/api/locations` | `location.manage`, `item.create` or `item.edit` (global) |
-| PATCH, DELETE | `/api/locations/{id}` | `location.manage` (global) |
-| GET | `/api/items`, `/api/items/{id}` | `item.view` (any) |
-| POST | `/api/items` | `item.create` (in the managing department, or global) |
-| GET | `/api/items/by-barcode/{code}` | `item.view` (any) |
-| GET | `/api/items/barcodes/peek-next` | `item.create` or `item.edit` (any) |
-| GET | `/api/items/{id}/availability`, `/history` | `item.view` (any) |
-| PATCH | `/api/items/{id}` | `item.edit` (scoped) |
-| POST | `/api/items/{id}/assign-barcode`, `/set-barcode` | `item.edit` (scoped) |
-| POST | `/api/items/{id}/move` | `item.move` (scoped) |
-| POST | `/api/items/{id}/adjust-quantity` | `item.adjust` (scoped) |
-| POST | `/api/items/{id}/damage`, `/repair` | `item.damage` (scoped) |
-| POST | `/api/items/{id}/lost`, `/found` | `item.lose` (scoped) |
-| POST | `/api/items/{id}/retire`, `/restore` | `item.retire` (scoped) |
-| POST, DELETE | `/api/items/{id}/primary-image` | `item.edit` (scoped) |
-| GET | `/api/signouts`, `/api/signouts/{id}` | `signout.view` (any) |
-| POST | `/api/signouts` | `signout.create` (any) |
-| POST | `/api/signouts/{id}/confirm` | `signout.confirm` (any) |
-| POST | `/api/signouts/{id}/return` | `signout.return` (any) |
-| POST | `/api/signouts/{id}/cancel` | `signout.cancel` (any) |
-| POST | `/api/signouts/{id}/close` | `signout.close` (any) |
-| GET | `/api/lostfound/`, `/by-number/{reportNumber}`, `/{id}` | `lostfound.view` (any) |
+| PATCH | `/api/settings` | `access.manage` |
+| GET | `/api/notifications` | signed in (overdue sign-outs with `signout.view`) |
+| GET | `/api/departments`, `/api/departments/{id}` | `item.view` or `signout.view` |
+| POST, PATCH, DELETE | `/api/departments`, `/api/departments/{id}` | `department.manage` |
+| GET | `/api/categories`, `/api/categories/{id}` | `item.view` or `signout.view` |
+| POST, PATCH, DELETE | `/api/categories`, `/api/categories/{id}` | `category.manage` |
+| GET | `/api/locations`, `/api/locations/{id}` | `item.view` or `signout.view` |
+| POST, PATCH, DELETE | `/api/locations`, `/api/locations/{id}` | `location.manage` |
+| GET | `/api/items`, `/api/items/{id}` | `item.view` |
+| POST | `/api/items` | `item.create` |
+| POST | `/api/items/import` | `item.create` or `item.edit` (per row: create, edit, adjust) |
+| GET | `/api/items/by-barcode/{code}` | `item.view` |
+| GET | `/api/items/barcodes/peek-next` | `item.create` or `item.edit` |
+| GET | `/api/items/{id}/availability`, `/history`, `/purchases` | `item.view` |
+| POST | `/api/items/{id}/purchases` | `item.adjust` |
+| PATCH | `/api/items/{id}` | `item.edit` |
+| POST | `/api/items/{id}/assign-barcode`, `/set-barcode` | `item.edit` |
+| POST | `/api/items/{id}/move` | `item.move` |
+| POST | `/api/items/{id}/adjust-quantity` | `item.adjust` |
+| POST | `/api/items/{id}/damage`, `/repair` | `item.damage` |
+| POST | `/api/items/{id}/lost`, `/found` | `item.lose` |
+| POST | `/api/items/{id}/retire`, `/restore` | `item.retire` |
+| POST, DELETE | `/api/items/{id}/primary-image` | `item.edit` |
+| GET | `/api/signouts`, `/api/signouts/{id}` | `signout.view` |
+| POST | `/api/signouts` | `signout.create` |
+| POST | `/api/signouts/{id}/confirm` | `signout.confirm` |
+| POST | `/api/signouts/{id}/return` | `signout.return` |
+| POST | `/api/signouts/{id}/cancel` | `signout.cancel` |
+| POST | `/api/signouts/{id}/close` | `signout.close` |
+| GET | `/api/packing-lists`, `/api/packing-lists/{id}` | `signout.view` |
+| POST, PATCH, PUT, DELETE | `/api/packing-lists…` (create, change, lines, sign-out, delete) | `signout.create` |
+| GET | `/api/requests` | `request.create` or `request.manage` |
+| POST | `/api/requests` | `request.create` |
+| POST | `/api/requests/{id}/decide` | `request.manage` (or cancel your own open request) |
+| GET | `/api/lostfound/`, `/by-number/{reportNumber}`, `/{id}`, `/telegram` | `lostfound.view` |
 | PATCH | `/api/lostfound/{id}` | `lostfound.view`, plus `.edit` / `.resolve` / `.reopen` depending on the change |
-| POST | `/api/lostfound/` | `lostfound.create` (any) |
-| DELETE | `/api/lostfound/{id}` | `lostfound.delete` (any) |
+| POST | `/api/lostfound/` | `lostfound.create` |
+| POST | `/api/lostfound/{id}/notify` | `lostfound.notify` |
+| DELETE | `/api/lostfound/{id}` | `lostfound.delete` |
 | GET | `/api/files/` | view access on the entity |
 | POST | `/api/files/upload`, `/api/files/presign-upload`, `/api/files/` | `file.upload` and write access on the entity |
 | GET | `/api/files/{id}/raw`, `/api/files/{id}/download` | view access on the entity |
 | DELETE | `/api/files/{id}` | `file.upload` and write access on the entity |
-| GET | `/api/audit-log/` | `audit.view` (global) |
-| GET | `/api/export/items.csv`, `/api/export/signouts.csv` | `export.create` (global) |
-| GET | `/api/den/` | `access.manage` (global) |
-| POST | `/api/den/pair`, `/api/den/sync` | `access.manage` (global) |
-| DELETE | `/api/den/pair` | `access.manage` (global) |
+| GET | `/api/audit-log/` | `audit.view` (guest data needs `lostfound.view`) |
+| GET | `/api/export/items.csv`, `/signouts.csv`, `/reports`, `/reports/{report}.csv` | `export.create` |
+| GET | `/api/export/lostfound.csv` | `export.create` and `lostfound.view` |
+| GET | `/api/users` | `user.manage` |
+| POST | `/api/users/{id}/anonymise` | `user.manage` |
+| GET | `/api/den/` | `access.manage` |
+| POST | `/api/den/pair`, `/api/den/sync` | `access.manage` (audited) |
+| DELETE | `/api/den/pair` | `access.manage` (audited) |
 
 ## Troubleshooting
 
-**`403` on an item action although my role has the permission.** Your
-role is probably granted **in a department**. Item actions are scoped to
-the item's managing department; check `managed_by_department_id` on the
-item and the `memberships` in `GET /api/me`.
+**`403` although I think my role has the permission.** Call `GET /api/me`:
+`roles` and `permissions` show what Stash computed from your token's
+groups. Roles are global, so the department of the item does not matter.
+If the role is missing, your token lacks the group (sign in again after a
+change in Keycloak or HR).
+
+**`422 "department … does not exist"` when creating an item.** You may only
+pick existing departments, categories and locations; creating them needs
+`department.manage`, `category.manage` or `location.manage`.
 
 **`409` when creating a sign-out.** Not enough units are available: check
 `GET /api/items/{id}/availability`. Units already signed out, damaged or

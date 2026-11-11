@@ -275,10 +275,14 @@ paired, and the organisation name in Stash's settings becomes read-only
 
 ### 10. Sign in and check access
 
-Sign in as someone in a Stash group (for example `stash-logistics-lead`).
-They should see Items and Sign-outs. Someone in no bound group can sign
-in but has no permissions, so every page answers "permission denied". If
-that happens for the wrong person, see [Troubleshooting](#troubleshooting).
+Sign in as someone in a Stash group (for example `stash-logistics-lead`,
+or a group named after a role key such as `stash_volunteer`). They should
+see Items and Sign-outs. Someone in no Stash group can sign in but sees
+*no Stash role yet*. If that happens for the wrong person, see
+[Troubleshooting](#troubleshooting). Then go through the
+[checklist after installing](admin-guide.md#after-installing-checklist),
+and, to use them, set up the [Telegram bot](admin-guide.md#telegram-notifications-for-guests)
+and [overdue emails](admin-guide.md#overdue-returns).
 
 ### Local trial with Kustomize
 
@@ -614,7 +618,13 @@ docker compose -f infra/docker-compose.yml up --build
 ```
 
 Open <http://localhost:3000>. In `AUTH_MODE=dev` every request is the
-`dev-admin` user with all permissions.
+`dev-admin` user with all permissions, created on the first request. To
+try another role, set `localStorage["stash.devUser"]` in the browser to
+`bob:volunteer` and reload, or send the header yourself:
+
+```sh
+curl -s http://localhost:8080/api/me -H "X-Dev-User: bob:volunteer"
+```
 
 ```sh
 curl -s http://localhost:8080/api/health

@@ -138,6 +138,7 @@ nav:
           - modules/stash/index.md
           - Setup: modules/stash/setup.md
           - Admin guide: modules/stash/admin-guide.md
+          - Volunteer and front-desk guide: modules/stash/volunteer-guide.md
           - Configuration: modules/stash/configuration.md
           - API reference: modules/stash/api.md
       - Finance:

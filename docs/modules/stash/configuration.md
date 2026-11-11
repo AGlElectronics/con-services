@@ -89,7 +89,7 @@ another replica takes over within 30 seconds. The jobs are:
 
 | Job | How often | What it does |
 | --- | --- | --- |
-| Lost & Found retention | hourly | Deletes reports whose retention has passed, with their photos and Telegram link (see [Retention](admin-guide.md#lost--found-retention)). |
+| Lost & Found retention | hourly | Deletes reports whose retention has passed, with their photos and Telegram link (see [Retention](admin-guide.md#lost-found-retention)). |
 | Anonymise inactive people | every 6 hours | Only when the setting *Anonymise staff who have not signed in for* is above 0. |
 | Overdue reminders | hourly | Emails overdue sign-outs once a day, when overdue emails are on. |
 | Telegram bot | continuously | Long-polls Telegram for `/start` and `/stop` messages while the bot is on. |
