@@ -30,6 +30,13 @@ metadata:
 data:
   default.conf: |
     {{- include "rally.nginx" . | nindent 4 }}
+  # Mounted at /etc/nginx/snippets/security-headers.conf of each web app.
+  security-headers-frontend.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "frontend") | nindent 4 }}
+  {{- if .Values.submit.enabled }}
+  security-headers-submit.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "submit") | nindent 4 }}
+  {{- end }}
   {{- if $tls }}
   # Started by the nginx image's entrypoint. nginx reads its certificate
   # only at start and on reload; reload every six hours to pick up a

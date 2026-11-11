@@ -125,23 +125,52 @@ server {
     }
     location = /livez { proxy_pass {{ $scheme }}://rally_backend; }
     location = /readyz { proxy_pass {{ $scheme }}://rally_backend; }
+    # Security headers (rally.securityHeaders, mounted per web app) go into
+    # every location that serves the app; /api/ gets the backend's own.
     # Installation settings of the web app (sign-in address and the like),
     # mounted at /etc/conservices. Never cached, so a change shows on reload.
     location = /config.json {
         alias /etc/conservices/config.json;
+        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-store" always;
     }
 
     location /static/ {
         expires 1y;
+        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "public, immutable" always;
         try_files $uri =404;
     }
     location / {
         try_files $uri $uri/ /index.html;
+        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache" always;
     }
 }
+{{- end -}}
+
+{{/* scheme://host of a URL, "" when it has none. */}}
+{{- define "rally.origin" -}}
+{{- with . }}{{ $u := urlParse . }}{{ if and $u.scheme $u.host }}{{ printf "%s://%s" $u.scheme $u.host }}{{ end }}{{ end -}}
+{{- end -}}
+
+{{/* Security headers of a Rally web app: con-services
+shared/nginx/security-headers.conf with the sign-in server (from the app's
+/config.json oidcAuthority) and the S3 upload origin (config.S3_PUBLIC_BASE_URL)
+filled in, plus frontend.cspConnectSrc. Args: root, app (frontend|submit). */}}
+{{- define "rally.securityHeaders" -}}
+{{- $web := include "rally.webConfig" (dict "root" .root "app" .app) | fromJson -}}
+{{- $kc := include "rally.origin" ($web.oidcAuthority | default "") -}}
+{{- $s3 := include "rally.origin" (.root.Values.config.S3_PUBLIC_BASE_URL | default "") -}}
+{{- $extra := .root.Values.frontend.cspConnectSrc | default list -}}
+{{- $connect := concat (list "'self'" $kc $s3) $extra | compact | uniq | join " " -}}
+{{- $frame := concat (list "'self'" $kc) $extra | compact | uniq | join " " -}}
+{{- $form := list "'self'" $kc | compact | join " " -}}
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src {{ $connect }}; frame-src {{ $frame }}; frame-ancestors 'none'; form-action {{ $form }}; base-uri 'self'; object-src 'none'" always;
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" always;
 {{- end -}}
 
 {{/* /config.json of a Rally web app. Args: root, app (frontend|submit).
@@ -229,6 +258,12 @@ spec:
               exec:
                 command: ["/bin/sh", "-c", "sleep {{ . }}"]
           {{- end }}
+          env:
+            # The chart mounts the security headers itself; switch off the
+            # image's envsubst step (no such folder), which cannot write to
+            # the read-only root file system anyway.
+            - name: NGINX_ENVSUBST_TEMPLATE_DIR
+              value: /etc/nginx/templates-rendered-by-chart
           resources:
             {{- toYaml $root.Values.frontend.resources | nindent 12 }}
           securityContext:
@@ -237,6 +272,10 @@ spec:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/snippets/security-headers.conf
+              subPath: security-headers-{{ .component }}.conf
               readOnly: true
             {{- if $tls }}
             - name: nginx-conf

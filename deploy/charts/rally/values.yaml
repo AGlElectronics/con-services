@@ -29,9 +29,16 @@ image:
 
 # Existing Secret (from your secret manager). Keys Rally reads from it:
 #   DATABASE_URL                               required
+#   DEN_LINK_ENCRYPTION_KEY                    required (APP_ENV=production): 32 random
+#                                              bytes, base64 (openssl rand -base64 32);
+#                                              encrypts the stored Den credential
+#   DEN_LINK_ENCRYPTION_KEY_PREVIOUS           only while rotating that key
 #   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY     required while S3_ENABLED=true
+#   HR_SERVICE_TOKEN                           optional: lets HR read GET /api/role-catalog
+#                                              (same value as HR's; at least 32 characters)
 #   TELEGRAM_BOT_TOKEN                         optional (empty = dry-run announcements)
-# This chart never creates Secrets.
+# This chart never creates Secrets. Inventory and rotation:
+# https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: rally-secrets
 
 # Access config (roles, permissions, OIDC group bindings). Create it from
@@ -52,10 +59,22 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: events-spa
-  OIDC_AUDIENCE: events-spa
+  # Audience of the staff app's access tokens (an audience mapper on
+  # events-spa in Keycloak). ID tokens are refused.
+  OIDC_AUDIENCE: events-api
   # Attendee realm for the public submission site (must differ from staff).
   ATTENDEE_OIDC_ISSUER_URL: https://auth.conservices.test/realms/attendees
   ATTENDEE_OIDC_CLIENT_ID: rally-submit
+  # Audience of the submission site's access tokens (mapper on rally-submit).
+  ATTENDEE_OIDC_AUDIENCE: events-public-api
+  # Staff groups: claim, full/last path matching, parent group to remove.
+  # OIDC_GROUPS_CLAIM: groups
+  # OIDC_GROUP_MATCH: full
+  # OIDC_GROUP_PREFIX: /con2026
+  # Rate limits of the public API (per client IP) and of creating
+  # submissions, invites and uploads (per person); defaults shown.
+  # PUBLIC_RATE_LIMIT: 120/m
+  # SUBMISSION_RATE_LIMIT: 20/m
   CORS_ALLOWED_ORIGINS: https://events.conservices.test,https://submit.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -140,6 +159,12 @@ frontend:
   # Upload limit, enforced by nginx in the web apps. The gateway (Envoy) has
   # no body limit of its own, so this is the only one.
   clientMaxBodySize: 50m
+  # Security headers of both web apps. The Content-Security-Policy lets the
+  # browser connect to the app, its sign-in server (oidcAuthority of its
+  # /config.json) and config.S3_PUBLIC_BASE_URL. Add other origins here,
+  # e.g. an attendee identity provider whose token endpoint is on another
+  # host: ["https://login.example.net"].
+  cspConnectSrc: []
   terminationGracePeriodSeconds: 30
   # nginx keeps serving this long after it is told to stop, while the
   # gateway removes the pod from its endpoints. 0 turns it off.
