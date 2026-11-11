@@ -38,6 +38,7 @@
     { "name": "events-reviewer", "path": "/events-reviewer" },
     { "name": "den-admin", "path": "/den-admin" },
     { "name": "den-member", "path": "/den-member" },
+    { "name": "den-ops", "path": "/den-ops" },
     { "name": "events-admin", "path": "/events-admin" },
     { "name": "hr-admin", "path": "/hr-admin" },
     { "name": "learn-admin", "path": "/learn-admin" },
@@ -62,7 +63,7 @@
       "credentials": [
         { "type": "password", "value": "adminadmin", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/den-admin", "/den-member", "/events-admin", "/hr-admin", "/learn-admin", "/finance-admin", "/desk-admin", "/tasks-admin", "/wiki-admin"],
+      "groups": ["/stash-admin", "/den-admin", "/den-member", "/den-ops", "/events-admin", "/hr-admin", "/learn-admin", "/finance-admin", "/desk-admin", "/tasks-admin", "/wiki-admin"],
       "realmRoles": ["admin", "member"]
     },
     {
@@ -110,7 +111,7 @@
       "enabled": true,
       "serviceAccountClientId": "den-keycloak",
       "clientRoles": {
-        "realm-management": ["manage-realm", "view-realm"]
+        "realm-management": ["manage-realm"]
       }
     },
     {
