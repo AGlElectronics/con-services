@@ -196,6 +196,15 @@ spec:
         - name: frontend
           image: {{ include "hr.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.keycloakOrigin | quote }}
+            - name: DEN_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.denOrigin | quote }}
+            - name: S3_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.s3Origin | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ .Values.frontend.securityHeaders.extraConnectSrc | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -245,6 +254,10 @@ spec:
             # nginx-unprivileged: nginx.pid and temporary files
             - name: tmp
               mountPath: /tmp
+            # The image entrypoint writes the filled security-headers snippet
+            # here. A read-only root filesystem cannot hold that file.
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
       volumes:
         - name: nginx-conf
           configMap:
@@ -258,6 +271,8 @@ spec:
         - name: run
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: nginx-snippets
           emptyDir: {}
         {{- if $tls }}
         {{- include "hr.tlsVolumes" (dict "root" . "secret" "hr-frontend-tls") | nindent 8 }}

@@ -175,7 +175,7 @@ curl -s https://den-backend.conservices-den.svc.cluster.local:8080/api/v1/integr
 
 | Setting | Where | Default | What it does |
 | --- | --- | --- | --- |
-| `HR_SERVICE_TOKEN` | HR and every module with a catalog | none | **Secret.** The token HR sends; one value per installation, allowed only to read catalogs. Without it a module accepts only staff sign-ins on its catalog. Listed on [Secrets](../operations/secrets.md#inventory) once implemented. |
+| `HR_SERVICE_TOKEN` | HR and every module with a catalog | none | **Secret.** The token HR sends; one value per installation, at least 32 characters, allowed only to read catalogs. Without it a module accepts only staff sign-ins on its catalog. See [Secrets](../operations/secrets.md#inventory). |
 | `ROLE_CATALOG_SOURCES` | HR | none | Optional override, see above. |
 
 ## Troubleshooting

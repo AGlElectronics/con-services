@@ -49,14 +49,16 @@ them.
 
 ## When HR deletes it
 
-Under **Settings → Retention** (defaults below; while HR is paired with Den,
-Den's module settings may set them):
+Under **Settings → Retention** (defaults below, in days). While HR is paired
+with Den, `retention.inactive_users_days` overrides the applicant and paused
+periods and `retention.offboarded_volunteers_days` overrides the access
+history, when Den sends a number greater than 0:
 
 | Rule | Default | What happens |
 | --- | --- | --- |
-| Applicants untouched for | 6 months | The applicant and their onboardings are deleted. |
-| People paused for | 24 months | They are offboarded (account deleted, record deleted). |
-| Access history kept after an offboarding | 12 months | Then the remaining audit lines about the person are deleted too. |
+| Applicants untouched for | 180 days | The applicant and their onboardings are deleted. |
+| People paused for | 730 days | They are offboarded (account deleted, record deleted). |
+| Access history kept after an offboarding | 365 days | Then the remaining audit lines about the person are deleted too. |
 | Warning before a deletion | 14 days | HR admins are emailed the list first. |
 
 The housekeeping task (`MAINTENANCE_INTERVAL`, every hour) applies the

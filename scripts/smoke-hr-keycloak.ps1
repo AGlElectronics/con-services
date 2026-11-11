@@ -7,15 +7,16 @@ $kc = "$kcBase/realms/conservices/protocol/openid-connect/token"
 $hr = 'http://localhost:8110'
 $mailpit = 'http://localhost:8025'
 
-function Get-IdToken($client, $user, $pass) {
+function Get-AccessToken($client, $user, $pass) {
   $body = @{ grant_type = 'password'; client_id = $client; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  # HR accepts the access token (audience hr-api) and refuses the ID token.
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 function Post-Json($uri, $body, $method = 'Post') {
   Invoke-RestMethod -Method $method -Uri $uri -Headers $h -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 6)
 }
 
-$tok = Get-IdToken 'hr-spa' 'admin' 'adminadmin'
+$tok = Get-AccessToken 'hr-spa' 'admin' 'adminadmin'
 $h = @{ Authorization = "Bearer $tok" }
 $me = Invoke-RestMethod -Uri "$hr/api/me" -Headers $h
 Write-Host "HR /me: $($me.username) mode=$($me.auth_mode)"

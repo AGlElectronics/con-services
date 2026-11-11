@@ -53,7 +53,7 @@ flowchart LR
     be -.->|department hook, optional| tasks[Tasks]
     wiki -.->|group directory, optional| be
     be -.->|notices, optional| smtp[SMTP server]
-    be -.->|Google Workspace, later release| google[Google APIs]
+    be -.->|Google Workspace, when configured| google[Google APIs]
 ```
 
 ## Ways to run HR
@@ -98,7 +98,7 @@ restrict who can read its database and backups.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.
 - [Personal data](personal-data.md): what HR stores, who sees it, retention.
-- [Google Workspace](google-workspace.md): accounts in your Workspace domain (prepared; the client comes in a later release).
+- [Google Workspace](google-workspace.md): accounts in your Workspace domain, once a service-account key is configured.
 
 Design decisions: HR's [ADRs](https://github.com/AGlElectronics/hr/tree/main/docs/adr)
 and [domain model](https://github.com/AGlElectronics/hr/blob/main/docs/domain-model.md).

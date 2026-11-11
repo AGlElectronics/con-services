@@ -975,7 +975,7 @@ What happens to the account depends on `IDP_PROVISIONER_MODE`
 | `off` | Nothing; HR has no accounts. |
 
 HR keeps the access history (who granted or removed which access, the
-offboarding line) for `retention.offboarded_audit_months` (default 12),
+offboarding line) for `retention.offboarded_audit_days` (default 365),
 then deletes it; every other audit entry about the person is deleted at
 once.
 
@@ -2347,9 +2347,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $HR/api/settings
   },
   "retention": {
     "enabled": true,
-    "applicant_months": 6,
-    "paused_months": 24,
-    "offboarded_audit_months": 12,
+    "applicant_days": 180,
+    "paused_days": 730,
+    "offboarded_audit_days": 365,
     "warning_days": 14
   },
   "workspace": {
@@ -2371,7 +2371,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $HR/api/settings
 | `admin_notification_emails` | Comma-separated addresses for HR's notices to admins (retention and Workspace deletion warnings). Empty: the members of the HR admin groups. |
 | `identity` | How staff sign in. `staff_mode` is `own` (Con Services accounts), `brokered` or `existing` (the convention's SSO); `sso_name` and `sso_url` name and link that SSO in the offboarding warning; `admin_console_url` is the *Open Keycloak* link. Values set here override Den's; `effective` (read-only) shows the result. |
 | `retention` | How long HR keeps personal data ([Personal data](personal-data.md#when-hr-deletes-it)). `managed_by: "den"` inside it means Den's module settings set it, and HR ignores changes. |
-| `workspace` | The [Google Workspace connector](google-workspace.md). `available` (read-only) is `false` while HR has no Workspace client, as in HR 1.0.0. |
+| `workspace` | The [Google Workspace connector](google-workspace.md). `available` (read-only) is `true` when `GOOGLE_WORKSPACE_CREDENTIALS_FILE` is set. |
 
 ### `PUT /api/settings`
 
@@ -2388,7 +2388,7 @@ top of the current settings. **Access:** `settings.manage` (global only).
 | `admin_notification_emails` | Comma-separated email addresses. | saved |
 | `identity.staff_mode` | `own`, `brokered`, `existing` or empty (use Den's). | saved |
 | `identity.sso_url`, `identity.admin_console_url` | http(s) URLs. | saved |
-| `retention.applicant_months`, `retention.paused_months`, `retention.offboarded_audit_months` | 1 to 120. | saved, unless Den sets retention |
+| `retention.applicant_days`, `retention.paused_days`, `retention.offboarded_audit_days` | 1 to 3650. | saved, unless Den sets retention |
 | `retention.warning_days` | 1 to 90. | saved, unless Den sets retention |
 | `workspace.enabled` | `true` only while `workspace.available` is `true` (else **422**, field `workspace.enabled`). | saved |
 | `workspace.domain`, `workspace.admin_email`, `workspace.org_unit` | A domain; an email (required when `enabled`); a path starting with `/`. | saved |
@@ -2398,7 +2398,7 @@ top of the current settings. **Access:** `settings.manage` (global only).
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" $HR/api/settings -d '{
   "default_country": "AT",
   "admin_notification_emails": "hr@example.org",
-  "retention": {"enabled": true, "applicant_months": 6, "paused_months": 24, "offboarded_audit_months": 12, "warning_days": 14}
+  "retention": {"enabled": true, "applicant_days": 180, "paused_days": 730, "offboarded_audit_days": 365, "warning_days": 14}
 }'
 ```
 
@@ -2488,16 +2488,13 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" $HR/api/den/pair
 These endpoints serve the [Google Workspace connector](google-workspace.md).
 **Access:** `workspace.manage` (global only).
 
-!!! warning "Not available in HR 1.0.0"
-    HR 1.0.0 ships without the Google Workspace client, so the connector
-    never runs and HR has no Workspace accounts. The endpoints still
-    answer: the list is empty, *Delete now* answers **409**
-    `the Google Workspace connector is off`, sync answers **409**
-    `the Google Workspace connector is off or not available`, and
-    `PUT /api/settings` with `workspace.enabled: true` answers **422**.
-    `workspace.available`
-    in [`GET /api/settings`](#get-apisettings) tells you whether the client
-    is there.
+The connector runs only when `GOOGLE_WORKSPACE_CREDENTIALS_FILE` is set
+and an admin has turned it on. Otherwise the list is empty, *Delete now*
+answers **409** `the Google Workspace connector is off`, sync answers
+**409** `the Google Workspace connector is off or not available`, and
+`PUT /api/settings` with `workspace.enabled: true` answers **422**.
+`workspace.available` in [`GET /api/settings`](#get-apisettings) is true
+when the key file is set.
 
 ### `GET /api/workspace/accounts`
 
@@ -2534,7 +2531,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 | Status | Message |
 | --- | --- |
-| 409 | `the Google Workspace connector is off` (also always in HR 1.0.0) |
+| 409 | `the Google Workspace connector is off` |
 | 409 | `only suspended accounts of offboarded people can be deleted here` |
 | 404 | `workspace account not found` |
 | 502 | `Google Workspace: …` (Google refused) |
@@ -2554,7 +2551,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" $HR/api/workspace/sync
 
 | Status | Message |
 | --- | --- |
-| 409 | `the Google Workspace connector is off or not available` (always in HR 1.0.0) |
+| 409 | `the Google Workspace connector is off or not available` |
 | 502 | `Google Workspace: …` (Google refused) |
 
 ---
@@ -2603,8 +2600,8 @@ retention purge, and says when they are deleted. Errors: **400**
 
 The people HR's retention rules will remove within the warning period
 (and those already due): applicants untouched for
-`retention.applicant_months` are deleted, people paused for
-`retention.paused_months` are offboarded. HR admins are emailed
+`retention.applicant_days` are deleted, people paused for
+`retention.paused_days` are offboarded. HR admins are emailed
 `warning_days` before; nothing is removed without a delivered warning.
 **Access:** `settings.manage` (global only).
 
@@ -2618,7 +2615,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $HR/api/retention/candidates
     {"person_id": "b8c7d6e5-3333-4e2f-8a9b-0c1d2e3f4a5b", "display_name": "kim", "status": "applicant",
      "due_at": "2026-11-20T10:00:00Z", "warned_at": "2026-11-06T03:00:00Z"}
   ],
-  "retention": {"enabled": true, "applicant_months": 6, "paused_months": 24, "offboarded_audit_months": 12, "warning_days": 14}
+  "retention": {"enabled": true, "applicant_days": 180, "paused_days": 730, "offboarded_audit_days": 365, "warning_days": 14}
 }
 ```
 

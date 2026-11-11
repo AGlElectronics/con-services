@@ -150,6 +150,64 @@ spec:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- include "hr.externalS3Policy" (dict "root" . "components" (list "backend")) }}
+{{- $lookup := $np.addressLookup | default dict }}
+{{- if and $lookup.enabled $lookup.fqdns ($np.gateway | default dict).cilium }}
+---
+# Address suggestions: the backend calls Photon (the browser only calls HR).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hr-address-lookup
+  namespace: {{ $ns }}
+  labels:
+    {{- include "hr.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: hr
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        {{- range $lookup.fqdns }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - port: {{ $lookup.port | default 443 | quote }}
+              protocol: TCP
+{{- end }}
+{{- if and $lookup.enabled $lookup.cidrs }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hr-address-lookup
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hr
+      app.kubernetes.io/component: backend
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        {{- range $lookup.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ $lookup.port | default 443 }} }
+{{- end }}
 {{- $g := $np.googleApis | default dict }}
 {{- if and .Values.googleWorkspace.enabled $g.fqdns ($np.gateway | default dict).cilium }}
 ---

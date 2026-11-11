@@ -5,15 +5,12 @@ address and Google apps in your organisation's domain), keep a Google Group
 per department in step with HR, and close the account again when the
 person leaves.
 
-!!! warning "Not available in HR 1.0.0"
-    HR 1.0.0 contains the connector's logic, settings and admin pages, but
-    ships **without the Google Workspace client** (the part that talks to
-    Google). The Settings page shows the connector as unavailable, and with
-    `GOOGLE_WORKSPACE_CREDENTIALS_FILE` set HR logs a warning
-    (`GOOGLE_WORKSPACE_CREDENTIALS_FILE is set, but this HR version has no
-    Google Workspace client yet`) and carries on without it.
-    You can prepare Google Cloud and the secret now; the connector starts
-    working with the HR release that adds the client.
+The connector is **off until you give HR a service-account key**. Set
+`GOOGLE_WORKSPACE_CREDENTIALS_FILE` (the chart does this when
+`googleWorkspace.enabled` is true) and restart HR. The Settings page then
+shows the connector as available, and an HR admin turns it on under
+**Settings → Google Workspace**. With no key file, enabling it is refused
+and HR keeps working without Google.
 
 ## What the connector does
 
@@ -34,7 +31,7 @@ on the account row.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Enabled** | off | Turns the connector on. HR refuses it while the connector is unavailable (always in 1.0.0). |
+| **Enabled** | off | Turns the connector on. HR refuses it until `GOOGLE_WORKSPACE_CREDENTIALS_FILE` is set. |
 | **Domain** | the organisation email domain | Domain of the accounts, for example `volunteers.example.org`. |
 | **Admin email** | none | A Workspace super admin the service account acts as (domain-wide delegation, below). |
 | **Organisational unit** | `/` | Where new accounts go, for example `/Volunteers`. |
@@ -63,10 +60,12 @@ You need a Google Workspace super admin and a Google Cloud project.
    ID** (a number). In the [Google Admin console](https://admin.google.com/):
    **Security → Access and data control → API controls → Manage
    domain-wide delegation → Add new**, paste the client ID and these
-   scopes (comma-separated):
+   OAuth scopes (comma-separated). These are exactly the scopes the
+   client requests. `admin.directory.group` covers group membership, so
+   a separate member scope is not used. HR does not call the Gmail API.
 
     ```text
-    https://www.googleapis.com/auth/admin.directory.user,https://www.googleapis.com/auth/admin.directory.group,https://www.googleapis.com/auth/admin.directory.group.member
+    https://www.googleapis.com/auth/admin.directory.user,https://www.googleapis.com/auth/admin.directory.group
     ```
 
 6. **Create the organisational unit** you want new accounts in (for
@@ -153,13 +152,16 @@ delete the old key in Google Cloud.
 
 ## Troubleshooting
 
-**The Settings page says the connector is unavailable.** Expected in HR
-1.0.0 (see the warning at the top). In a later release: the key is not
-mounted; check `GOOGLE_WORKSPACE_CREDENTIALS_FILE` and the Secret.
+**The Settings page says the connector is unavailable** (the field error
+mentions `GOOGLE_WORKSPACE_CREDENTIALS_FILE`). The key is not mounted.
+Check the Secret `hr-google-workspace` (key `credentials.json`) and that
+`googleWorkspace.enabled` is true, then restart the backend. The start
+log says `google workspace connector available` when the file is set.
 
-**The backend log says "this HR version has no Google Workspace client
-yet".** The same: the key is set, but this HR version has no Workspace
-client. Nothing is broken.
+**`invalid_grant` or `unauthorized_client` at startup or on the first
+account.** The service-account key is not a JSON key, the client ID in
+domain-wide delegation is a different service account, or **Admin email**
+is not a user in **Domain**. The admin must be a super admin.
 
 **Accounts are not created and the warning mentions the domain.** Set
 **Domain** (or the organisation email domain) in HR's settings; HR only

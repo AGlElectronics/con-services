@@ -171,8 +171,9 @@ directory). The **other side** of each path must match:
 | Other side | Rule needed there | Status |
 | --- | --- | --- |
 | Stash, Rally, Learn, Wiki, Tasks, Desk, Finance | ingress from `conservices-hr` backends on 8080 | In each module's chart (`allowFromNamespaces` includes `conservices-hr`). |
-| Wiki (`conservices-wiki`) calling HR | egress from the Wiki backend to `conservices-hr` backends on 8080 | Only when the Wiki uses `HR_DIRECTORY_URL`. Not in the Wiki chart yet: add it with the Wiki's `networkPolicy.extraEgress` (below). |
+| Wiki (`conservices-wiki`) calling HR | egress from the Wiki backend to `conservices-hr` backends on 8080 | In the Wiki chart (`networkPolicy.extraEgress`). |
 | Keycloak (`conservices-identity`) | ingress from `conservices-hr` backends on 8443 (Keycloak's HTTPS port) | **Missing** from the platform manifests: add it yourself (below). |
+| Photon (`photon.komoot.io`) | egress from the HR backend on 443 | In HR's chart (`networkPolicy.addressLookup`). The browser calls HR; the backend calls Photon. |
 | Google's APIs (only with `googleWorkspace.enabled`) | egress to `admin.googleapis.com` and `oauth2.googleapis.com` on 443 | In HR's chart (`networkPolicy.googleApis`); see [Google Workspace](google-workspace.md). |
 
 Keycloak rule (apply in `conservices-identity`):
@@ -454,7 +455,9 @@ in `not_after`.
 | `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
 | `networkPolicy.moduleEgressNamespaces` | every module namespace (`conservices-stash`, `-learn`, `-wiki`, `-tasks`, `-desk`, `-finance`, `-rally`) | Module backends HR may call on 8080 (role catalogs, Learn holdings, hooks). |
 | `networkPolicy.allowFromNamespaces` | `[conservices-wiki]` | Module backends allowed to call HR's backend (the Wiki's group directory). |
-| `googleWorkspace.enabled`, `googleWorkspace.existingSecret` | `false`, `hr-google-workspace` | Mounts the Google service-account key (key `credentials.json`) at `/etc/conservices-google` and sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE`; see [Google Workspace](google-workspace.md). |
+| `frontend.securityHeaders.keycloakOrigin` (and `denOrigin`, `s3Origin`, `extraConnectSrc`) | `https://auth.conservices.test`, empty, empty, empty | Origins the browser may call besides HR, passed as env to the web app. The nginx snippet is filled when the container starts; the chart never writes a filled-in copy. Address search is proxied, so Photon is not an origin. |
+| `networkPolicy.addressLookup.enabled` / `.fqdns` | `true` / `[photon.komoot.io]` | Egress from the backend to Photon for address suggestions. |
+| `googleWorkspace.enabled`, `googleWorkspace.existingSecret` | `false`, `hr-google-workspace` | Mounts the Google service-account key (key `credentials.json`) at `/etc/conservices-google` and sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE`. The connector is then available in Settings. See [Google Workspace](google-workspace.md). |
 | `networkPolicy.googleApis.fqdns` / `.cidrs` / `.port` | `[admin.googleapis.com, oauth2.googleapis.com]` / `[]` / `443` | Egress to Google's APIs, only with `googleWorkspace.enabled`: host names with Cilium (`CiliumNetworkPolicy` `hr-google-apis`), address ranges otherwise. |
 
 ### Without cert-manager

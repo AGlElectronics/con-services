@@ -26,6 +26,12 @@ image:
 
 # Existing Secret (from your secret manager). Keys HR reads from it:
 #   DATABASE_URL                      required
+#   DEN_LINK_ENCRYPTION_KEY           required outside development (32 bytes, base64)
+#   DEN_LINK_ENCRYPTION_KEY_PREVIOUS  only while rotating that key
+#   HR_SERVICE_TOKEN                  the token HR sends when it reads other
+#                                     modules' role catalogs (>= 32 characters;
+#                                     the same value on Wiki, Finance, Rally,
+#                                     Tasks, Stash, Learn and Desk)
 #   KEYCLOAK_CLIENT_SECRET            secret of the hr-provisioner client
 #   LEARN_SERVICE_TOKEN               optional (training-gated roles)
 #   OFFBOARD_HOOKS, DEPARTMENT_HOOKS  optional, "url|token" lists (contain tokens)
@@ -45,7 +51,8 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: hr-spa
-  OIDC_AUDIENCE: hr-spa
+  # Access tokens must carry this audience (Keycloak audience mapper on hr-spa).
+  OIDC_AUDIENCE: hr-api
   # IdP groups for HR's own roles: admin, read-only viewer, department lead.
   HR_ADMIN_GROUPS: hr-admin
   HR_VIEWER_GROUPS: hr-viewer
@@ -118,10 +125,10 @@ internalTLS:
   # The Gateway API route uses a BackendTLSPolicy instead.
   ingressNginxAnnotations: false
 
-# Google Workspace connector. HR 1.0.0 ships without the Workspace client:
-# with enabled: true the chart mounts the service-account key and opens
-# egress to Google's APIs, and HR logs that the connector is not available
-# yet. Docs: https://aglelectronics.github.io/con-services/modules/hr/google-workspace/
+# Google Workspace connector. With enabled: true the chart mounts the
+# service-account key, sets GOOGLE_WORKSPACE_CREDENTIALS_FILE and opens
+# egress to Google's APIs. HR then offers the connector in Settings.
+# Docs: https://aglelectronics.github.io/con-services/modules/hr/google-workspace/
 googleWorkspace:
   enabled: false
   # Secret (from your secret manager) holding the service-account key, key
@@ -174,6 +181,16 @@ frontend:
   #   apiBaseUrl     "" (same origin: nginx forwards /api/)
   # Docs: https://aglelectronics.github.io/con-services/modules/hr/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may talk to besides HR, filled into the nginx
+  # security-headers snippet when the container starts. Scheme + host, no
+  # path. Address search is proxied through HR, so Photon is not listed:
+  # connect-src 'self' already allows it. Set extraConnectSrc only if the
+  # browser itself calls another host.
+  securityHeaders:
+    keycloakOrigin: https://auth.conservices.test
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -299,6 +316,14 @@ networkPolicy:
   # HR_DIRECTORY_TOKEN). The caller's namespace needs a matching egress rule.
   allowFromNamespaces:
     - conservices-wiki
+  # The backend calls Photon for address suggestions (the browser calls HR).
+  # fqdns renders a CiliumNetworkPolicy when gateway.cilium is true; on
+  # another CNI set cidrs. enabled: false when address search is unused.
+  addressLookup:
+    enabled: true
+    fqdns: ["photon.komoot.io"]
+    cidrs: []
+    port: 443
   # Egress to Google's APIs, rendered only with googleWorkspace.enabled.
   # fqdns renders a CiliumNetworkPolicy (toFQDNs plus a DNS rule) when
   # gateway.cilium is true; on other CNIs list Google's published ranges in

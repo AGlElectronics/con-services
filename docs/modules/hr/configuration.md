@@ -21,7 +21,7 @@ delivered as the `hr-secrets` Secret ([Secrets](../../operations/secrets.md));
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | ConfigMap | `development` gives console logs; use `production` otherwise. |
+| `APP_ENV` | `production` | no | ConfigMap | `development` allows dev sign-in headers and dev-only secrets. Anything else, including empty, is production. Docker Compose sets `development`; the chart sets `production`. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | ConfigMap | HR's public address. |
 | `HTTP_ADDR` | `:8080` | no | ConfigMap | Listen address inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **Secret** | PostgreSQL URL. Also the only setting the `hr-migrate` image reads. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
@@ -54,11 +54,14 @@ the old certificate. The minimum protocol version is TLS 1.2.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | ConfigMap | `oidc` verifies bearer tokens. `dev` trusts `X-Dev-User` and lets everyone in: local only. |
+| `AUTH_MODE` | `oidc` | no | ConfigMap | `oidc` verifies access tokens. `dev` trusts `X-Dev-User` and `X-Dev-Groups` and is refused unless `APP_ENV=development`. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Token issuer, for example `https://auth.example.org/realms/conservices`. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | ConfigMap | Web app client (`hr-spa`). |
-| `OIDC_AUDIENCE` | none | no | ConfigMap | Expected audience if different from the client id. |
-| `HR_ADMIN_GROUPS` | `hr-admin` | no | ConfigMap | Comma-separated IdP groups whose members are **HR admins** (everything, including settings, imports and the audit log). Matched with or without Keycloak's leading `/`, case-insensitive. |
+| `OIDC_AUDIENCE` | `hr-api` | no | ConfigMap | Audience an access token must carry. Keycloak adds it with an audience mapper on `hr-spa`. ID tokens are refused. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | ConfigMap | The only token claim HR reads groups from. The `roles` claim is ignored. |
+| `OIDC_GROUP_MATCH` | `full` | no | ConfigMap | `full` compares the whole group path; `last` compares only the last segment. |
+| `OIDC_GROUP_PREFIX` | none | no | ConfigMap | Removed from group names that start with it before they are compared, for example `/con2026`. |
+| `HR_ADMIN_GROUPS` | `hr-admin` | no | ConfigMap | Comma-separated IdP groups whose members are **HR admins** (everything, including settings, imports and the audit log). Compared with `OIDC_GROUP_MATCH` (a leading `/` and case do not matter). |
 | `HR_VIEWER_GROUPS` | `hr-viewer` | no | ConfigMap | Groups whose members are **HR viewers**: read-only access to people, departments, onboardings and the audit log. |
 | `HR_LEAD_GROUPS` | `hr-lead` | no | ConfigMap | Groups whose members are **department leads**: they see and onboard people only in the departments an admin made them lead of. Someone in none of the three groups gets 403 and can only use the self-service page. |
 | `DEV_DEFAULT_USER` | `dev-hr-admin` | no | ConfigMap | Name used in `dev` mode without an `X-Dev-User` header. |
@@ -110,13 +113,16 @@ error.
 
 ## Other modules
 
-Once HR is paired with Den, it finds the other modules' role catalogs
-through Den: every paired module's `GET /api/role-catalog`. The settings
-below override or extend that.
+Once HR is paired with Den, it is meant to find the other modules' role
+catalogs through Den (`GET /api/v1/integrations/modules`, then each
+module's `GET /api/role-catalog`). The shared `denlink` client cannot make
+that call yet, so a paired HR still uses `ROLE_CATALOG_SOURCES` for the
+list. The settings below are that list and the token HR sends.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `ROLE_CATALOG_SOURCES` | none | no | ConfigMap | Optional override: comma-separated `slug=url` list of role catalogs, for example `stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog`. Needed only standalone or for a module Den does not know. HR always includes its own catalog. |
+| `HR_SERVICE_TOKEN` | none | no | **Secret** | Bearer token HR sends when it reads another module's role catalog. At least 32 characters (`openssl rand -hex 32`). The same value on Wiki, Finance, Rally, Tasks, Stash, Learn and Desk. Without it those modules accept only a staff sign-in on their catalog. |
+| `ROLE_CATALOG_SOURCES` | none | no | ConfigMap | Optional `slug=url` list. Replaces the URL Den reported for that slug and adds modules Den does not know. A standalone HR uses only this list. HR always includes its own catalog. |
 | `QUALIFICATION_CATALOG_SOURCES` | none | no | ConfigMap | Same format, for qualification catalogs, for example `learn=https://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog`. |
 | `LEARN_HOLDINGS_URL` | none | no | ConfigMap | Learn's `/api/internal/holdings`, for example `https://learn-backend.conservices-learn.svc.cluster.local:8080/api/internal/holdings`. With `LEARN_SERVICE_TOKEN`, turns on training requirements for roles. |
 | `LEARN_SERVICE_TOKEN` | none | no | **Secret** | Shared with Learn. |
@@ -130,7 +136,7 @@ below override or extend that.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | no | ConfigMap (the chart sets it with `googleWorkspace.enabled`) | Path to the service-account key (JSON). HR 1.0.0 ships without the Workspace client: with this set it logs that the connector is not available yet and keeps working without it. See [Google Workspace](google-workspace.md). |
+| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | no | ConfigMap (the chart sets it with `googleWorkspace.enabled`) | Path to the service-account key (JSON). When set, the Google Workspace connector is available and an admin can turn it on in Settings. Empty: the connector stays unavailable and HR works without it. See [Google Workspace](google-workspace.md). |
 
 ## Den
 
@@ -138,6 +144,8 @@ below override or extend that.
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces the host of a pasted Den pairing URL (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty when standalone. |
 | `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **Secret** | Base64 of 32 random bytes (`openssl rand -base64 32`). Encrypts the Den credential HR stores. One key per module. Required unless `APP_ENV=development`. |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **Secret** | The previous key, only while rotating `DEN_LINK_ENCRYPTION_KEY`. Remove it after the restart that re-encrypts the credential. |
 
 ## Email (HR's own notices)
 

@@ -115,6 +115,7 @@ belong to which.
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
 | HR backend (`conservices-hr`) | every other module backend (Learn, Wiki, Tasks, Desk, Finance, Rally) | 8080 | Helm (`networkPolicy.moduleEgressNamespaces`) | Role catalogs, Learn holdings, offboarding and department hooks (see below). |
 | Wiki backend (`conservices-wiki`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.allowFromNamespaces`; Wiki: `networkPolicy.extraEgress` for now) | The Wiki's share dialog lists HR's groups (`GET /api/internal/directory/groups`). |
+| HR backend | Photon (`photon.komoot.io`) | 443 | Helm (`networkPolicy.addressLookup`, on unless address search is unused) | Address suggestions. The browser calls HR; the backend calls Photon. |
 | HR backend | Google's APIs (`admin.googleapis.com`, `oauth2.googleapis.com`) | 443 | Helm, only with `googleWorkspace.enabled` (`networkPolicy.googleApis`) | Google Workspace connector. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 
