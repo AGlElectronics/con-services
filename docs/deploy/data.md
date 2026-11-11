@@ -96,7 +96,7 @@ another entry, but it does not stop you; take the warning seriously.
 | `<prefix>-conservices-den` | Den (logos, branding) | `conservices/modules/den/s3` | read and write |
 | `<prefix>-conservices-stash` | Stash | `conservices/modules/stash/s3` | read and write |
 | `<prefix>-conservices-rally` | Rally | `conservices/modules/rally/s3` | read and write |
-| `<prefix>-conservices-finance` | Finance (invoice PDFs, receipts) | `conservices/modules/finance/s3` | read and write |
+| `<prefix>-conservices-finance` | Finance (PDFs of issued invoices and credit notes, and receipts; legal records) | `conservices/modules/finance/s3` | read and write |
 | `<prefix>-conservices-learn` | Learn | `conservices/modules/learn/s3` | read and write |
 | `<prefix>-conservices-wiki` | Wiki | `conservices/modules/wiki/s3` | read and write |
 | `<prefix>-conservices-tasks` | Tasks | `conservices/modules/tasks/s3` | read and write |
@@ -130,7 +130,7 @@ keys apart from the application keys, use **two projects**:
 
 | Project | Location | Buckets | Credentials |
 | --- | --- | --- | --- |
-| `conservices-<prefix>` | `fsn1` | `<prefix>-conservices-den`, `-stash`, `-rally`, `-learn`, `-wiki`, `-tasks` | `den`, `stash`, `rally`, `learn`, `wiki`, `tasks`, `den-files` |
+| `conservices-<prefix>` | `fsn1` | `<prefix>-conservices-den`, `-stash`, `-rally`, `-finance`, `-learn`, `-wiki`, `-tasks` | `den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`, `den-files` |
 | `conservices-<prefix>-backups` | `hel1` | `<prefix>-pg-backups`, `<prefix>-den-backups` | `pg-backups`, `den-backups` |
 
 1. **Create the two projects.** In the
@@ -138,14 +138,14 @@ keys apart from the application keys, use **two projects**:
    and create `conservices-<prefix>`, then `conservices-<prefix>-backups`.
 
 2. **Create the module buckets.** Open the project `conservices-<prefix>`,
-   go to **Object Storage** and choose **Create Bucket** six times:
+   go to **Object Storage** and choose **Create Bucket** seven times:
 
     - Location: **Falkenstein (fsn1)**
-    - Name: `<prefix>-conservices-den` (then `-stash`, `-rally`, `-learn`,
-      `-wiki`, `-tasks`)
+    - Name: `<prefix>-conservices-den` (then `-stash`, `-rally`, `-finance`,
+      `-learn`, `-wiki`, `-tasks`)
     - Visibility: **Private**
 
-    You should see the six buckets listed with location `fsn1`.
+    You should see the seven buckets listed with location `fsn1`.
 
 3. **Create the backup buckets.** In `conservices-<prefix>-backups`, create
    `<prefix>-pg-backups` and `<prefix>-den-backups` in **Helsinki (hel1)**,

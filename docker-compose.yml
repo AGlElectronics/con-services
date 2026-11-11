@@ -514,6 +514,8 @@ services:
         condition: service_healthy
       proxy-ca:
         condition: service_completed_successfully
+      s3:
+        condition: service_healthy
     environment:
       APP_ENV: development
       APP_BASE_URL: https://finance.conservices.test
@@ -532,10 +534,26 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: finance-spa
-      OIDC_AUDIENCE: finance-spa
+      # Access tokens only, with this audience (the realm's audience mapper
+      # on finance-spa adds it).
+      OIDC_AUDIENCE: finance-api
       # DEV ONLY. The token HR sends to read this module's role catalog.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
-      FINANCE_ACCESS_GROUPS: finance-admin
+      # Keycloak groups of the four Finance roles (realm-conservices.json).
+      FINANCE_ADMIN_GROUPS: finance_admin
+      FINANCE_APPROVER_GROUPS: finance_approver
+      FINANCE_BOOKKEEPER_GROUPS: finance_bookkeeper
+      FINANCE_READONLY_GROUPS: finance_read-only
+      # 0: every void, payment, expense, credit note and refund needs a
+      # second person. Raise it in .env to try things alone.
+      FINANCE_APPROVAL_THRESHOLD_CENTS: ${FINANCE_APPROVAL_THRESHOLD_CENTS:-0}
+      # Invoice and credit note PDFs. DEV ONLY key of the s3 service.
+      S3_ENDPOINT: http://s3:9000
+      S3_BUCKET: finance-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
       CORS_ALLOWED_ORIGINS: http://localhost:3006,https://finance.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
@@ -553,6 +571,11 @@ services:
         NGINX_CONF: nginx.stack.conf
         FINANCE_VERSION: dev
     container_name: conservices-finance-frontend
+    environment:
+      # Content Security Policy: the browser may talk to the dev Keycloak.
+      # EXTRA_FRAME_SRC stays empty (the image default). Silent sign-in
+      # frames /silent-callback.html from Finance itself.
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/finance.json:/etc/conservices/config.json:ro

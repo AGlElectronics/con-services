@@ -108,7 +108,8 @@ This changes with the [token contract](#tokens-the-10-contract) below.
 
 The way web apps hold and send tokens is being tightened for 1.0. Den and
 each module adopt it in their own release (their changelogs say when);
-until then they work as described above.
+until then they work as described above. Finance follows points 1 and 2
+from its first release, 1.0.0 ([Finance API: authentication](../modules/finance/api.md#authentication-and-roles)).
 
 1. **An access token per API.** Each web app sends an **access token**
    whose audience (`aud`) names its own API (for example `hr-api`), not the
@@ -364,9 +365,11 @@ renews tokens in the background, and tokens in the local realm are valid for
 !!! note "Other modules"
     Other modules use the same idea with their own groups: HR maps
     `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS` and `HR_LEAD_GROUPS` (defaults
-    `hr-admin`, `hr-viewer`, `hr-lead`) to its three roles, Finance `FINANCE_ACCESS_GROUPS`
-    (default `finance-admin`), and Stash, Rally, Learn, Wiki, Desk and Tasks
-    map groups to roles and permissions in their access configuration. Each
+    `hr-admin`, `hr-viewer`, `hr-lead`) to its three roles, Finance maps
+    groups to four roles with `FINANCE_*_GROUPS` (defaults `finance_admin`,
+    `finance_approver`, `finance_bookkeeper`, `finance_read-only`), and
+    Stash, Rally, Learn, Wiki, Desk and Tasks map groups to roles and
+    permissions in their access configuration. Each
     module's configuration page lists its groups and roles.
 
 ### How groups are matched
@@ -502,7 +505,8 @@ curl -H "X-Dev-User: alice" http://localhost:8090/api/v1/me
 ### Defaults: AUTH_MODE and APP_ENV
 
 From the release in which a backend adopts the shared package `authbase`
-([Shared code](shared-code.md)), the defaults are safe:
+([Shared code](shared-code.md)), the defaults are safe (Finance: from
+1.0.0):
 
 | Setting | Default | Rule |
 | --- | --- | --- |

@@ -46,7 +46,10 @@
     { "name": "learn-admin", "path": "/learn-admin" },
     { "name": "learn-trainer", "path": "/learn-trainer" },
     { "name": "learn-coordinator", "path": "/learn-coordinator" },
-    { "name": "finance-admin", "path": "/finance-admin" },
+    { "name": "finance_admin", "path": "/finance_admin" },
+    { "name": "finance_approver", "path": "/finance_approver" },
+    { "name": "finance_bookkeeper", "path": "/finance_bookkeeper" },
+    { "name": "finance_read-only", "path": "/finance_read-only" },
     { "name": "desk-admin", "path": "/desk-admin" },
     { "name": "desk-agent", "path": "/desk-agent" },
     { "name": "tasks-admin", "path": "/tasks-admin" },
@@ -65,7 +68,7 @@
       "credentials": [
         { "type": "password", "value": "adminadmin", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/den-admin", "/den-member", "/den-ops", "/events-admin", "/hr-admin", "/learn-admin", "/finance-admin", "/desk-admin", "/tasks-admin", "/wiki-admin"],
+      "groups": ["/stash-admin", "/den-admin", "/den-member", "/den-ops", "/events-admin", "/hr-admin", "/learn-admin", "/finance_admin", "/desk-admin", "/tasks-admin", "/wiki-admin"],
       "realmRoles": ["admin", "member"]
     },
     {
@@ -78,7 +81,7 @@
       "credentials": [
         { "type": "password", "value": "alicealice", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-agent", "/tasks-creator", "/wiki-editor"],
+      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-agent", "/tasks-creator", "/wiki-editor", "/finance_approver"],
       "realmRoles": ["member"]
     },
     {
@@ -91,7 +94,7 @@
       "credentials": [
         { "type": "password", "value": "bobbob", "temporary": false }
       ],
-      "groups": ["/stash-readonly", "/den-member"],
+      "groups": ["/stash-readonly", "/den-member", "/finance_bookkeeper"],
       "realmRoles": ["member"]
     },
     {

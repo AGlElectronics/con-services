@@ -168,9 +168,15 @@ if [ -z "$FINANCE_SPA" ]; then
 fi
 spa_urls finance-spa 3006 finance.conservices.test
 
-FINANCE_ADMIN_GID=$(learn_group finance-admin | tail -n1)
-# DEV user: admin keeps the books.
+# Finance roles. DEV users: admin is Finance admin, alice approves (the
+# second person for four-eyes), bob keeps the books.
+FINANCE_ADMIN_GID=$(learn_group finance_admin | tail -n1)
+FINANCE_APPROVER_GID=$(learn_group finance_approver | tail -n1)
+FINANCE_BOOKKEEPER_GID=$(learn_group finance_bookkeeper | tail -n1)
+learn_group finance_read-only >/dev/null
 add_user_to_group admin "$FINANCE_ADMIN_GID"
+add_user_to_group alice "$FINANCE_APPROVER_GID"
+add_user_to_group bob "$FINANCE_BOOKKEEPER_GID"
 
 # Desk and Tasks modules: public PKCE SPA clients with the groups mapper.
 module_spa() {

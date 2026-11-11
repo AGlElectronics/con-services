@@ -82,7 +82,7 @@ The default image tag is that version's first build.
 | `stash` | `1.0.0` | `1.0.0-1` | `stash-secrets` | in the backend at start | |
 | `hr` | `1.0.0` | none | `hr-secrets` | `hr-migrate` initContainer | Set all three tags yourself. |
 | `rally` | `1.0.0` | none | `rally-secrets` | `rally-migrate` initContainer | Set tags yourself. Pairs with Den as `events`. The published `rally-submit` image has the example sign-in settings; build your own for your domain. |
-| `finance` | `1.0.0` | `1.0.0-1` | `finance-secrets` | `finance-migrate` initContainer | No access config file; uses `FINANCE_ACCESS_GROUPS`. |
+| `finance` | `1.0.0` | `1.0.0-1` | `finance-secrets` (`DATABASE_URL`, `S3_*` keys) | `finance-migrate` initContainer | No access config file; roles from `FINANCE_*_GROUPS`. Needs an S3 bucket for invoice PDFs. |
 | `learn` | `1.0.0` | `1.0.0-1` | `learn-secrets` | `learn-migrate` initContainer | |
 | `wiki` | `1.0.0` | `1.0.0-1` | `wiki-secrets` | `wiki-migrate` initContainer | Creates a 1 GiB PersistentVolumeClaim for the live-edit buffer. |
 | `desk` | `1.0.0` | `1.0.0-1` | `desk-secrets` | `desk-migrate` initContainer | |
@@ -378,7 +378,7 @@ in [Network policies](network-policies.md#every-allowed-flow).
 | `networkPolicy.keycloakAdmin` (HR: `keycloak`) | Den, HR, Learn on; others off | Keycloak admin API. Same keys as `oidc`; when namespace, selector and port equal the `oidc` rule, it is rendered only once. |
 | `networkPolicy.data.enabled`, `.namespace` | `true`, `conservices-data` | Egress to the database and S3. Set `false` for managed services and add `extraEgress`. |
 | `networkPolicy.data.postgres.podSelector`, `.port` | `{cnpg.io/cluster: conservices-pg}`, `5432` | CloudNativePG cluster `conservices-pg` (the read-write Service is `conservices-pg-rw`). |
-| `networkPolicy.data.s3.enabled`, `.podSelector`, `.port` | on (Finance, Desk off), `{app.kubernetes.io/name: garage}`, `3900` | Garage's S3 API behind its TLS sidecar. |
+| `networkPolicy.data.s3.enabled`, `.podSelector`, `.port` | on (Desk off), `{app.kubernetes.io/name: garage}`, `3900` | Garage's S3 API behind its TLS sidecar. |
 | `networkPolicy.data.s3.external.fqdns` | `[]` | Host names of an external S3 endpoint (Cilium `matchPattern` syntax, `*` allowed). Renders the `CiliumNetworkPolicy` `<module>-external-s3` for the backend (Den: backend and operator) when `networkPolicy.gateway.cilium` is `true`. See [External S3](#external-s3-hetzner-object-storage). |
 | `networkPolicy.data.s3.external.cidrs` | `[]` | Address ranges of the external S3 endpoint, rendered as `ipBlock` rules in the plain NetworkPolicy. For CNIs without FQDN policies. |
 | `networkPolicy.data.s3.external.port` | `443` | Port of the external S3 endpoint. |

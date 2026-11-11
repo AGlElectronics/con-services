@@ -196,7 +196,7 @@ with each module's docs):
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `HR_DIRECTORY_TOKEN` (optional) | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
-| Finance | `DATABASE_URL`, `S3_*` keys | `conservices-finance` |
+| Finance | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read and write on the PDF bucket; delete is not needed), `DEN_LINK_ENCRYPTION_KEY` (required; see below), `HR_SERVICE_TOKEN` (optional, lets HR read the role catalog) | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `DEN_LINK_ENCRYPTION_KEY`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
 
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
@@ -244,7 +244,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally and Stash 1.0 read it (`rally-secrets` and `stash-secrets`, key `HR_SERVICE_TOKEN`). The GitOps template generates one value when HR is enabled; Stash receives it when Stash is enabled too. Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally, Stash 1.0 and Finance read it from their first release (`rally-secrets`, `stash-secrets`, `finance-secrets`, key `HR_SERVICE_TOKEN`). The GitOps template generates one value when HR is enabled; Stash receives it when Stash is enabled too. Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
 
 ### HR service token
 

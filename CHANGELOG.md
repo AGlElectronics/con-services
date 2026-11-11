@@ -84,6 +84,21 @@ led by Den's MAJOR; see
   `*.conservices.test` through Caddy (`scripts/setup-local-dns.ps1`).
   Module backends default to `DEN_MODE=standalone`; settings are in
   `.env.example`.
+- Docker Compose: Finance stores its invoice and credit note PDFs in the
+  dev bucket `finance-data-dev`, which Den's operator now copies into its
+  backups (`FILES_S3_BUCKETS`). The dev Keycloak realm has Finance's four
+  role groups `finance_admin` (user `admin`), `finance_approver` (`alice`)
+  and `finance_bookkeeper` (`bob`) and `finance_read-only`, replacing
+  `finance-admin`; `FINANCE_APPROVAL_THRESHOLD_CENTS` in `.env` changes
+  how much needs a second person. An existing dev realm gets the groups
+  from `infra/keycloak/apply-mvp.sh`.
+- `scripts/smoke-finance.ps1`: checks Finance's money loop against the
+  running stack (roles, issuing with a stored PDF, a payment approved by a
+  second person, a credit note and refund, a closed month, the audit log).
+- Docs: Finance's [Bookkeeping](docs/modules/finance/bookkeeping.md) guide,
+  and the Finance bucket in [Buckets and keys](docs/deploy/data.md#buckets-and-keys),
+  the [secrets inventory](docs/operations/secrets.md) and the
+  [network policy flows](docs/operations/network-policies.md).
 - `scripts/workspace.ps1` and `scripts/workspace.sh`: clone, update and
   check the root repository and all module and GitOps repositories in one
   go ([Local development](docs/contributing/local-development.md#the-workspace)).
@@ -349,6 +364,10 @@ led by Den's MAJOR; see
   config and the dev Compose service leave `EXTRA_FRAME_SRC` empty. Every
   other page stays unframeable, and both header snippets keep
   `camera=(self)`.
+- Finance's web app may frame `/silent-callback.html` from Finance itself,
+  so a reload can finish silent sign-in. The Helm chart and the dev
+  Compose service leave `EXTRA_FRAME_SRC` empty. Every other page stays
+  unframeable.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.
@@ -457,6 +476,14 @@ led by Den's MAJOR; see
 - [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
+- Docker Compose: `finance-backend` checks access tokens with the audience
+  `finance-api` (`OIDC_AUDIENCE`), as Finance follows the token contract,
+  and `finance-frontend` sets `KEYCLOAK_ORIGIN=https://auth.conservices.test`
+  for its Content Security Policy. A dev realm created before the audience
+  mappers needs `infra/keycloak/apply-mvp.sh` once, or Finance answers
+  `401 invalid token`.
+- `scripts/smoke-finance.ps1` signs in with the access token instead of the
+  ID token.
 
 ### Security
 
