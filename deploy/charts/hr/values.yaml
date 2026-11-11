@@ -26,10 +26,19 @@ image:
 
 # Existing Secret (from your secret manager). Keys HR reads from it:
 #   DATABASE_URL                      required
+#   DEN_LINK_ENCRYPTION_KEY           required outside development (32 bytes, base64)
+#   DEN_LINK_ENCRYPTION_KEY_PREVIOUS  only while rotating that key
+#   HR_SERVICE_TOKEN                  the token HR sends when it reads other
+#                                     modules' role catalogs (>= 32 characters;
+#                                     the same value on Wiki, Finance, Rally,
+#                                     Tasks, Stash, Learn and Desk)
 #   KEYCLOAK_CLIENT_SECRET            secret of the hr-provisioner client
 #   LEARN_SERVICE_TOKEN               optional (training-gated roles)
 #   OFFBOARD_HOOKS, DEPARTMENT_HOOKS  optional, "url|token" lists (contain tokens)
-#   SMTP_PASSWORD                     optional
+#   HR_DIRECTORY_TOKEN                optional; the wiki lists HR's departments
+#                                     and access groups with it (>= 16 chars)
+#   SMTP_PASSWORD                     optional; used only when Den sets no
+#                                     mail server (otherwise HR fetches it)
 #   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY  optional (HR stores no files yet)
 # This chart never creates Secrets.
 existingSecret: hr-secrets
@@ -43,8 +52,15 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: hr-spa
-  OIDC_AUDIENCE: hr-spa
-  HR_ACCESS_GROUPS: hr-admin
+  # Access tokens must carry this audience (Keycloak audience mapper on hr-spa).
+  OIDC_AUDIENCE: hr-api
+  # IdP groups for HR's own roles: admin, read-only viewer, department lead.
+  HR_ADMIN_GROUPS: hr-admin
+  HR_VIEWER_GROUPS: hr-viewer
+  HR_LEAD_GROUPS: hr-lead
+  # manage: HR creates and deletes accounts. link: HR only finds existing
+  # accounts (brokered or existing convention IdP). off: records only.
+  IDP_PROVISIONER_MODE: manage
   CORS_ALLOWED_ORIGINS: https://hr.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -54,8 +70,14 @@ config:
   KEYCLOAK_CLIENT_ID: hr-provisioner
   KEYCLOAK_SETUP_CLIENT_ID: den-spa
   KEYCLOAK_SETUP_REDIRECT_URI: https://den.conservices.test/
-  # Comma-separated "slug=url" list of other modules' role catalogs.
-  ROLE_CATALOG_SOURCES: stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
+  # false when staff sign in through the convention's SSO (brokered).
+  # KEYCLOAK_SEND_PASSWORD_SETUP: "true"
+  # Full path of HR's groups: <parent>/<prefix><name>. Empty: top level.
+  # KEYCLOAK_GROUP_PARENT: /conservices
+  # KEYCLOAK_GROUP_PREFIX: ""
+  # Role catalogs are discovered from the modules paired with Den. Optional
+  # override, a comma-separated "slug=url" list:
+  # ROLE_CATALOG_SOURCES: stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
   # SMTP_HOST: smtp.example.org
   # SMTP_PORT: "587"
@@ -104,9 +126,21 @@ internalTLS:
   # The Gateway API route uses a BackendTLSPolicy instead.
   ingressNginxAnnotations: false
 
+# Google Workspace connector. With enabled: true the chart mounts the
+# service-account key, sets GOOGLE_WORKSPACE_CREDENTIALS_FILE and opens
+# egress to Google's APIs. HR then offers the connector in Settings.
+# Docs: https://aglelectronics.github.io/con-services/modules/hr/google-workspace/
+googleWorkspace:
+  enabled: false
+  # Secret (from your secret manager) holding the service-account key, key
+  # credentials.json. Mounted at /etc/conservices-google; HR reads
+  # GOOGLE_WORKSPACE_CREDENTIALS_FILE=/etc/conservices-google/credentials.json.
+  existingSecret: hr-google-workspace
+
 backend:
-  # Keep 1 for now: HR runs a background worker (pending role grants every
-  # ROLE_GATE_INTERVAL) that has not been tested with several replicas, and
+  # Keep 1 for now: HR runs background workers (provisioning jobs,
+  # housekeeping, review scan, pending role grants) that have not been
+  # tested with several replicas, and
   # every pod runs the migrate initContainer (Recreate strategy). The web
   # app (frontend) is what scales.
   replicas: 1
@@ -148,6 +182,18 @@ frontend:
   #   apiBaseUrl     "" (same origin: nginx forwards /api/)
   # Docs: https://aglelectronics.github.io/con-services/modules/hr/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may talk to besides HR, filled into the nginx
+  # security-headers snippet when the container starts. Scheme + host, no
+  # path. Address search is proxied through HR, so Photon is not listed:
+  # connect-src 'self' already allows it. Set extraConnectSrc only if the
+  # browser itself calls another host. extraFrameSrc stays empty: HR
+  # does not frame sandboxed HTML (Desk sets about:srcdoc).
+  securityHeaders:
+    keycloakOrigin: https://auth.conservices.test
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
+    extraFrameSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -261,11 +307,37 @@ networkPolicy:
     podSelector:
       app: keycloak
     port: 8443
-  # Module backends HR calls (role catalogs, Learn holdings, offboarding and
-  # department hooks). Each target namespace needs a matching ingress rule.
+  # Module backends HR calls (role catalogs of every module paired with Den,
+  # Learn holdings, offboarding and department hooks). Each target namespace
+  # needs a matching ingress rule (the module charts admit conservices-hr).
   moduleEgressNamespaces:
     - conservices-stash
-  # Module backends allowed to call HR's backend (GET /api/role-catalog).
-  allowFromNamespaces: []
+    - conservices-learn
+    - conservices-wiki
+    - conservices-tasks
+    - conservices-desk
+    - conservices-finance
+    - conservices-rally
+  # Module backends allowed to call HR's backend: the wiki lists departments
+  # and access groups (GET /api/internal/directory/groups, bearer
+  # HR_DIRECTORY_TOKEN). The caller's namespace needs a matching egress rule.
+  allowFromNamespaces:
+    - conservices-wiki
+  # The backend calls Photon for address suggestions (the browser calls HR).
+  # fqdns renders a CiliumNetworkPolicy when gateway.cilium is true; on
+  # another CNI set cidrs. enabled: false when address search is unused.
+  addressLookup:
+    enabled: true
+    fqdns: ["photon.komoot.io"]
+    cidrs: []
+    port: 443
+  # Egress to Google's APIs, rendered only with googleWorkspace.enabled.
+  # fqdns renders a CiliumNetworkPolicy (toFQDNs plus a DNS rule) when
+  # gateway.cilium is true; on other CNIs list Google's published ranges in
+  # cidrs (https://www.gstatic.com/ipranges/goog.json).
+  googleApis:
+    fqdns: ["admin.googleapis.com", "oauth2.googleapis.com"]
+    cidrs: []
+    port: 443
   # Raw egress rules for SMTP, an external Postgres, etc.
   extraEgress: []

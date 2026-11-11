@@ -12,6 +12,9 @@ data:
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   DEN_MODE: {{ include "hr.denMode" . | quote }}
+  {{- if .Values.googleWorkspace.enabled }}
+  GOOGLE_WORKSPACE_CREDENTIALS_FILE: /etc/conservices-google/credentials.json
+  {{- end }}
   {{- if $tls }}
   TLS_CERT_FILE: /etc/conservices-tls/tls.crt
   TLS_KEY_FILE: /etc/conservices-tls/tls.key
@@ -74,13 +77,28 @@ data:
         location = /readyz { proxy_pass {{ $scheme }}://hr_backend/readyz; }
         # Installation settings of the web app (sign-in address and the like),
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
+        # Browser security headers only on the web app, never on /api/.
+        # The snippet is filled at container start from KEYCLOAK_ORIGIN and
+        # the other origin variables; this ConfigMap does not contain them.
+        # Address search is proxied to the backend, so connect-src 'self'
+        # covers Photon.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
+        }
+
+        # Hidden iframe target for oidc-client-ts silent renew. This page
+        # may be framed by the app itself; every other location stays
+        # unframeable. EXTRA_FRAME_SRC stays empty.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
+            add_header Cache-Control "no-cache" always;
         }
 
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
         }
     }

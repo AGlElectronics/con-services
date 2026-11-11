@@ -21,7 +21,7 @@ delivered as the `hr-secrets` Secret ([Secrets](../../operations/secrets.md));
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | ConfigMap | `development` gives console logs; use `production` otherwise. |
+| `APP_ENV` | `production` | no | ConfigMap | `development` allows dev sign-in headers and dev-only secrets. Anything else, including empty, is production. Docker Compose sets `development`; the chart sets `production`. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | ConfigMap | HR's public address. |
 | `HTTP_ADDR` | `:8080` | no | ConfigMap | Listen address inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **Secret** | PostgreSQL URL. Also the only setting the `hr-migrate` image reads. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
@@ -54,40 +54,95 @@ the old certificate. The minimum protocol version is TLS 1.2.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | ConfigMap | `oidc` verifies bearer tokens. `dev` trusts `X-Dev-User` and lets everyone in: local only. |
+| `AUTH_MODE` | `oidc` | no | ConfigMap | `oidc` verifies access tokens. `dev` trusts `X-Dev-User` and `X-Dev-Groups` and is refused unless `APP_ENV=development`. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Token issuer, for example `https://auth.example.org/realms/conservices`. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | ConfigMap | Web app client (`hr-spa`). |
-| `OIDC_AUDIENCE` | none | no | ConfigMap | Expected audience if different from the client id. |
-| `HR_ACCESS_GROUPS` | `hr-admin` | no | ConfigMap | Comma-separated groups allowed to use HR at all (matched with or without Keycloak's leading `/`, case-insensitive). Everyone else gets 403. |
+| `OIDC_AUDIENCE` | `hr-api` | no | ConfigMap | Audience an access token must carry. Keycloak adds it with an audience mapper on `hr-spa`. ID tokens are refused. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | ConfigMap | The only token claim HR reads groups from. The `roles` claim is ignored. |
+| `OIDC_GROUP_MATCH` | `full` | no | ConfigMap | `full` compares the whole group path; `last` compares only the last segment. |
+| `OIDC_GROUP_PREFIX` | none | no | ConfigMap | Removed from group names that start with it before they are compared, for example `/con2026`. |
+| `HR_ADMIN_GROUPS` | `hr-admin` | no | ConfigMap | Comma-separated IdP groups whose members are **HR admins** (everything, including settings, imports and the audit log). Compared with `OIDC_GROUP_MATCH` (a leading `/` and case do not matter). |
+| `HR_VIEWER_GROUPS` | `hr-viewer` | no | ConfigMap | Groups whose members are **HR viewers**: read-only access to people, departments, onboardings and the audit log. |
+| `HR_LEAD_GROUPS` | `hr-lead` | no | ConfigMap | Groups whose members are **department leads**: they see and onboard people only in the departments an admin made them lead of. Someone in none of the three groups gets 403 and can only use the self-service page. |
 | `DEV_DEFAULT_USER` | `dev-hr-admin` | no | ConfigMap | Name used in `dev` mode without an `X-Dev-User` header. |
+
+`HR_ACCESS_GROUPS` from earlier previews is no longer read: move its
+value to `HR_ADMIN_GROUPS`. The [Admin guide](admin-guide.md#roles) lists
+what each role may do.
 
 ## Account provisioning (Keycloak)
 
-When both `KEYCLOAK_BASE_URL` and `KEYCLOAK_CLIENT_SECRET` are set, HR
-creates and deletes real accounts. When neither is set it uses a fake
-provisioner that creates nothing (logged as `using FakeIdP`). Setting only
-one is an error.
+`IDP_PROVISIONER_MODE` says what HR does with accounts in the identity
+provider (IdP):
+
+- `manage` (default): HR creates accounts on onboarding, keeps their groups
+  and attributes in step, and disables and deletes them on offboarding.
+- `link`: HR never creates or deletes accounts. It finds the existing
+  account (an account brokered from the convention's own SSO, or an IdP you
+  already run) by email or username, links it to the person and sets only
+  groups and attributes. Use it when accounts belong to another system.
+- `off`: HR keeps records only and touches no accounts.
+
+With `manage` or `link`, set both `KEYCLOAK_BASE_URL` and
+`KEYCLOAK_CLIENT_SECRET`. In development, when neither is set, HR uses a
+fake provisioner that creates nothing (logged as `using FakeIdP`); outside
+`APP_ENV=development` HR refuses to start instead. Setting only one is an
+error.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
+| `IDP_PROVISIONER_MODE` | `manage` | no | ConfigMap | `manage`, `link` or `off` (above). Any other value stops the backend at startup. |
 | `KEYCLOAK_BASE_URL` | none | for real accounts | ConfigMap | Keycloak address HR's backend can reach, on the platform `https://keycloak.conservices-identity.svc.cluster.local:8443`. |
 | `KEYCLOAK_REALM` | `conservices` | no | ConfigMap | Realm the accounts live in. |
 | `KEYCLOAK_CLIENT_ID` | `hr-provisioner` | no | ConfigMap | Service-account client used for the admin API. |
 | `KEYCLOAK_CLIENT_SECRET` | none | for real accounts | **Secret** | Its secret. It can manage users: keep it in the secret manager. |
 | `KEYCLOAK_SETUP_CLIENT_ID` | none | no | ConfigMap | Client the set-password email link returns to (platform: `den-spa`). |
 | `KEYCLOAK_SETUP_REDIRECT_URI` | none | no | ConfigMap | Where people land after setting their password (platform: Den's address). |
+| `KEYCLOAK_SEND_PASSWORD_SETUP` | `true` | no | ConfigMap | Email new accounts a set-password link (needs SMTP on the realm). Set `false` when people sign in through the convention's SSO; HR then also skips the "resend password email" action for brokered accounts. |
+| `KEYCLOAK_GROUP_PARENT` | none (top level) | no | ConfigMap | Parent group HR creates its groups under, for example `/conservices`. HR creates it if missing. |
+| `KEYCLOAK_GROUP_PREFIX` | none | no | ConfigMap | Prefix for HR's group names. Parent `/conservices` and prefix `cs-` give `/conservices/cs-dept-security`. Change it only before the first department exists: existing groups are not renamed. |
+| `KEYCLOAK_USER_ATTRIBUTES` | `hrPersonId,nickname,orgEmail` | no | ConfigMap | User attributes HR may write. Only attributes the realm's user profile declares are written. |
 
-## Other modules
+## Background work
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `ROLE_CATALOG_SOURCES` | none | no | ConfigMap | Comma-separated `slug=url` list of other modules' `GET /api/role-catalog`, for example `stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,events=https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog`. HR always includes its own catalog. |
+| `JOB_INTERVAL` | `10s` | no | ConfigMap | How often the job worker picks up provisioning work (account creation, group changes, retries). |
+| `MAINTENANCE_INTERVAL` | `1h` | no | ConfigMap | Housekeeping: personal-data retention, purges, stuck onboardings, Google Workspace clean-up. |
+| `REVIEW_SCAN_INTERVAL` | `15m` | no | ConfigMap | How often HR looks for IdP accounts without an HR record and puts them in the **Review** queue. `0` turns the scan off. |
+
+## Other modules
+
+Once HR is paired with Den, it asks Den which modules are paired
+(`GET /api/v1/integrations/modules`, with the pairing credential) and
+reads each one's role catalog at the `role_catalog_url` Den returns.
+Do not append `/api/role-catalog`: Den already built that address from
+the module's internal URL, or from its public URL when it has no
+internal URL. A module with an empty slug or no catalog URL is skipped.
+When Den says HR is not paired, or the call fails, that attempt
+discovers nothing and `ROLE_CATALOG_SOURCES` is the whole list; HR still
+shows the last catalog it saved for a module. `ROLE_CATALOG_SOURCES`
+replaces the URL of a slug Den listed and adds modules Den does not
+know. A standalone HR uses only that list.
+
+| Name | Default | Required | Where | What it does |
+| --- | --- | --- | --- | --- |
+| `HR_SERVICE_TOKEN` | none | no | **Secret** | Bearer token HR sends when it reads another module's role catalog. At least 32 characters (`openssl rand -hex 32`). The same value on Wiki, Finance, Rally, Tasks, Stash, Learn and Desk. Without it those modules accept only a staff sign-in on their catalog. |
+| `ROLE_CATALOG_SOURCES` | none | no | ConfigMap | Optional `slug=url` list. Replaces the URL Den reported for that slug and adds modules Den does not know. A standalone HR uses only this list. HR always includes its own catalog. |
 | `QUALIFICATION_CATALOG_SOURCES` | none | no | ConfigMap | Same format, for qualification catalogs, for example `learn=https://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog`. |
 | `LEARN_HOLDINGS_URL` | none | no | ConfigMap | Learn's `/api/internal/holdings`, for example `https://learn-backend.conservices-learn.svc.cluster.local:8080/api/internal/holdings`. With `LEARN_SERVICE_TOKEN`, turns on training requirements for roles. |
 | `LEARN_SERVICE_TOKEN` | none | no | **Secret** | Shared with Learn. |
 | `ROLE_GATE_INTERVAL` | `1m` | no | ConfigMap | How often roles waiting for training are re-checked. |
-| `OFFBOARD_HOOKS` | none | no | **Secret** | Comma-separated `url|token` entries called when someone is offboarded, for example `https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded|<WIKI_SERVICE_TOKEN>`. Failures become warnings. Secret because it contains tokens. |
-| `DEPARTMENT_HOOKS` | none | no | **Secret** | Same format, called when a department is created or renamed, for example `https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments|<TASKS_SERVICE_TOKEN>`. |
+| `OFFBOARD_HOOKS` | none | no | **Secret** | Comma-separated `url|token` entries called when someone is offboarded, for example `https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded|<WIKI_SERVICE_TOKEN>`. Failures become warnings. Secret because it contains tokens. Payload: [Offboarding hook](api.md#offboarding-hook). |
+| `DEPARTMENT_HOOKS` | none | no | **Secret** | Same format, called when a department is created, renamed or archived, for example `https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments|<TASKS_SERVICE_TOKEN>`. |
+| `HR_DIRECTORY_TOKEN` | none (endpoint off) | no | **Secret** | Bearer token other modules (the Wiki) send to [`GET /api/internal/directory/groups`](api.md#get-apiinternaldirectorygroups). At least 16 characters. Set the same value as the Wiki's `HR_DIRECTORY_TOKEN`. |
+| `OUTBOUND_ALLOWED_HOSTS` | none | no | ConfigMap | Hosts or CIDRs the address lookup may reach although they are internal (for example a self-hosted Photon: `photon.internal,10.20.0.0/16`). Every private address is refused otherwise. |
+
+## Google Workspace
+
+| Name | Default | Required | Where | What it does |
+| --- | --- | --- | --- | --- |
+| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | no | ConfigMap (the chart sets it with `googleWorkspace.enabled`) | Path to the service-account key (JSON). When set, the Google Workspace connector is available and an admin can turn it on in Settings. Empty: the connector stays unavailable and HR works without it. See [Google Workspace](google-workspace.md). |
 
 ## Den
 
@@ -95,18 +150,27 @@ one is an error.
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces the host of a pasted Den pairing URL (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty when standalone. |
 | `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **Secret** | Base64 of 32 random bytes (`openssl rand -base64 32`). Encrypts the Den credential HR stores. One key per module. Required unless `APP_ENV=development`. |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **Secret** | The previous key, only while rotating `DEN_LINK_ENCRYPTION_KEY`. Remove it after the restart that re-encrypts the credential. |
 
 ## Email (HR's own notices)
 
-Empty `SMTP_HOST` turns them off; HR then shows a warning instead of
+HR emails people when their account is deleted, and HR admins about
+retention and Google Workspace deadlines. When Den sets `smtp.host`,
+that server is used. When Den also sets `password_set`, HR fetches the
+password from Den at send time
+([Fetching the SMTP password](../../concepts/module-settings.md#fetching-the-smtp-password));
+it is kept in memory for at most a minute and is never written to HR's
+database. `SMTP_PASSWORD` is used only when Den sets no mail server.
+With neither a Den server nor `SMTP_HOST`, HR shows a warning instead of
 sending. Password-setup emails are sent by Keycloak, not by these settings.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `SMTP_HOST` | none | no | ConfigMap | Mail server. |
-| `SMTP_PORT` | `587` | no | ConfigMap | Port. |
-| `SMTP_USERNAME` | none | no | ConfigMap | Login. |
-| `SMTP_PASSWORD` | none | no | **Secret** | Password. |
+| `SMTP_HOST` | none | no | ConfigMap | Mail server, used when Den sets no `smtp.host`. |
+| `SMTP_PORT` | `587` | no | ConfigMap | Port, used with `SMTP_HOST`. |
+| `SMTP_USERNAME` | none | no | ConfigMap | Login, used with `SMTP_HOST`. |
+| `SMTP_PASSWORD` | none | no | **Secret** | Password, used only when Den sets no mail server. |
 | `SMTP_FROM` | none | no | ConfigMap | Sender address. |
 | `SMTP_FROM_NAME` | none | no | ConfigMap | Sender name. |
 

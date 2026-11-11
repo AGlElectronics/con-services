@@ -58,8 +58,11 @@ imported realm file:
 1. In the Keycloak admin console: **Clients → hr-provisioner → Credentials
    → Regenerate**. Copy the new secret (the realm file only has a public
    development value).
-2. Make sure the people who run HR are in the group `hr-admin` (or the
-   groups you set in `HR_ACCESS_GROUPS`).
+2. Create the groups for HR's own roles and put people in them:
+   `hr-admin` (full access), `hr-viewer` (read-only) and `hr-lead`
+   (department leads; they only see and onboard into the departments they
+   lead). Other names: set `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS` and
+   `HR_LEAD_GROUPS` ([Configuration](configuration.md)).
 
 ### 3. Create the namespace
 
@@ -91,18 +94,56 @@ HR reads one Secret, `hr-secrets`:
 | `LEARN_SERVICE_TOKEN` | no | Shared with Learn; turns on training-gated roles. |
 | `OFFBOARD_HOOKS` | no | `url|token` list; contains the Wiki's service token. |
 | `DEPARTMENT_HOOKS` | no | `url|token` list; contains the Tasks service token. |
-| `SMTP_PASSWORD` | no | For HR's own notices. |
+| `HR_DIRECTORY_TOKEN` | no | Shared with the Wiki; lets the Wiki list HR's departments and access groups. At least 16 characters. |
+| `SMTP_PASSWORD` | no | For HR's own notices, only when Den sets no mail server. When Den sets `smtp.password_set`, HR fetches the password from Den. |
 
 ```sh
 vault kv put secret/conservices/hr/backend \
   DATABASE_URL='postgres://hr:change-me@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
-  KEYCLOAK_CLIENT_SECRET=change-me
+  KEYCLOAK_CLIENT_SECRET=change-me \
+  HR_DIRECTORY_TOKEN=change-me-at-least-16-characters
 ```
 
 Create an `ExternalSecret` named `hr-secrets` in `conservices-hr` that
 extracts `conservices/hr/backend`, exactly as for Stash
-([Secrets](../../operations/secrets.md#recommended-external-secrets-operator)).
-Check it:
+([Secrets](../../operations/secrets.md#recommended-external-secrets-operator)):
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: hr-secrets
+  namespace: conservices-hr
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault
+    kind: SecretStore
+  target:
+    name: hr-secrets
+  dataFrom:
+    - extract:
+        key: conservices/hr/backend
+```
+
+For a local trial only, a plain Secret with dev values does the same
+(never for anything real; see [Secrets](../../operations/secrets.md)):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hr-secrets
+  namespace: conservices-hr
+type: Opaque
+stringData:
+  DATABASE_URL: postgres://hr:hr-dev-password@postgres.conservices-data.svc.cluster.local:5432/hr?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
+  KEYCLOAK_CLIENT_SECRET: hr-provisioner-dev-secret # = realm file, dev-only
+  HR_DIRECTORY_TOKEN: hr-directory-dev-token # = the Wiki's, dev-only
+```
+
+HR refuses these dev values outside `APP_ENV=development`. Check the
+ExternalSecret:
 
 ```sh
 kubectl get externalsecret -n conservices-hr
@@ -121,15 +162,19 @@ see; the certificates for traffic inside the cluster (`hr-backend-tls`,
 
 ### 5. Open the network paths HR needs
 
-The chart adds HR's own rules (egress from HR). The **targets** must also
-let HR in. This is **not automated** yet:
+The chart adds HR's own rules: egress from HR to every module namespace
+(`networkPolicy.moduleEgressNamespaces`, for role catalogs, Learn holdings
+and the hooks) and ingress from the Wiki's backend
+(`networkPolicy.allowFromNamespaces: [conservices-wiki]`, for the group
+directory). The **other side** of each path must match:
 
-| Target | Rule needed in the target namespace | Status |
+| Other side | Rule needed there | Status |
 | --- | --- | --- |
-| Stash (`conservices-stash`) | ingress from `conservices-hr` backends on 8080 | Already in Stash's manifests and chart. |
-| Rally (`conservices-rally`) | the same | In Rally's chart (`allowFromNamespaces`). |
+| Stash, Rally, Learn, Wiki, Tasks, Desk, Finance | ingress from `conservices-hr` backends on 8080 | In each module's chart (`allowFromNamespaces` includes `conservices-hr`). |
+| Wiki (`conservices-wiki`) calling HR | egress from the Wiki backend to `conservices-hr` backends on 8080 | In the Wiki chart (`networkPolicy.extraEgress`). |
 | Keycloak (`conservices-identity`) | ingress from `conservices-hr` backends on 8443 (Keycloak's HTTPS port) | **Missing** from the platform manifests: add it yourself (below). |
-| Learn, Wiki, Tasks | the same | Add when those modules are installed. |
+| Photon (`photon.komoot.io`) | egress from the HR backend on 443 | In HR's chart (`networkPolicy.addressLookup`). The browser calls HR; the backend calls Photon. |
+| Google's APIs (only with `googleWorkspace.enabled`) | egress to `admin.googleapis.com` and `oauth2.googleapis.com` on 443 | In HR's chart (`networkPolicy.googleApis`); see [Google Workspace](google-workspace.md). |
 
 Keycloak rule (apply in `conservices-identity`):
 
@@ -156,6 +201,22 @@ spec:
         - { protocol: TCP, port: 8443 }
 ```
 
+Wiki values for the group directory (in the Wiki's chart values):
+
+```yaml
+networkPolicy:
+  extraEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-hr
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: 8080 }
+```
+
 More on cross-module rules: [Network policies](../../operations/network-policies.md#calls-between-modules).
 
 ### 6. Write your values and install the chart
@@ -174,11 +235,11 @@ config:
   CORS_ALLOWED_ORIGINS: https://hr.example.org
   OIDC_ISSUER_URL: https://auth.example.org/realms/conservices
   KEYCLOAK_SETUP_REDIRECT_URI: https://den.example.org/
-  ROLE_CATALOG_SOURCES: >-
-    stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,events=https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog
-networkPolicy:
-  moduleEgressNamespaces: [conservices-stash, conservices-rally]
 ```
+
+HR finds the other modules' role catalogs through Den once it is paired;
+`ROLE_CATALOG_SOURCES` is only needed to override that. The chart already
+allows egress to every module namespace.
 
 Every in-cluster address uses `https://`: the other modules' backends,
 Den (`https://den-backend.conservices-den.svc.cluster.local:8080`) and
@@ -257,8 +318,9 @@ then come from Den and are read-only in HR.
 
 Open `https://hr.example.org` as a member of `hr-admin`. The **Access**
 step of an onboarding should list the roles of Stash, Rally and the other
-sources; a module shown with an error is unreachable (check its
-`ROLE_CATALOG_SOURCES` entry and NetworkPolicies).
+sources; a module shown with an error is unreachable (check that it is
+paired with Den, or its `ROLE_CATALOG_SOURCES` entry, and the
+NetworkPolicies).
 
 ## Standalone on Kubernetes
 
@@ -283,7 +345,10 @@ what is specific to HR:
    (it logs `KEYCLOAK_* not set — using FakeIdP`) and creates **no real
    accounts**, so it works as a register only. Sign-in to HR itself works
    with any OIDC provider (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`) whose
-   tokens carry a `groups` claim containing one of `HR_ACCESS_GROUPS`.
+   tokens carry a `groups` claim containing one of `HR_ADMIN_GROUPS`,
+   `HR_VIEWER_GROUPS` or `HR_LEAD_GROUPS`. With accounts that already
+   exist in your provider, set `IDP_PROVISIONER_MODE=link` (HR finds them
+   and never creates or deletes them) or `off`.
 3. **Values:**
 
     ```yaml
@@ -388,6 +453,12 @@ in `not_after`.
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
 | `imagePullSecrets` | `[]` | Pull Secrets for private images on every pod, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
 | `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
+| `networkPolicy.moduleEgressNamespaces` | every module namespace (`conservices-stash`, `-learn`, `-wiki`, `-tasks`, `-desk`, `-finance`, `-rally`) | Module backends HR may call on 8080 (role catalogs, Learn holdings, hooks). |
+| `networkPolicy.allowFromNamespaces` | `[conservices-wiki]` | Module backends allowed to call HR's backend (the Wiki's group directory). |
+| `frontend.securityHeaders.keycloakOrigin` (and `denOrigin`, `s3Origin`, `extraConnectSrc`) | `https://auth.conservices.test`, empty, empty, empty | Origins the browser may call besides HR, passed as env to the web app. The nginx snippet is filled when the container starts; the chart never writes a filled-in copy. Address search is proxied, so Photon is not an origin. |
+| `networkPolicy.addressLookup.enabled` / `.fqdns` | `true` / `[photon.komoot.io]` | Egress from the backend to Photon for address suggestions. |
+| `googleWorkspace.enabled`, `googleWorkspace.existingSecret` | `false`, `hr-google-workspace` | Mounts the Google service-account key (key `credentials.json`) at `/etc/conservices-google` and sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE`. The connector is then available in Settings. See [Google Workspace](google-workspace.md). |
+| `networkPolicy.googleApis.fqdns` / `.cidrs` / `.port` | `[admin.googleapis.com, oauth2.googleapis.com]` / `[]` / `443` | Egress to Google's APIs, only with `googleWorkspace.enabled`: host names with Cilium (`CiliumNetworkPolicy` `hr-google-apis`), address ranges otherwise. |
 
 ### Without cert-manager
 
@@ -499,7 +570,9 @@ EOF
           OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
           OIDC_CLIENT_ID: hr-spa
           OIDC_AUDIENCE: hr-spa
-          HR_ACCESS_GROUPS: hr-admin
+          HR_ADMIN_GROUPS: hr-admin
+          HR_VIEWER_GROUPS: hr-viewer
+          HR_LEAD_GROUPS: hr-lead
           KEYCLOAK_BASE_URL: http://keycloak:8080
           KEYCLOAK_REALM: conservices
           KEYCLOAK_CLIENT_ID: hr-provisioner
@@ -639,8 +712,24 @@ files yet: remove them all, or set them all.
 way round).
 
 **Signed in, but HR says "you don't have access to HR".** The token's
-`groups` claim contains none of `HR_ACCESS_GROUPS` (default `hr-admin`).
-`GET /api/me` shows the groups HR saw.
+`groups` claim contains none of `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS` or
+`HR_LEAD_GROUPS` (defaults `hr-admin`, `hr-viewer`, `hr-lead`).
+`GET /api/me` shows the groups HR saw. A lead who leads no department yet
+sees nothing until an admin adds them with **Departments → Change leads**.
+
+**The Wiki's share dialog shows no HR departments.** The Wiki only asks HR
+while both are paired with Den and the Wiki has `HR_DIRECTORY_URL` set.
+Test the endpoint from inside the cluster (replace the token):
+
+```sh
+kubectl exec -n conservices-hr deploy/hr-frontend -- curl -s --cacert /etc/conservices-internal-ca/ca.crt \
+  -H "Authorization: Bearer change-me-at-least-16-characters" \
+  https://hr-backend:8080/api/internal/directory/groups
+```
+
+`404` means `HR_DIRECTORY_TOKEN` is not set on HR; `401` means the Wiki's
+token differs from HR's; a timeout means the NetworkPolicy on one side is
+missing (step 5).
 
 **Completing an onboarding fails with a Keycloak error or times out.** HR
 cannot reach Keycloak's admin API. Check `KEYCLOAK_BASE_URL` (on the
@@ -654,8 +743,8 @@ and assign the `realm-management` roles `manage-users`, `view-users`,
 already does this).
 
 **A module shows "error" in the access step.** HR could not fetch that
-module's `/api/role-catalog`. Check the URL in `ROLE_CATALOG_SOURCES` and
-both NetworkPolicy rules.
+module's `/api/role-catalog`. Check that the module is paired with Den (or
+its URL in `ROLE_CATALOG_SOURCES`) and both NetworkPolicy rules.
 
 **No password-setup email arrives.** Keycloak sends it, not HR: configure
 SMTP in the realm (**Realm settings → Email**). When Keycloak cannot send

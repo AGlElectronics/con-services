@@ -191,9 +191,9 @@ with each module's docs):
 | Module | Secrets | Namespace |
 | --- | --- | --- |
 | Stash | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `conservices-stash` |
-| HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, SMTP password if any | `conservices-hr` |
+| HR | `DATABASE_URL`, `DEN_LINK_ENCRYPTION_KEY`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `HR_SERVICE_TOKEN`, `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, `HR_DIRECTORY_TOKEN` (optional), SMTP password if any; with Google Workspace, the service-account key in its own Secret `hr-google-workspace` (key `credentials.json`) | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
-| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
+| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `HR_DIRECTORY_TOKEN` (optional) | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL`, `S3_*` keys | `conservices-finance` |
@@ -202,6 +202,26 @@ with each module's docs):
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
+`HR_DIRECTORY_TOKEN` is set on both HR and the Wiki: the Wiki sends it to
+list HR's departments and access groups. Generate it (at least 16
+characters, for example `openssl rand -hex 32`); to rotate, store a new
+value and restart HR and the Wiki. Without it HR's directory endpoint is
+off and the Wiki's share dialog falls back to other sources.
+
+`HR_SERVICE_TOKEN` is one value for the whole installation (at least 32
+characters, `openssl rand -hex 32`). HR sends it when it reads a role
+catalog. The same value is set on HR and on every module that checks it:
+Wiki, Finance, Rally, Tasks, Stash, Learn and Desk. To rotate, store the
+new value in each of those Secrets and restart them. Without it a module
+accepts only a staff sign-in on its catalog.
+
+The **Google Workspace service-account key** (a JSON file) can create,
+suspend and delete accounts in your Workspace domain. Keep it only in your
+secret manager, deliver it as the Secret `hr-google-workspace` with the key
+`credentials.json` (chart value `googleWorkspace.existingSecret`), and
+rotate it by creating a new key for the service account in Google Cloud,
+storing it, restarting HR and deleting the old key. See
+[Google Workspace](../modules/hr/google-workspace.md).
 
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;
@@ -213,7 +233,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | Planned with the [role catalog contract](../concepts/role-catalog.md); not used by any release yet. Same value on every side; allows only catalog reads. |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Allows only catalog reads. Rotate by writing a new value everywhere, then restart. |
 
 ### Den link encryption key
 

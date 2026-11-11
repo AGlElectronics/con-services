@@ -19,7 +19,7 @@ HR {{ .Values.image.backend.tag }} is installed in namespace {{ .Values.namespac
 {{- if or .Values.route.enabled .Values.ingress.enabled }}
 
 3. Open https://{{ ternary .Values.route.host .Values.ingress.host .Values.route.enabled }} and sign in as a member of
-   {{ .Values.config.HR_ACCESS_GROUPS | default "hr-admin" }}.
+   {{ .Values.config.HR_ADMIN_GROUPS | default "hr-admin" }} (HR admin).
 {{- end }}
 
 4. Pair with Den: Den -> Admin console -> Modules -> Pair, then in HR

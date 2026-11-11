@@ -288,7 +288,16 @@ networkPolicy:
     podSelector:
       app: keycloak
     port: 8443
-  # Raw NetworkPolicy egress rules appended to the backend policy, e.g.
-  #   - to: [{ ipBlock: { cidr: 10.20.0.0/24 } }]
-  #     ports: [{ protocol: TCP, port: 5432 }]
-  extraEgress: []
+  # Raw NetworkPolicy egress rules appended to the backend policy.
+  # The Wiki's share dialog calls HR's group directory
+  # (GET /api/internal/directory/groups). HR admits this namespace.
+  extraEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-hr
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: 8080 }

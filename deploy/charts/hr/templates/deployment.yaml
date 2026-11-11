@@ -22,7 +22,7 @@ metadata:
     {{- include "hr.labels" . | nindent 4 }}
 automountServiceAccountToken: false
 ---
-# The HR server never migrates (ADR-0003); the migrate initContainer applies
+# The HR server never migrates; the migrate initContainer applies
 # pending migrations and exits before the server starts.
 apiVersion: apps/v1
 kind: Deployment
@@ -128,6 +128,11 @@ spec:
             {{- if $tls }}
             {{- include "hr.tlsVolumeMounts" . | nindent 12 }}
             {{- end }}
+            {{- if .Values.googleWorkspace.enabled }}
+            - name: google-workspace
+              mountPath: /etc/conservices-google
+              readOnly: true
+            {{- end }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -136,6 +141,15 @@ spec:
           emptyDir: {}
         {{- if $tls }}
         {{- include "hr.tlsVolumes" (dict "root" . "secret" "hr-backend-tls") | nindent 8 }}
+        {{- end }}
+        {{- if .Values.googleWorkspace.enabled }}
+        - name: google-workspace
+          secret:
+            secretName: {{ required "googleWorkspace.existingSecret is required" .Values.googleWorkspace.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: credentials.json
+                path: credentials.json
         {{- end }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
@@ -182,6 +196,17 @@ spec:
         - name: frontend
           image: {{ include "hr.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.keycloakOrigin | quote }}
+            - name: DEN_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.denOrigin | quote }}
+            - name: S3_ORIGIN
+              value: {{ .Values.frontend.securityHeaders.s3Origin | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ .Values.frontend.securityHeaders.extraConnectSrc | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ .Values.frontend.securityHeaders.extraFrameSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -231,6 +256,10 @@ spec:
             # nginx-unprivileged: nginx.pid and temporary files
             - name: tmp
               mountPath: /tmp
+            # The image entrypoint writes the filled security-headers snippet
+            # here. A read-only root filesystem cannot hold that file.
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
       volumes:
         - name: nginx-conf
           configMap:
@@ -244,6 +273,8 @@ spec:
         - name: run
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: nginx-snippets
           emptyDir: {}
         {{- if $tls }}
         {{- include "hr.tlsVolumes" (dict "root" . "secret" "hr-frontend-tls") | nindent 8 }}

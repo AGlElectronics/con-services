@@ -16,8 +16,34 @@ Learn, Wiki, Desk, Tasks) start at `1.0.0` too, each with its own version
 led by Den's MAJOR; see
 [Versions and upgrades](docs/operations/versioning.md).
 
+### Changed
+
+- HR's chart expects access tokens for audience `hr-api`, lists
+  `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN` on `existingSecret`,
+  fills nginx security-header origins from env (never a filled-in
+  ConfigMap), and allows the backend to call Photon
+  (`networkPolicy.addressLookup`). `/silent-callback.html` uses the
+  frame-self snippet so the app can frame its silent sign-in page;
+  `EXTRA_FRAME_SRC` stays empty. The Wiki chart allows its backend to
+  call HR's group directory.
+- Development Compose sets `OIDC_AUDIENCE=hr-api` on HR and the dev-only
+  `HR_SERVICE_TOKEN` (`dev-only-hr-service-token-change-me-0000000000`) on HR and on
+  every module that checks role-catalog calls. `scripts/smoke-hr-keycloak.ps1`
+  sends the access token.
+- [Secrets](docs/operations/secrets.md) records `HR_SERVICE_TOKEN` (shared
+  by HR, Wiki, Finance, Rally, Tasks, Stash, Learn and Desk) and
+  `HR_DIRECTORY_TOKEN` (HR and Wiki). [Google Workspace](docs/modules/hr/google-workspace.md)
+  describes the Cloud and Admin console steps for the connector, which
+  runs when the service-account key is mounted.
+
 ### Added
 
+- Development: the `conservices` realm has the groups `hr-viewer` (read-only
+  HR) and `hr-lead` (department leads) next to `hr-admin`, and
+  `docker-compose.yml` lets the wiki list HR's departments and access groups
+  (`HR_DIRECTORY_URL`, and `HR_DIRECTORY_TOKEN` on both backends with the
+  dev-only value `hr-directory-dev-token`). An existing dev stack picks up
+  the new groups only after the realm is re-imported.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
