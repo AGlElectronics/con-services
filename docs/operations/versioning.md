@@ -84,7 +84,7 @@ Compare the MAJOR numbers:
 | HR `1.12.1` | `1.4.2` | No, both are MAJOR 1. Check the release's *Needs Den* line (below); `1.12.1` needs Den `1.0.0` or later. |
 | HR `1.13.0`, which needs Den `1.5.0` or later | `1.4.2` | Yes, a Den MINOR: upgrade Den to `1.5.0` first, then HR. |
 | HR `2.13.0` | `1.4.2` | Yes, a Den MAJOR (Den `2.5.0`): follow [Den MAJOR upgrades](#den-major-upgrades); every other enabled module moves to MAJOR 2 at the same time, for example Finance `1.3.0` → `2.3.0`. |
-| Den `1.5.0` | `1.4.2` | Only Den changes. No module needs an update. |
+| Den `1.5.0` | `1.4.2` | No. A Den MINOR only happens when Den adds a feature, for example a new page or endpoint. Upgrade Den alone; no module has to change. Often a module release follows that uses the new feature (its *Needs Den* line then says `1.5.0 or later`), but that is not required. |
 | Den `2.5.0` | `1.4.2` | Every enabled module needs its MAJOR 2 release. |
 
 In short: **Den changed MAJOR means every module needs an update.**
