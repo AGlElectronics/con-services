@@ -25,8 +25,13 @@ image:
     pullPolicy: IfNotPresent
 
 # Name of an existing Secret (created by your secret manager, for example an
-# ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID and
-# S3_SECRET_ACCESS_KEY. This chart never creates Secrets.
+# ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
+# S3_SECRET_ACCESS_KEY and DEN_LINK_ENCRYPTION_KEY (32 random bytes, base64;
+# encrypts the stored Den credential; the backend pod does not start without
+# it unless config.APP_ENV is development). Optional keys:
+# DEN_LINK_ENCRYPTION_KEY_PREVIOUS (only during a key rotation) and
+# HR_SERVICE_TOKEN (lets HR read the role catalog). This chart never creates
+# Secrets. Docs: https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: finance-secrets
 
 # Finance has no access config file: who may use it, and with which role,
@@ -46,7 +51,9 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: finance-spa
-  OIDC_AUDIENCE: finance-spa
+  # Access tokens must carry this audience (the realm's audience mapper on
+  # finance-spa adds it); ID tokens are refused.
+  OIDC_AUDIENCE: finance-api
   # IdP groups (comma-separated) that grant each Finance role. The first
   # group of each is what the role catalog publishes for HR.
   FINANCE_ADMIN_GROUPS: finance_admin
@@ -156,6 +163,15 @@ frontend:
   #   apiBaseUrl     "" (same origin: nginx forwards /api/)
   # Docs: https://aglelectronics.github.io/con-services/modules/finance/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may contact besides the app, for the Content Security
+  # Policy nginx sends (scheme + host, no path; several separated by spaces).
+  # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # Empty: scheme and host of the web app's sign-in address (oidcAuthority).
+    keycloakOrigin: ""
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
