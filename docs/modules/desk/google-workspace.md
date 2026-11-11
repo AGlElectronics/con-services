@@ -79,13 +79,12 @@ the message again (duplicates are skipped by `Message-ID`).
 
     - Gmail API
     - Admin SDK API
-    - Groups Settings API
 
     Or with the `gcloud` command line:
 
     ```sh
     gcloud services enable gmail.googleapis.com admin.googleapis.com \
-      groupssettings.googleapis.com --project conservices-desk
+      --project conservices-desk
     ```
 
 3. **Create the service account and its key.** **IAM & Admin → Service
@@ -111,7 +110,7 @@ the message again (duplicates are skipped by `Message-ID`).
    comma-separated):
 
     ```text
-    https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/gmail.settings.sharing,https://www.googleapis.com/auth/admin.directory.user,https://www.googleapis.com/auth/admin.directory.group,https://www.googleapis.com/auth/admin.directory.group.member,https://www.googleapis.com/auth/apps.groups.settings
+    https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/gmail.settings.sharing,https://www.googleapis.com/auth/admin.directory.user,https://www.googleapis.com/auth/admin.directory.group
     ```
 
     | Scope | Used for |
@@ -119,8 +118,10 @@ the message again (duplicates are skipped by `Message-ID`).
     | `gmail.modify` | Read mail, add the `Desk` label, send replies, move to and from Gmail's trash. Not permanent deletion. |
     | `gmail.settings.sharing` | Add and remove the send-as address of group mailboxes on the shared account. |
     | `admin.directory.user` | Create, suspend, unsuspend and delete `google_user` mailboxes. |
-    | `admin.directory.group`, `admin.directory.group.member` | Create and delete `google_group` mailboxes and add the shared account to them. |
-    | `apps.groups.settings` | Let people outside your domain write to a group mailbox. |
+    | `admin.directory.group` | Create and delete `google_group` mailboxes and add the shared account to them. |
+
+    Desk does not change a group's posting settings. Allow outside senders
+    yourself, see step 9.
 
     Click **Authorize**. Changes can take a few minutes, rarely up to 24
     hours, to apply.
@@ -191,7 +192,7 @@ the message again (duplicates are skipped by `Message-ID`).
     `/etc/desk-google/service-account.json`. With Cilium it adds the
     `CiliumNetworkPolicy` `desk-backend-google`, which allows HTTPS to
     `gmail.googleapis.com`, `admin.googleapis.com`,
-    `oauth2.googleapis.com` and `www.googleapis.com` (Groups Settings API).
+    `oauth2.googleapis.com` and `www.googleapis.com`.
     On other CNIs set `networkPolicy.google.cidrs` (Google publishes no
     small address range; `0.0.0.0/0` on port 443 is the usual choice). With
     only Google mailboxes and no `SMTP_HOST`, you can set
@@ -228,6 +229,14 @@ the message again (duplicates are skipped by `Message-ID`).
      "email":"registration@example.org","connector":"google_group",
      "provider_state":"active","provider_error":"", "...": "..."}
     ```
+
+    For a `google_group` mailbox, let customers write to it: in the Admin
+    console open **Directory → Groups**, select the group → **Group
+    settings → Who can post** → **Anyone on the web** → **Save**. If the
+    option is missing, first allow it for the domain under **Apps → Google
+    Workspace → Groups for Business → Sharing settings** ("Group owners can
+    allow incoming email from outside the organisation"). Desk does not
+    change this setting for you.
 
 10. **Verify.** Send a mail from an outside address to
     `registration@example.org`. Within `FETCH_INTERVAL` it appears in Desk
@@ -276,10 +285,9 @@ the message was delivered to. Usually the group forwards from an alias:
 create the mailbox with the address the customer actually writes to.
 
 **Customers get a bounce "you don't have permission to post to this
-group".** The group only accepts members' mail. Desk sets "anyone can post"
-when it creates the group; for a group that already existed, set **Who can
-post** to **Anyone on the web** in the Admin console, or check that
-`apps.groups.settings` is in the delegation scopes.
+group".** The group only accepts members' mail. Desk does not change who can
+post. Set **Who can post** to **Anyone on the web** in the Admin console
+(step 9).
 
 **Replies from a group mailbox fail with `the shared account may not send
 as this address`, or creating a group mailbox fails the same way.** The
