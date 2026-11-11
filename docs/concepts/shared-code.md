@@ -646,12 +646,20 @@ places the page may load scripts, images and data from:
 API responses get their own stricter headers from the backend
 (`authbase.SecurityHeaders`).
 
-The headers come in two forms in `shared/nginx/`:
+`/silent-callback.html` is the one page the app must be able to frame
+itself, so silent sign-in can run in a hidden iframe. That exact location
+uses a second snippet; see [Silent sign-in iframe](#silent-sign-in-iframe).
+Every other response keeps `frame-ancestors 'none'`.
+
+The headers come in two forms in `shared/nginx/`, and each form has a
+second file for that one page:
 
 | File | Use |
 | --- | --- |
 | `security-headers.conf.template` | **Preferred.** The origins are environment variables that the official nginx image fills in when the container starts, so one image works for any domain. |
+| `security-headers-frame-self.conf.template` | The same headers with `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, for `location = /silent-callback.html` only. |
 | `security-headers.conf` | The same headers with placeholders you replace by hand, for an app whose origins are fixed at build time. |
+| `security-headers-frame-self.conf` | The build-time form of the silent sign-in snippet. |
 
 !!! note "Who fills in the origins"
     **Nothing fills in the placeholders when you copy the file.** The sync
@@ -662,8 +670,9 @@ The headers come in two forms in `shared/nginx/`:
     `nginxinc/nginx-unprivileged` images run `envsubst` over
     `/etc/nginx/templates/*.template` from their entrypoint
     (`20-envsubst-on-templates.sh`), reading the container's environment
-    variables `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and
-    `EXTRA_CONNECT_SRC`. So one image works for every installation, and a
+    variables `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN`,
+    `EXTRA_CONNECT_SRC` and `EXTRA_FRAME_SRC`. So one image works for every
+    installation, and a
     new domain needs only new environment values and a restart.
 
     **Helm charts and Kustomize manifests pass the origins as `env` on the
@@ -686,37 +695,44 @@ separated by spaces; an empty value leaves the origin out.
 | `DEN_ORIGIN` | Den, when the browser calls Den or loads assets from it. Most apps leave it empty: they serve Den's brand through their own API. | `connect-src` |
 | `S3_ORIGIN` | The S3 storage, for apps whose browser uploads files straight to a bucket (presigned URLs) or shows images from it. | `connect-src`, `img-src` |
 | `EXTRA_CONNECT_SRC` | Anything else the browser must call. | `connect-src` |
+| `EXTRA_FRAME_SRC` | Extra `frame-src` tokens. Empty everywhere except Desk, which sets `about:srcdoc` so a sandboxed mail frame can render. Not an origin: it is the token `about:srcdoc`, with no scheme or host. | `frame-src` |
 
 ### Use the template in a web app
 
-1. Copy `shared/nginx/security-headers.conf.template` into the app, for
-   example to `infra/security-headers.conf.template`.
-2. In the frontend Dockerfile, put it into the image's template folder and
-   tell the image where to write the result. The official `nginx` and
+1. Copy `shared/nginx/security-headers.conf.template` and
+   `shared/nginx/security-headers-frame-self.conf.template` into the app,
+   for example to `infra/`.
+2. In the frontend Dockerfile, put both into the image's template folder
+   and tell the image where to write the result. The official `nginx` and
    `nginxinc/nginx-unprivileged` images run `envsubst` at start-up on every
    `/etc/nginx/templates/*.template` file and write it, without the
    `.template` suffix, to `NGINX_ENVSUBST_OUTPUT_DIR`. The filter limits the
-   substitution to the four variables, so nginx's own `$uri` and the like
+   substitution to the five variables, so nginx's own `$uri` and the like
    are left alone; the empty defaults keep an unset variable from ending up
-   in the policy as literal text.
+   in the policy as literal text. The loop writes a copy of each snippet
+   with the variables removed, used when `/etc/nginx/snippets` is read-only.
 
     ```dockerfile
     FROM nginxinc/nginx-unprivileged:1.30.6-alpine
     COPY infra/nginx.conf /etc/nginx/conf.d/default.conf
     COPY infra/security-headers.conf.template /etc/nginx/templates/security-headers.conf.template
+    COPY infra/security-headers-frame-self.conf.template /etc/nginx/templates/security-headers-frame-self.conf.template
     USER root
-    # A copy without outside origins, used when /etc/nginx/snippets is read-only.
+    # Copies without outside origins, used when /etc/nginx/snippets is read-only.
     RUN mkdir -p /etc/nginx/snippets \
-     && sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/security-headers.conf.template \
-          > /etc/nginx/snippets/security-headers.conf \
+     && for t in security-headers security-headers-frame-self; do \
+          sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/$t.conf.template \
+            > /etc/nginx/snippets/$t.conf; \
+        done \
      && chown -R 101:101 /etc/nginx/snippets
     USER 101
     ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/snippets \
-        NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC)$' \
+        NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC|EXTRA_FRAME_SRC)$' \
         KEYCLOAK_ORIGIN="" \
         DEN_ORIGIN="" \
         S3_ORIGIN="" \
-        EXTRA_CONNECT_SRC=""
+        EXTRA_CONNECT_SRC="" \
+        EXTRA_FRAME_SRC=""
     ```
 
 3. Include the snippet in **every `location` that serves the app**, not
@@ -820,7 +836,7 @@ separated by spaces; an empty value leaves the origin out.
     ```
 
     ```text
-    content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.conservices.test; font-src 'self' data:; connect-src 'self' https://auth.conservices.test   https://s3.conservices.test ; frame-src 'self' https://auth.conservices.test; frame-ancestors 'none'; form-action 'self' https://auth.conservices.test; base-uri 'self'; object-src 'none'
+    content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.conservices.test; font-src 'self' data:; connect-src 'self' https://auth.conservices.test   https://s3.conservices.test ; frame-src 'self'  https://auth.conservices.test; frame-ancestors 'none'; form-action 'self' https://auth.conservices.test; base-uri 'self'; object-src 'none'
     x-frame-options: DENY
     x-content-type-options: nosniff
     referrer-policy: strict-origin-when-cross-origin
@@ -835,9 +851,104 @@ The container log shows the start-up step:
 
 ```text
 20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/security-headers.conf.template to /etc/nginx/snippets/security-headers.conf
+20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/security-headers-frame-self.conf.template to /etc/nginx/snippets/security-headers-frame-self.conf
 ```
 
-#### Troubleshooting the headers
+### Silent sign-in iframe
+
+With tokens kept in memory, a reload signs the person in again through the
+existing Keycloak session. `oidc-client-ts` does that by loading
+`/silent-callback.html` in a hidden iframe of the app itself and reading
+the result with `postMessage`. `frame-ancestors 'none'` and
+`X-Frame-Options: DENY` refuse that iframe, so the session ends and the
+person has to type a password.
+
+`security-headers-frame-self.conf.template` is the shared policy with two
+differences: `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`.
+Everything else, including `${EXTRA_FRAME_SRC}`, is the same. Use it only
+for the silent-callback file. An exact `location` beats `location /`, so
+the rest of the app stays unframeable. The HTML file is
+`public/silent-callback.html` (Vite copies `public/` to the site root);
+this location must not fall through to `index.html`.
+
+```nginx
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://backend;   # no include: the backend sets its headers
+    }
+
+    location = /config.json {
+        alias /etc/conservices/config.json;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Hidden iframe target for oidc-client-ts silent renew.
+    location = /silent-callback.html {
+        include /etc/nginx/snippets/security-headers-frame-self.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+}
+```
+
+Check that page on its own. `frame-ancestors` is `'self'` and
+`X-Frame-Options` is `SAMEORIGIN`. The home page still says `'none'` and
+`DENY`.
+
+```sh
+curl -sI https://hr.con.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.con.example.org   ; frame-src 'self'  https://auth.con.example.org; frame-ancestors 'self'; form-action 'self' https://auth.con.example.org; base-uri 'self'; object-src 'none'
+x-frame-options: SAMEORIGIN
+```
+
+An app that still replaces placeholders by hand (Wiki today) copies
+`security-headers-frame-self.conf` the same way as `security-headers.conf`
+and includes that file in the same `location`.
+
+#### Sandboxed HTML (`about:srcdoc`)
+
+Desk shows a customer's message in a sandboxed iframe whose document is
+`srcdoc`. The browser checks that frame against the page's `frame-src`.
+Without `about:srcdoc` the mail pane stays blank. Set
+`EXTRA_FRAME_SRC` to that token on Desk's frontend only:
+
+=== "Docker Compose"
+
+    ```yaml
+    desk-frontend:
+      environment:
+        KEYCLOAK_ORIGIN: https://auth.conservices.test
+        EXTRA_FRAME_SRC: "about:srcdoc"
+    ```
+
+=== "Kubernetes"
+
+    ```yaml
+    - name: EXTRA_FRAME_SRC
+      value: "about:srcdoc"
+    ```
+
+The token is inserted in both snippets
+(`frame-src 'self' ${EXTRA_FRAME_SRC} ${KEYCLOAK_ORIGIN}`). Empty, which
+is the image default, leaves a space and adds no source. Desk's editor
+is unaffected: `style-src` already allows `'unsafe-inline'`, and its
+scripts are files. No other app sets `EXTRA_FRAME_SRC`.
+
+### Troubleshooting the headers
 
 **The browser console says *Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self'"***
 : An inline `<script>` is left in an HTML file. Move it into a file
@@ -848,9 +959,20 @@ The container log shows the start-up step:
   `S3_ORIGIN` or `EXTRA_CONNECT_SRC` on the frontend container and
   restart it.
 
-**The policy contains `${S3_ORIGIN}` literally**
-: The variable is not defined in the container and has no empty default.
-  Add the `ENV … S3_ORIGIN=""` defaults from step 2.
+**The policy contains `${S3_ORIGIN}` or `${EXTRA_FRAME_SRC}` literally**
+: The variable is not defined in the container, or it is missing from
+  `NGINX_ENVSUBST_FILTER`. Add the `ENV` defaults and the filter from
+  step 2, including `EXTRA_FRAME_SRC`.
+
+**A reload asks for the password again, and the console says framing
+`/silent-callback.html` violated `frame-ancestors 'none'`**
+: That location is still including `security-headers.conf`. Give the
+  exact location `= /silent-callback.html` the frame-self snippet. See
+  [Silent sign-in iframe](#silent-sign-in-iframe).
+
+**Desk's mail pane is blank and the console refuses `about:srcdoc`**
+: Set `EXTRA_FRAME_SRC=about:srcdoc` on Desk's frontend and restart it.
+  See [Sandboxed HTML](#sandboxed-html-aboutsrcdoc).
 
 **The log says `/etc/nginx/templates exists, but /etc/nginx/snippets is not writable`**
 : The root file system is read-only. Mount an `emptyDir` at

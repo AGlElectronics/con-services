@@ -119,6 +119,9 @@ until then they work as described above.
    `localStorage` or `sessionStorage`, so a script injected into the page
    cannot read a stored token. After a reload, the app signs in again
    silently through the Keycloak session; nobody has to type a password.
+   The hidden page is `/silent-callback.html`. The app's nginx must let
+   the app frame that one file and no other page; see
+   [Silent sign-in iframe](shared-code.md#silent-sign-in-iframe).
 3. **No user token leaves Den.** Den's portal no longer sends the person's
    token to modules. Den's **backend** asks each paired module for the
    person's to-dos, server to server:

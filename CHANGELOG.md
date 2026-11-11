@@ -173,6 +173,15 @@ led by Den's MAJOR; see
   for a module that creates aliases (Desk). Other Gmail calls stay on
   `gmail.modify`. See
   [Google Workspace service account](docs/concepts/shared-code.md#google-workspace-service-account).
+- Nginx: `shared/nginx/security-headers-frame-self.conf.template` is the
+  shared security headers with `frame-ancestors 'self'` and
+  `X-Frame-Options: SAMEORIGIN`, for the exact location
+  `= /silent-callback.html` only. Silent sign-in (tokens kept in memory)
+  loads that page in a hidden iframe of the app itself, which
+  `frame-ancestors 'none'` blocks. `EXTRA_FRAME_SRC` (empty by default)
+  adds tokens to `frame-src`; Desk sets it to `about:srcdoc` for the
+  sandboxed mail frame. See
+  [Silent sign-in iframe](docs/concepts/shared-code.md#silent-sign-in-iframe).
 - Shared Go code: `RequireDen` checks a call Den makes into a module on
   `GET /api/portal/todos`. It compares the pairing credential in constant
   time and reads the person from `X-Den-User-Issuer` and
@@ -259,6 +268,11 @@ led by Den's MAJOR; see
 
 ### Security
 
+- The shared nginx policy still sends `frame-ancestors 'none'` and
+  `X-Frame-Options: DENY` on every page except `/silent-callback.html`,
+  which allows framing by the app's own origin only (`frame-ancestors
+  'self'`, `X-Frame-Options: SAMEORIGIN`). Other sites still cannot embed
+  the app.
 - Default-deny NetworkPolicies in every namespace with an explicit allow
   list, `restricted` Pod Security on every namespace, resource requests and
   limits on every container, and no service account tokens mounted.
