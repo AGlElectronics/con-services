@@ -33,6 +33,31 @@ keeps its current settings and environment variables.
    value when it needs it from `GET /api/v1/integrations/module-settings/secrets`
    and keeps it in memory only.
 
+## Key names
+
+Every setting has a **dotted key**. Each dot is one level of nesting in the
+JSON Den sends, so `wiki.revision_retention_days` is
+`{"wiki": {"revision_retention_days": 90}}` inside `data`.
+
+| Top-level key | Who reads it | Examples |
+| --- | --- | --- |
+| `retention` | every module that holds the data in question | `retention.inactive_users_days` |
+| `smtp` | every module that sends mail | `smtp.host`, `smtp.password_set` |
+| `<module>`, the module's slug (`finance`, `stash`, `wiki`, `hr`, `rally`, `learn`, `desk`, `tasks`) | that module only | `finance.seller.legal_name`, `stash.lost_found.mode`, `wiki.revision_retention_days` |
+
+The rules:
+
+1. A setting that only one module uses lives under that module's slug,
+   never at the top level and never under another module's slug.
+2. Den sends `retention`, `smtp` and the calling module's own section, and
+   nothing else. Finance never sees `stash.*`.
+3. `data` is always wrapped: `module_settings` is
+   `{"data": {…}, "updated_at": "…"}`.
+4. A module ignores keys it does not know, and a value of the wrong type
+   or out of range counts as *not set*: the module falls back to its own
+   setting instead of failing.
+5. Day counts are whole numbers, `0` or more.
+
 ## The settings
 
 ### Retention
@@ -65,9 +90,23 @@ These replace a module's `SMTP_*` variables when Den sets `smtp.host`.
 
 ### Finance: seller details
 
-`finance.seller`: `legal_name`, `address` (multi-line), `country` (ISO 3166
-code such as `AT`), `vat_id`, `tax_number`, `registration` (court and
-number), `email`, `website`. Printed on receipts and invoices.
+Printed on Finance's receipts and invoices.
+
+| Key | Meaning |
+| --- | --- |
+| `finance.seller.legal_name` | The organisation's legal name. |
+| `finance.seller.address` | Postal address, multi-line (`\n` between lines). |
+| `finance.seller.country` | ISO 3166 country code such as `AT`. |
+| `finance.seller.vat_id` | VAT identification number, for example `ATU12345678`. |
+| `finance.seller.tax_number` | National tax number. |
+| `finance.seller.registration` | Register court and number. |
+| `finance.seller.email`, `finance.seller.website` | Contact details. |
+
+### Wiki: revision history
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `wiki.revision_retention_days` | `0` (keep every revision) | Days a page's older revisions are kept. Replaces Wiki's `WIKI_REVISION_RETENTION_DAYS` when Den sets it. |
 
 ### Stash: Lost & Found retention
 
@@ -79,6 +118,9 @@ number), `email`, `website`. Printed on receipts and invoices.
 | `deleted_after_closing` | `hours` (default `48` *(pending legal review)*) | A record is deleted `hours` after it is closed (claimed, handed over or discarded). |
 
 ## In the bundle
+
+What Stash receives from `GET /api/v1/integrations/bundle` when Den sets
+retention, mail and Stash's own setting:
 
 ```json
 {
@@ -98,6 +140,78 @@ number), `email`, `website`. Printed on receipts and invoices.
   }
 }
 ```
+
+Every key the contract defines, as Den stores it for the organisation
+(`GET /api/v1/modules/{id}/settings` shows the same `data`). Each module
+receives `retention`, `smtp` and only its own section from it:
+
+```json
+{
+  "retention": {
+    "offboarded_volunteers_days": 365,
+    "inactive_users_days": 730,
+    "module_data_days": 1095
+  },
+  "smtp": {
+    "host": "smtp.example.org",
+    "port": 587,
+    "security": "starttls",
+    "username": "conservices",
+    "password_set": true,
+    "from": "noreply@con.example.org",
+    "from_name": "Fur Con"
+  },
+  "finance": {
+    "seller": {
+      "legal_name": "Fur Con e.V.",
+      "address": "Main Street 1\n1010 Vienna",
+      "country": "AT",
+      "vat_id": "ATU12345678",
+      "tax_number": "12 345/6789",
+      "registration": "ZVR 123456789",
+      "email": "finance@con.example.org",
+      "website": "https://con.example.org"
+    }
+  },
+  "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } },
+  "wiki": { "revision_retention_days": 365 }
+}
+```
+
+### Reading them in a module (Go)
+
+A module that uses the shared package `denlink` ([Shared code](shared-code.md#denlink))
+does not read the bundle itself. `client.ModuleSettings()` returns the
+settings from the last synced bundle; it is kept in the module's database
+with the bundle, so it is there again after a restart before Den is
+reached. It is `nil` while the module is standalone, and every method is
+safe on `nil` (it reports *not set*):
+
+```go
+ms := den.ModuleSettings()
+
+// A module-specific key: a whole number of days, 0 or more.
+if days, ok := ms.Days("wiki.revision_retention_days"); ok {
+    retention = days // Den's value; show it as "Managed in Den"
+}
+
+// Shared sections.
+r := ms.Retention()                    // *int fields, nil = not set
+if smtp, ok := ms.SMTP(); ok { … }     // only when Den sets smtp.host
+if s, ok := ms.FinanceSeller(); ok { … }
+
+// Anything else: decode a section or a key into your own type.
+var lf struct {
+    Mode  string `json:"mode"`
+    Days  int    `json:"days"`
+    Hours int    `json:"hours"`
+}
+if ok, err := ms.Decode("stash.lost_found", &lf); ok && err == nil { … }
+```
+
+Do not query `den_link.bundle` with SQL: its layout belongs to `denlink`.
+Bundles stored by an older Den, with the sections at the top level of
+`module_settings` instead of under `data`, are read as well.
 
 ## Den API
 
