@@ -201,6 +201,32 @@ led by Den's MAJOR; see
   `OIDC_GROUP_PREFIX` or `OIDC_GROUP_MATCH=last` is set.
   [Authentication](docs/concepts/authentication.md#refusing-id-tokens)
   explains that refusing ID tokens relies on Keycloak's `typ` claim.
+- The `conservices` Keycloak login theme fetches the brand from Den's public
+  endpoint in the browser (and caches it), instead of reading a realm
+  attribute Den used to write. Set `DEN_PUBLIC_URL` on Keycloak; the Docker
+  stack and the Kustomize identity base do.
+- Dev realm: group `den-ops` (Den's new ops role for backups and database
+  deletion), given to the `admin` account; `alice` stays an admin without
+  it.
+- Docker stack: healthchecks for `den-backend` and `den-operator` (their
+  `healthcheck` subcommand) and `den-frontend`; the web app waits for a
+  healthy backend. `den-backend` gets `DEN_OPS_GROUPS`,
+  `IDENTITY_STAFF_MODE` and a dev-only `DEN_CREDENTIAL_KEY`.
+- Kubernetes: `den-config` gains `DEN_OPS_GROUPS` and `IDENTITY_STAFF_MODE`;
+  `den-secrets` gains the optional `DEN_CREDENTIAL_KEY` (dev value in
+  `overlays/example`, Vault key `conservices/den/backend` in the External
+  Secrets example). The Den backend uses `RollingUpdate` and may run more
+  than one replica.
+- NetworkPolicies: `den-backend` may reach module backends on 8080 (role
+  catalogs, portal to-dos), and Stash admits `den-backend`. Documented on
+  [Network policies](docs/operations/network-policies.md#calls-between-modules).
+- `scripts/smoke-den-operator.ps1` (roles, managed database, backup, one-time
+  download, removal, audit log); `scripts/smoke-den-pairing.ps1` registers
+  a missing module and checks that organisation settings reach it.
+- Runbooks: [a leaked pairing URL or module credential](docs/operations/disaster-recovery.md#a-pairing-url-or-module-credential-leaked)
+  and [a failing Keycloak name sync](docs/operations/disaster-recovery.md#the-keycloak-name-sync-fails).
+- `scripts/check-chart-versions.py --base` no longer asks for a version bump
+  of a chart whose version was never released (no `<app>/vX.Y.Z` tag yet).
 
 ### Changed
 
@@ -273,6 +299,10 @@ led by Den's MAJOR; see
   which allows framing by the app's own origin only (`frame-ancestors
   'self'`, `X-Frame-Options: SAMEORIGIN`). Other sites still cannot embed
   the app.
+- Den no longer needs `view-realm`; the dev realm's `den-keycloak` service
+  account keeps only `manage-realm`, used for the optional realm name sync.
+  Without that sync, Den needs no access to the realm at all.
+
 - Default-deny NetworkPolicies in every namespace with an explicit allow
   list, `restricted` Pod Security on every namespace, resource requests and
   limits on every container, and no service account tokens mounted.
