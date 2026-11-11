@@ -205,6 +205,8 @@ spec:
               value: {{ .Values.frontend.securityHeaders.s3Origin | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ .Values.frontend.securityHeaders.extraConnectSrc | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ .Values.frontend.securityHeaders.extraFrameSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}

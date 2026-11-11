@@ -113,11 +113,17 @@ error.
 
 ## Other modules
 
-Once HR is paired with Den, it is meant to find the other modules' role
-catalogs through Den (`GET /api/v1/integrations/modules`, then each
-module's `GET /api/role-catalog`). The shared `denlink` client cannot make
-that call yet, so a paired HR still uses `ROLE_CATALOG_SOURCES` for the
-list. The settings below are that list and the token HR sends.
+Once HR is paired with Den, it asks Den which modules are paired
+(`GET /api/v1/integrations/modules`, with the pairing credential) and
+reads each one's role catalog at the `role_catalog_url` Den returns.
+Do not append `/api/role-catalog`: Den already built that address from
+the module's internal URL, or from its public URL when it has no
+internal URL. A module with an empty slug or no catalog URL is skipped.
+When Den says HR is not paired, or the call fails, that attempt
+discovers nothing and `ROLE_CATALOG_SOURCES` is the whole list; HR still
+shows the last catalog it saved for a module. `ROLE_CATALOG_SOURCES`
+replaces the URL of a slug Den listed and adds modules Den does not
+know. A standalone HR uses only that list.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
@@ -150,15 +156,21 @@ list. The settings below are that list and the token HR sends.
 ## Email (HR's own notices)
 
 HR emails people when their account is deleted, and HR admins about
-retention and Google Workspace deadlines. Empty `SMTP_HOST` turns this off;
-HR then shows a warning instead of sending. Password-setup emails are sent by Keycloak, not by these settings.
+retention and Google Workspace deadlines. When Den sets `smtp.host`,
+that server is used. When Den also sets `password_set`, HR fetches the
+password from Den at send time
+([Fetching the SMTP password](../../concepts/module-settings.md#fetching-the-smtp-password));
+it is kept in memory for at most a minute and is never written to HR's
+database. `SMTP_PASSWORD` is used only when Den sets no mail server.
+With neither a Den server nor `SMTP_HOST`, HR shows a warning instead of
+sending. Password-setup emails are sent by Keycloak, not by these settings.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `SMTP_HOST` | none | no | ConfigMap | Mail server. |
-| `SMTP_PORT` | `587` | no | ConfigMap | Port. |
-| `SMTP_USERNAME` | none | no | ConfigMap | Login. |
-| `SMTP_PASSWORD` | none | no | **Secret** | Password. |
+| `SMTP_HOST` | none | no | ConfigMap | Mail server, used when Den sets no `smtp.host`. |
+| `SMTP_PORT` | `587` | no | ConfigMap | Port, used with `SMTP_HOST`. |
+| `SMTP_USERNAME` | none | no | ConfigMap | Login, used with `SMTP_HOST`. |
+| `SMTP_PASSWORD` | none | no | **Secret** | Password, used only when Den sets no mail server. |
 | `SMTP_FROM` | none | no | ConfigMap | Sender address. |
 | `SMTP_FROM_NAME` | none | no | ConfigMap | Sender name. |
 

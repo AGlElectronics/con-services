@@ -22,7 +22,9 @@ led by Den's MAJOR; see
   `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN` on `existingSecret`,
   fills nginx security-header origins from env (never a filled-in
   ConfigMap), and allows the backend to call Photon
-  (`networkPolicy.addressLookup`). The Wiki chart allows its backend to
+  (`networkPolicy.addressLookup`). `/silent-callback.html` uses the
+  frame-self snippet so the app can frame its silent sign-in page;
+  `EXTRA_FRAME_SRC` stays empty. The Wiki chart allows its backend to
   call HR's group directory.
 - Development Compose sets `OIDC_AUDIENCE=hr-api` on HR and the dev-only
   `HR_SERVICE_TOKEN` (`dev-only-hr-service-token-change-me-0000000000`) on HR and on

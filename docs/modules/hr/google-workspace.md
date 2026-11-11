@@ -62,7 +62,13 @@ You need a Google Workspace super admin and a Google Cloud project.
    domain-wide delegation → Add new**, paste the client ID and these
    OAuth scopes (comma-separated). These are exactly the scopes the
    client requests. `admin.directory.group` covers group membership, so
-   a separate member scope is not used. HR does not call the Gmail API.
+   a separate member scope is not used. HR does not call the Gmail API,
+   and it does not create send-as aliases, so do not authorise
+   `https://www.googleapis.com/auth/gmail.settings.sharing`
+   (`gmail.settings.sharing`). That scope is only for a module that
+   creates aliases (Desk). Google rejects a token when domain-wide
+   delegation does not list a scope the call asks for; HR never asks
+   for this one.
 
     ```text
     https://www.googleapis.com/auth/admin.directory.user,https://www.googleapis.com/auth/admin.directory.group

@@ -95,7 +95,7 @@ HR reads one Secret, `hr-secrets`:
 | `OFFBOARD_HOOKS` | no | `url|token` list; contains the Wiki's service token. |
 | `DEPARTMENT_HOOKS` | no | `url|token` list; contains the Tasks service token. |
 | `HR_DIRECTORY_TOKEN` | no | Shared with the Wiki; lets the Wiki list HR's departments and access groups. At least 16 characters. |
-| `SMTP_PASSWORD` | no | For HR's own notices. |
+| `SMTP_PASSWORD` | no | For HR's own notices, only when Den sets no mail server. When Den sets `smtp.password_set`, HR fetches the password from Den. |
 
 ```sh
 vault kv put secret/conservices/hr/backend \

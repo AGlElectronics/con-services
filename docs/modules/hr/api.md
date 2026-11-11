@@ -2169,10 +2169,14 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" $HR/api/import-templates/2b3
 
 ### `GET /api/access-catalog`
 
-Every role HR can assign: HR's own catalog followed by each module in
-`ROLE_CATALOG_SOURCES` and the modules Den knows (fetched live, cached for
-30 seconds). When a module cannot be reached, HR shows its last known
-catalog (`"status": "cached"`). **Access:** `people.read`.
+Every role HR can assign: HR's own catalog, then each module Den lists
+with a role catalog URL (`GET /api/v1/integrations/modules`; an empty
+slug or URL is skipped), with `ROLE_CATALOG_SOURCES` applied on top (a
+listed slug replaces Den's URL, a new slug is added). A standalone HR,
+or a failed call to Den, uses only that override list. Catalogs are
+fetched live and cached for 30 seconds. When a module cannot be reached,
+HR shows its last known catalog (`"status": "cached"`). **Access:**
+`people.read`.
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" $HR/api/access-catalog
