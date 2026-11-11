@@ -49,7 +49,8 @@ existingSecret: den-secrets
 # internalTLS.enabled) and OPERATOR_URL (with operator.enabled) are added by
 # the chart unless you set them here.
 config:
-  # Environment name; anything but "development" logs JSON.
+  # production (default) or development. Only development allows
+  # AUTH_MODE=dev and http:// module addresses, and logs plain text.
   APP_ENV: production
   # Den's public address: pairing URLs, den_base_url, Keycloak branding.
   APP_BASE_URL: https://den.conservices.test
@@ -60,8 +61,17 @@ config:
   # Must match the tokens' iss claim exactly and be reachable at start-up
   # (in-cluster through keycloak-public, see networkPolicy.oidc).
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  # The web app's client (its /config.json oidcClientId). The backend
+  # does not read it.
   OIDC_CLIENT_ID: den-spa
-  OIDC_AUDIENCE: den-spa
+  # Den accepts access tokens only, with this audience (the realm's
+  # audience mapper on den-spa adds it). ID tokens are refused.
+  OIDC_AUDIENCE: den-api
+  # Groups come only from this claim; full: the whole group path must
+  # match (last: only its last segment). OIDC_GROUP_PREFIX: optional path
+  # every role group sits under, e.g. /con2026.
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
   # Comma-separated IdP groups: admins, people who may use the portal, and
   # operations (run and download backups, delete module databases).
   DEN_ADMIN_GROUPS: den-admin
@@ -202,6 +212,11 @@ operatorConfig:
   # Time zone of the daily backup hour (the hour is set in Den's console).
   BACKUP_TIMEZONE: UTC
   BACKUP_S3_ENDPOINT: https://s3.conservices-data.svc.cluster.local:9000
+  # "true" while the backups sit on the same S3 service as the live data
+  # (as with these defaults): Den shows a warning on the Backups page.
+  # Point BACKUP_S3_ENDPOINT at another provider or location and set
+  # "false". Equal BACKUP_S3_ENDPOINT and FILES_S3_ENDPOINT warn anyway.
+  BACKUP_SAME_STORAGE_AS_DATA: "true"
   BACKUP_S3_BUCKET: conservices-backups
   BACKUP_S3_REGION: us-east-1
   BACKUP_S3_USE_PATH_STYLE: "true"
@@ -212,6 +227,9 @@ operatorConfig:
   FILES_S3_REGION: us-east-1
   FILES_S3_USE_PATH_STYLE: "true"
   # Every module bucket that should be in the backups, comma-separated.
+  # Only buckets that exist: a missing one fails the backup. Add each
+  # module's bucket when you install it (stash-data, events-data,
+  # finance-data, learn-data, wiki-data, tasks-data, ...).
   FILES_S3_BUCKETS: den-data
 
 frontend:
@@ -243,6 +261,17 @@ frontend:
   #   apiBaseUrl     "" (same origin: nginx forwards /api/)
   # Docs: https://aglelectronics.github.io/con-services/modules/den/configuration/#web-app-settings-configjson
   config: {}
+  # Origins for the web app's Content-Security-Policy (shared nginx
+  # security headers). Docs:
+  # https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # The sign-in server. Empty: the origin of frontend.config.oidcAuthority
+    # or config.OIDC_ISSUER_URL.
+    keycloakOrigin: ""
+    # Den's web app only talks to its own origin, so these stay empty.
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the

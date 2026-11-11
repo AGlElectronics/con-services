@@ -201,6 +201,18 @@ spec:
         - name: frontend
           image: {{ include "den.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          {{- $sh := .Values.frontend.securityHeaders | default dict }}
+          # Origins for the Content-Security-Policy; the image writes
+          # /etc/nginx/snippets/security-headers*.conf from them at start-up.
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ include "den.keycloakOrigin" . | quote }}
+            - name: DEN_ORIGIN
+              value: {{ $sh.denOrigin | default "" | quote }}
+            - name: S3_ORIGIN
+              value: {{ $sh.s3Origin | default "" | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ $sh.extraConnectSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -243,6 +255,9 @@ spec:
             - name: frontend-config
               mountPath: /etc/conservices
               readOnly: true
+            # Written at start-up (the root file system is read-only).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
             - name: cache
               mountPath: /var/cache/nginx
             # nginx.pid of older images built on nginx:alpine (/var/run links here)
@@ -259,6 +274,8 @@ spec:
         - name: frontend-config
           configMap:
             name: {{ .Release.Name }}-frontend-config
+        - name: nginx-snippets
+          emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: run

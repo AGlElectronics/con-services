@@ -43,6 +43,11 @@ spec:
       containers:
         - name: frontend
           image: ghcr.io/aglelectronics/den-frontend:1.0.0-1
+          # KEYCLOAK_ORIGIN for the security headers; the image writes
+          # /etc/nginx/snippets/security-headers*.conf from it at start-up.
+          envFrom:
+            - configMapRef:
+                name: den-frontend-env
           ports:
             - name: https
               containerPort: 8080
@@ -85,6 +90,9 @@ spec:
             - name: frontend-config
               mountPath: /etc/conservices
               readOnly: true
+            # Written at start-up (the root file system is read-only).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
             - name: cache
               mountPath: /var/cache/nginx
             # nginx.pid of older images built on nginx:alpine (/var/run links here)
@@ -108,6 +116,8 @@ spec:
         - name: frontend-config
           configMap:
             name: den-frontend-config
+        - name: nginx-snippets
+          emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: run

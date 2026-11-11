@@ -533,8 +533,8 @@ services:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
-      OIDC_CLIENT_ID: den-spa
-      OIDC_AUDIENCE: den-spa
+      # Den accepts access tokens only; the realm adds den-api to them.
+      OIDC_AUDIENCE: den-api
       # Optional: keeps the realm display name (Keycloak's e-mails) equal to the
       # organisation name (service account den-keycloak). The sign-in page
       # pulls the rest of the brand itself.
@@ -548,7 +548,7 @@ services:
       # DEV ONLY: derives module credentials so Den can fetch portal to-dos
       # from paired modules. Production: a generated secret (docs: Secrets).
       DEN_CREDENTIAL_KEY: dev-only-den-credential-key-change-me
-      # Module databases + backups (docs/operations.md). Empty URL = off.
+      # Module databases + backups (docs: Databases and backups). Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: den-operator-dev-token
       CORS_ALLOWED_ORIGINS: http://localhost:3001,https://den.conservices.test
@@ -570,7 +570,7 @@ services:
   # Den operator — the only service with the Postgres admin login. Creates and
   # drops module databases for Den and backs up the whole suite (all
   # databases + module buckets), encrypted, to object storage. No published
-  # port: only Den calls it. See docs/operations.md.
+  # port: only Den calls it. See docs/operations/databases-and-backups.md.
   den-operator:
     profiles: ["den"]
     build:
@@ -593,6 +593,7 @@ services:
       # DEV: same S3 server as the live data. Production: a different provider
       # or location, or it isn't really a backup.
       BACKUP_S3_ENDPOINT: http://s3:9000
+      BACKUP_SAME_STORAGE_AS_DATA: "true"
       BACKUP_S3_BUCKET: conservices-backups
       BACKUP_S3_ACCESS_KEY_ID: conservices
       BACKUP_S3_SECRET_ACCESS_KEY: conservicesdev
@@ -601,7 +602,8 @@ services:
       FILES_S3_ENDPOINT: http://s3:9000
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
-      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
+      # Every module bucket created by the s3 service (its -bucket list).
+      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev
     healthcheck:
       test: ["CMD", "den-operator", "healthcheck"]
       interval: 10s
@@ -617,6 +619,9 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
     container_name: conservices-den-frontend
+    environment:
+      # Sign-in server for the Content-Security-Policy (shared nginx headers).
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/den.json:/etc/conservices/config.json:ro

@@ -107,18 +107,30 @@ data:
         }
         # Installation settings of the web app (sign-in address and the like),
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
+        # Security headers: the image writes the snippets from
+        # KEYCLOAK_ORIGIN and friends at start-up. Included in every
+        # location that serves the app, never in the /api/ locations (the
+        # backend sends its own).
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
         location /static/ {
             expires 1y;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "public, immutable" always;
             try_files $uri =404;
         }
+        # Target of the hidden sign-in iframe, framed by Den itself.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frameable.conf;
+            add_header Cache-Control "no-cache" always;
+        }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache, must-revalidate" always;
         }
     }
