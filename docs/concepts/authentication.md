@@ -337,8 +337,9 @@ renews tokens in the background, and tokens in the local realm are valid for
 5 minutes.
 
 !!! note "Other modules"
-    Other modules use the same idea with their own groups: HR requires
-    `HR_ACCESS_GROUPS` (default `hr-admin`), Finance `FINANCE_ACCESS_GROUPS`
+    Other modules use the same idea with their own groups: HR maps
+    `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS` and `HR_LEAD_GROUPS` (defaults
+    `hr-admin`, `hr-viewer`, `hr-lead`) to its three roles, Finance `FINANCE_ACCESS_GROUPS`
     (default `finance-admin`), and Stash, Rally, Learn, Wiki, Desk and Tasks
     map groups to roles and permissions in their access configuration. Each
     module's configuration page lists its groups and roles.

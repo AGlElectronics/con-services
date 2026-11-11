@@ -50,7 +50,7 @@ issuer and a client id, and reads no groups.
 
 **Already configurable.** Issuer and client of every module
 (`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `ATTENDEE_OIDC_*`), the group names
-that grant access (`DEN_ADMIN_GROUPS`, `HR_ACCESS_GROUPS`,
+that grant access (`DEN_ADMIN_GROUPS`, `HR_ADMIN_GROUPS` / `HR_VIEWER_GROUPS` / `HR_LEAD_GROUPS`,
 `FINANCE_ACCESS_GROUPS`, the access configuration files of the other
 modules), and the realm name of the three admin integrations
 (`KEYCLOAK_REALM`). All three admin integrations are optional.
