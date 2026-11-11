@@ -125,13 +125,16 @@ until then they work as described above.
 3. **No user token leaves Den.** Den's portal no longer sends the person's
    token to modules. Den's **backend** asks each paired module for the
    person's to-dos, server to server:
-   `GET <module>/api/portal/todos?issuer=<iss>&subject=<sub>`, authenticated
-   with Den's side of the pairing credential (a secret exchanged when the
-   module redeems its pairing URL, stored only as a hash by the module).
-   The module answers for that person only. Modules then no longer need
-   Den's client in `OIDC_EXTRA_AUDIENCES` or Den's address in
-   `CORS_ALLOWED_ORIGINS` for to-dos. The details of the credential are
-   decided in Den's ADR when it is implemented.
+   `GET <module>/api/portal/todos` with the person in the headers
+   `X-Den-User-Issuer` and `X-Den-User-Subject`, authenticated with the
+   module's pairing credential as a bearer token. Den derives that
+   credential from `DEN_CREDENTIAL_KEY`; the module keeps it encrypted with
+   `DEN_LINK_ENCRYPTION_KEY` and compares it in constant time. The module
+   answers for that person only, and refuses the person given only as query
+   parameters. Modules then no longer need Den's client in
+   `OIDC_EXTRA_AUDIENCES` or Den's address in `CORS_ALLOWED_ORIGINS` for
+   to-dos. Modules serve the route with the shared helper; see
+   [Portal to-dos](shared-code.md#portal-to-dos).
 
 #### Audiences per API
 
@@ -527,8 +530,10 @@ The rules for all of these secrets are the same:
   guessed by timing the answers;
 - an endpoint whose secret is not configured answers `404`, so a feature is
   off until an operator turns it on;
-- secrets that Con Services issues itself (module credentials, public API
-  keys) are stored only as hashes and shown once;
+- secrets that Con Services issues itself are shown once. Den stores public
+  API keys and its side of module credentials only as hashes; a module keeps
+  its copy of the credential encrypted with `DEN_LINK_ENCRYPTION_KEY`,
+  because it has to send it back to Den;
 - every one of them lives in a Kubernetes Secret delivered by your secret
   manager, and appears in the inventory on [Secrets](../operations/secrets.md)
   with how to rotate it;
