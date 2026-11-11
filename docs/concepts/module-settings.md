@@ -108,6 +108,22 @@ Printed on Finance's receipts and invoices.
 | --- | --- | --- |
 | `wiki.revision_retention_days` | `0` (keep every revision) | Days a page's older revisions are kept. Replaces Wiki's `WIKI_REVISION_RETENTION_DAYS` when Den sets it. |
 
+### Tasks: retention and reminders
+
+Each value is a whole number of days. When Den sets one, it replaces the value on
+Tasks' own Settings page. Tasks also accepts the older names `retention.<name>` and
+`reminders.due_soon_days`; when both are set, the `tasks.*` key wins.
+
+| Key | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `tasks.trash_days` | `30` | 0–3650 | Days a deleted task stays in the trash before it is purged. `0` never purges. |
+| `tasks.notification_days` | `90` | 0–3650 | Days a read Inbox notification is kept. `0` keeps it forever. |
+| `tasks.audit_days` | `730` | 0–3650 | Days an audit log entry is kept. `0` keeps it forever. |
+| `tasks.automation_run_days` | `90` | 0–3650 | Days an automation run stays in its history. `0` keeps it forever. |
+| `tasks.due_soon_days` | `1` | 0–30 | Days before the due date that assignees get a due-soon reminder. `0` turns reminders off. |
+
+A value outside its range is ignored and Tasks keeps its own value.
+
 ### Stash: Lost & Found retention
 
 `stash.lost_found` is one of:
@@ -174,7 +190,8 @@ receives `retention`, `smtp` and only its own section from it:
     }
   },
   "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } },
-  "wiki": { "revision_retention_days": 365 }
+  "wiki": { "revision_retention_days": 365 },
+  "tasks": { "trash_days": 30, "audit_days": 730, "due_soon_days": 1 }
 }
 ```
 
