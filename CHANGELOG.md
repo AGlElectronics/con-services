@@ -219,6 +219,10 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Finance's web app may frame `/silent-callback.html` from Finance itself,
+  so a reload can finish silent sign-in. The Helm chart and the dev
+  Compose service leave `EXTRA_FRAME_SRC` empty. Every other page stays
+  unframeable.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

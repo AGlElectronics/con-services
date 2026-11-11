@@ -230,6 +230,10 @@ spec:
               value: {{ $sh.s3Origin | default "" | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ $sh.extraConnectSrc | default "" | quote }}
+            # Empty. Finance does not embed sandboxed HTML. Silent sign-in
+            # frames /silent-callback.html through the frame-self snippet.
+            - name: EXTRA_FRAME_SRC
+              value: ""
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}

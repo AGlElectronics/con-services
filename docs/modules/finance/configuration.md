@@ -286,13 +286,22 @@ path; empty leaves them out):
 | `DEN_ORIGIN` | empty | Den, only if the browser should call Den directly. Finance serves Den's brand through its own API, so leave it empty. |
 | `S3_ORIGIN` | empty | Not needed: PDFs are downloaded through Finance's API. |
 | `EXTRA_CONNECT_SRC` | empty | Anything else the browser must call. |
+| `EXTRA_FRAME_SRC` | empty | Extra `frame-src` tokens. Finance leaves it empty. Silent sign-in does not use it. |
 
 With Helm set them under `frontend.securityHeaders` (`keycloakOrigin`,
-`denOrigin`, `s3Origin`, `extraConnectSrc`); the chart mounts an
-`emptyDir` at `/etc/nginx/snippets` so nginx can write the filled-in file
-at start-up. With Docker Compose set them under the frontend service's
+`denOrigin`, `s3Origin`, `extraConnectSrc`). `EXTRA_FRAME_SRC` is not a
+chart value: the chart sets it to empty. The chart mounts an `emptyDir`
+at `/etc/nginx/snippets` so nginx can write the filled-in files at
+start-up. With Docker Compose set the origins under the frontend service's
 `environment:` (the root stack sets `KEYCLOAK_ORIGIN:
 https://auth.conservices.test`).
+
+`/silent-callback.html` is the one page the app may frame. Silent sign-in
+(tokens kept in memory) loads it in a hidden iframe of Finance itself, so
+that exact location sends `frame-ancestors 'self'` and
+`X-Frame-Options: SAMEORIGIN`. Every other response keeps
+`frame-ancestors 'none'` and `DENY`. See
+[Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
 
 Check it:
 
@@ -301,7 +310,7 @@ curl -sI https://finance.example.org/ | grep -i -E 'content-security|x-frame|nos
 ```
 
 ```text
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self'  https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
 x-frame-options: DENY
 x-content-type-options: nosniff
 ```
@@ -309,6 +318,11 @@ x-content-type-options: nosniff
 **Sign-in fails and the browser console says *Refused to connect to
 'https://auth…'*.** `KEYCLOAK_ORIGIN` is empty or wrong. Set it on the web
 app container and restart it.
+
+**A reload asks for the password again, and the console says framing
+`/silent-callback.html` violated `frame-ancestors 'none'`.** That location
+must include `security-headers-frame-self.conf`, not the main snippet.
+`EXTRA_FRAME_SRC` stays empty.
 
 ## Frontend build settings
 

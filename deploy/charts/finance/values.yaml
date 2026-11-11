@@ -172,6 +172,9 @@ frontend:
     denOrigin: ""
     s3Origin: ""
     extraConnectSrc: ""
+    # EXTRA_FRAME_SRC is not a value. The chart sets it to empty: Finance
+    # does not embed sandboxed HTML. Silent sign-in frames
+    # /silent-callback.html through a second snippet.
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
