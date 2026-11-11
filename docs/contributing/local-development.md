@@ -208,30 +208,6 @@ Hetzner Object Storage. For development the Compose stack runs
 To add a bucket for a new module, append it to the `-bucket=` list of the
 `s3` service and run `docker compose up -d s3`.
 
-### Moving from MinIO
-
-Earlier versions of this stack used MinIO (service `minio`, volume
-`conservices_conservices-minio-data`, console on port 9001). MinIO no longer
-publishes community images, so it was replaced. The keys and bucket names
-are unchanged, but the data is not copied over. After pulling this change:
-
-1. Only if you need old uploads: MinIO keeps objects in its own format,
-   so export them through the old container *while it still runs*:
-
-    ```sh
-    docker run --rm --network conservices_default -v "$PWD/minio-export:/out" \
-      -e AWS_ACCESS_KEY_ID=conservices -e AWS_SECRET_ACCESS_KEY=conservicesdev \
-      -e AWS_DEFAULT_REGION=us-east-1 \
-      amazon/aws-cli:2.31.30 --endpoint-url http://minio:9000 s3 sync s3://den-data-dev /out/den-data-dev
-    ```
-
-    Repeat for each bucket you need. Later, upload the folder with the same
-    command against `http://s3:9000` and the source and target swapped.
-2. Remove the old container and start the new server:
-   `docker compose up -d --remove-orphans s3`
-   (or `docker rm -f conservices-minio` first).
-3. Remove the old volume: `docker volume rm conservices_conservices-minio-data`.
-
 ## Keeping Compose and Kubernetes in step
 
 The Compose file is the quickest way to see which settings each module
@@ -260,9 +236,10 @@ ready or was recreated. Run `docker compose --profile den restart den-backend`.
 failed` usually means a database volume from an older setup; on a dev
 machine `docker compose --profile den down -v` starts fresh.
 
-**`Bind for 0.0.0.0:9000 failed` after pulling the S3 change.** The old
-`conservices-minio` container still holds port 9000. Run
-`docker rm -f conservices-minio`, then the `up` command again.
+**`Bind for 0.0.0.0:9000 failed: port is already allocated`.** Another
+container or program holds port 9000. Find it with `docker ps` and
+`Get-NetTCPConnection -LocalPort 9000 -State Listen` (Windows) or
+`sudo lsof -i :9000`, stop it, then run the `up` command again.
 
 **`dependency failed to start: container conservices-s3 is unhealthy`.** A
 bucket from the `-bucket=` list was not created. Read

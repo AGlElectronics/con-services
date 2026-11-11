@@ -31,8 +31,10 @@ and fix the usual problems. Upgrading is on its own page,
     ```
 
     Change `resources: ../../base` to point at a pinned copy of the base,
-    for example a Git URL with a tag:
-    `https://github.com/AGlElectronics/con-services//deploy/kubernetes/base?ref=v1.1.0`.
+    for example a Git URL with the `con-services` tag `vX.Y.Z` of the
+    shared pieces
+    ([which tag to pin](versioning.md#the-main-repositorys-own-tags)):
+    `https://github.com/AGlElectronics/con-services//deploy/kubernetes/base?ref=v1.0.0`.
 
 3. **Fill in** your host names (on the HTTPRoutes and Keycloak's
    certificate), image tags, `BACKUP_AGE_RECIPIENTS`, backup and file

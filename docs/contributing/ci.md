@@ -1,7 +1,8 @@
 # CI and releases
 
-**Goal:** know what runs on your pull request, how to cut a release that
-publishes signed images to GHCR, and how to fix a red pipeline.
+**Goal:** know what runs on your pull request, how to cut a release of one
+app (signed images on GHCR plus its chart release tag), and how to fix a
+red pipeline.
 
 Every module repository (`den`, `hr`, `Rally`, `stash`, `finance`, `wiki`,
 `desk`, `learn`, `tasks`) runs the same pipeline on
@@ -18,6 +19,9 @@ in this repository, as a *reusable workflow*
 | Push to `main` | All checks below | No |
 | Tag `vX.Y.Z` pushed | All checks, then publish | Yes, `X.Y.Z-BUILD` |
 | **Run workflow** (manual, with a version) | All checks on tag `vX.Y.Z`, then publish | Yes, the next `BUILD` of `X.Y.Z` |
+
+The app's chart is released separately, by a tag `<app>/vX.Y.Z` in this
+repository ([The chart release workflow](#the-chart-release-workflow)).
 
 The checks, as separate jobs:
 
@@ -69,6 +73,7 @@ Inputs of `module-ci.yml`:
 | `runner` | `arc-conservices` | Runner label for every job |
 | `push` | `false` | Publish, sign and attest (tags and manual runs) |
 | `version` | empty | Rebuild this `X.Y.Z` (manual runs) |
+| `den-major` | empty | The Den MAJOR this module is built for, for example `"1"`. A release whose MAJOR differs is refused ([Versions](../operations/versioning.md#modules-follow-dens-major)). Empty skips the check; Den leaves it empty |
 | `arm64` | `false` | Also publish `linux/arm64`, built with QEMU emulation |
 | `buildkit-endpoint` | `tcp://127.0.0.1:1234` | BuildKit to build with; empty starts a local builder (needs Docker) |
 | `buildkit-driver-opts` | empty | TLS options for a remote BuildKit |
@@ -139,48 +144,171 @@ image to one installation again. They remain for the local dev server
 
 ## Cut a release
 
-A release is a Git tag `vMAJOR.MINOR.PATCH` on the module's repository. The
-version follows [Semantic Versioning](https://semver.org); see
-[Versions and upgrades](../operations/versioning.md) for what each part
-means.
+Every app (Den and each module) is released on its own, with its own
+version; an app that did not change gets no release. Pick the version with
+the Den-led rules on
+[Versions and upgrades](../operations/versioning.md#the-rules): for a
+module, MINOR for a feature and PATCH for a fix, with MAJOR always equal to
+the Den MAJOR it is built for; for Den, MAJOR only when something modules
+use is removed or changed incompatibly.
 
-1. Move the entries under `## [Unreleased]` in `CHANGELOG.md` to a new
-   section `## [1.0.0] - 2026-11-07` and merge that to `main`
-   ([Changelogs](changelog.md)).
+A release has two tags, made in this order:
+
+| Tag | Repository | Produces |
+| --- | --- | --- |
+| `vX.Y.Z` | the app's repository (`hr`, `den`, …) | the images `X.Y.Z-1` |
+| `<app>/vX.Y.Z` | `con-services` | the chart release Argo CD and Helm read |
+
+The example releases HR `1.12.1`.
+
+1. In the app's repository, move the entries under `## [Unreleased]` in
+   `CHANGELOG.md` to a new section `## [1.12.1] - 2027-03-02` with its
+   *Needs Den* line, and merge that to `main` ([Changelogs](changelog.md)).
 2. Tag the merge commit on `main` and push the tag:
 
     ```sh
     git checkout main && git pull
-    git tag v1.0.0
-    git push origin v1.0.0
+    git tag v1.12.1
+    git push origin v1.12.1
     ```
 
-3. Open the repository's **Actions** tab. The **CI** run for `v1.0.0` runs
+3. Open the repository's **Actions** tab. The **CI** run for `v1.12.1` runs
    all checks, then the jobs **Release tag**, **Publish …** and
    **Tag and sign …**. The run summary lists every image with its digest.
-4. Check the result in GHCR. For Den:
+4. Check the result in GHCR:
 
     ```sh
-    crane ls ghcr.io/aglelectronics/den-backend
+    crane ls ghcr.io/aglelectronics/hr-backend
     ```
 
     ```text
-    1.0.0-1
+    1.12.0-1
+    1.12.1-1
     ```
 
-    Every image of the module now has the tag `1.0.0-1`
-    (`den-backend`, `den-frontend`, `den-operator`), for `linux/amd64`
-    (plus `linux/arm64` if the module sets `arm64: true`), signed, with a
+    Every image of the app now has the tag `1.12.1-1`
+    (`hr-backend`, `hr-frontend`, `hr-migrate`), for `linux/amd64`
+    (plus `linux/arm64` if the app sets `arm64: true`), signed, with a
     provenance attestation and two SBOMs.
 
-5. **First release of a module only:** new GHCR packages are private.
+5. **First release of an app only:** new GHCR packages are private.
    Open the package on GitHub (**Packages** on the organisation page →
    the package → **Package settings**) and set **Change visibility** to
    **Public**, once per image.
+6. In `con-services`, open a pull request that sets the app's chart to the
+   new version, `deploy/charts/hr/Chart.yaml`:
 
-Tags must be exactly `vX.Y.Z`. A tag like `v1.0.0-rc.1` starts the
-workflow but stops in the **Plan** job, because published tags have no
-pre-release part.
+    ```yaml
+    version: 1.12.1
+    appVersion: "1.12.1"
+    annotations:
+      conservices.io/den-major: "1"
+    ```
+
+    and every image tag set in its `values.yaml` to `1.12.1-1` (HR and Rally
+    ship empty tags; leave them empty). Update the compatibility table on
+    [Versions and upgrades](../operations/versioning.md#compatibility-table).
+    The **Chart versions** check fails if the chart changed without a higher
+    version, or if the annotation does not match the MAJOR.
+7. After the merge, tag the merge commit on `main` and push:
+
+    ```sh
+    git checkout main && git pull
+    git tag hr/v1.12.1
+    git push origin hr/v1.12.1
+    ```
+
+    The **Chart release** workflow checks the tag
+    ([below](#the-chart-release-workflow)); its summary shows the line to
+    put in `cluster.yaml`:
+
+    ```yaml
+    modules:
+      hr:
+        version: "1.12.1-1"
+    ```
+
+Tags must be exactly `vX.Y.Z` and `<app>/vX.Y.Z`. A tag like
+`v1.0.0-rc.1` starts the workflow but stops in the **Plan** job, because
+published tags have no pre-release part.
+
+**A chart-only change** (a new chart setting, a network policy fix) is
+released as a new PATCH or MINOR of the app as well, because the chart is
+versioned with its app: tag the app's repository too, so that images of
+the new version exist (`git tag v1.12.2` on the unchanged code), then
+release the chart as above.
+
+**Den MAJOR:** release Den `2.0.0` first (both tags). Then, for each
+module, adapt it if needed, set `den-major: "2"` in its `ci.yml`, and
+release it with MAJOR 2 and its MINOR and PATCH kept (HR `1.13.0` →
+`2.13.0`), chart annotation `conservices.io/den-major: "2"`. The chart
+release workflow refuses a module tag `hr/v2.…` while no `den/v2.…` tag
+exists.
+
+### The first release (1.0.0)
+
+Every app starts at `1.0.0`: the charts in `deploy/charts/` say
+`version: 1.0.0`, `appVersion: "1.0.0"` and
+`conservices.io/den-major: "1"`, and their image defaults and the GitOps
+template use the tag `1.0.0-1`.
+
+Run once, by a maintainer, in this order (nothing here runs automatically):
+
+1. Point the shared workflow tag `ci-v1` at the `module-ci.yml` on `main`
+   in `con-services` (it has the `den-major` input), then set
+   `den-major: "1"` in each module's `.github/workflows/ci.yml` (not
+   Den's):
+
+    ```sh
+    git checkout main && git pull
+    git tag -f ci-v1 && git push -f origin ci-v1
+    ```
+
+2. In each app repository, rename `## [Unreleased]` in `CHANGELOG.md` to
+   `## [1.0.0] - <date>` and add an empty `## [Unreleased]` above it,
+   merge that to `main`, then tag and push `v1.0.0`; Den first:
+
+    ```sh
+    for app in den hr Rally stash finance wiki desk learn tasks; do
+      git -C "$app" checkout main && git -C "$app" pull
+      git -C "$app" tag v1.0.0
+      git -C "$app" push origin v1.0.0
+    done
+    ```
+
+3. Wait until every **CI** run is green and every image has `1.0.0-1`:
+
+    ```sh
+    for img in den-backend den-frontend den-operator hr-backend hr-frontend hr-migrate \
+               rally-backend rally-frontend rally-migrate rally-submit stash-backend stash-frontend \
+               finance-backend finance-frontend finance-migrate learn-backend learn-frontend learn-migrate \
+               wiki-backend wiki-frontend wiki-migrate desk-backend desk-frontend desk-migrate \
+               tasks-backend tasks-frontend tasks-migrate; do
+      printf '%s ' "$img"; crane ls "ghcr.io/aglelectronics/$img" | grep -x '1.0.0-1' || echo MISSING
+    done
+    ```
+
+4. In `con-services`, with the `1.0.0` charts and the root `CHANGELOG.md`
+   section `## [1.0.0] - <date>` merged, tag that commit on `main` (Den
+   first, so the module tags find a Den of MAJOR 1) and push. The same
+   commit gets `v1.0.0`, the tag of the shared pieces
+   ([The main repository's own tags](../operations/versioning.md#the-main-repositorys-own-tags)):
+
+    ```sh
+    git checkout main && git pull
+    commit="$(git rev-parse HEAD)"
+    git tag den/v1.0.0 "$commit"
+    git push origin den/v1.0.0
+    for app in hr rally stash finance wiki desk learn tasks; do
+      git tag "$app/v1.0.0" "$commit"
+    done
+    git push origin hr/v1.0.0 rally/v1.0.0 stash/v1.0.0 finance/v1.0.0 \
+      wiki/v1.0.0 desk/v1.0.0 learn/v1.0.0 tasks/v1.0.0
+    git tag v1.0.0 "$commit"
+    git push origin v1.0.0
+    ```
+
+5. Check that nine **Chart release** runs are green on the **Actions** tab.
 
 ### How BUILD is chosen
 
@@ -345,6 +473,14 @@ limit; private repositories have a monthly quota. See
 This repository has its own workflow, `.github/workflows/deploy-validate.yml`,
 on every change to `deploy/`, `docs/`, `mkdocs.yml` or the workflows:
 
+- **Chart versions** (`scripts/check-chart-versions.py`): every chart in
+  `deploy/charts/` has `version` = `appVersion` = `MAJOR.MINOR.PATCH`, the
+  annotation `conservices.io/den-major` equal to its MAJOR, and image tags
+  in `values.yaml` of the form `<version>-BUILD`. On a pull request, every
+  chart whose files changed must also have a higher `version` than on the
+  target branch; charts that did not change are not touched. A module
+  chart whose MAJOR differs from the Den chart's gives a warning only
+  (expected during a Den MAJOR transition);
 - `helm lint --strict` and `helm template` for every chart in
   `deploy/charts/` (HR and Rally with placeholder image tags; Rally also
   with the submission site enabled);
@@ -395,6 +531,53 @@ line such as
 Keep the defaults at `required`; only values files and overlays for a
 module without Den set `standalone`.
 
+The chart version check, locally (needs PyYAML; `--base` compares with a
+branch the way the pull request check does):
+
+```sh
+python3 scripts/check-chart-versions.py --base origin/main
+```
+
+```text
+hr: 1.12.0 -> 1.12.1
+den: 1.0.0
+hr: 1.12.1
+...
+chart-versions: 9 chart(s) OK
+```
+
+A chart changed without a version bump fails with
+`deploy/charts/hr: files changed but version 1.12.0 is not higher than 1.12.0 on origin/main; bump version and appVersion in its Chart.yaml (PATCH for a fix, MINOR for a feature)`.
+
+## The chart release workflow
+
+`.github/workflows/chart-release.yml` runs when a chart release tag
+`<app>/vX.Y.Z` (for example `hr/v1.12.1`) is pushed to this repository.
+It publishes nothing: Argo CD and Helm read the chart from Git at the tag.
+It only refuses a tag that would point installations at something broken:
+
+| Check | Fails when |
+| --- | --- |
+| Tag format | The tag is not `<app>/vMAJOR.MINOR.PATCH`, or there is no `deploy/charts/<app>` |
+| On `main` | The tagged commit is not on `main` |
+| `Chart.yaml` | `version` or `appVersion` differ from the tag, or `conservices.io/den-major` differs from the MAJOR |
+| Den first | A module tag whose MAJOR has no released Den yet (no tag `den/v<MAJOR>.*`) |
+| Images | An image of the chart has no published tag `X.Y.Z-N` (a registry that refuses to answer, such as a private package, gives a warning instead) |
+| Chart | `helm lint --strict`, `helm template`, the Den mode check and kubeconform on that one chart |
+
+The run summary lists the images found and the `cluster.yaml` line for the
+release. To check a tag before pushing it:
+
+```sh
+python3 scripts/check-chart-versions.py --tag hr/v1.12.1 --list-images
+```
+
+```text
+ghcr.io/aglelectronics/hr-backend 1.12.1
+ghcr.io/aglelectronics/hr-frontend 1.12.1
+ghcr.io/aglelectronics/hr-migrate 1.12.1
+```
+
 ## Troubleshooting
 
 **`error parsing called workflow ... workflow was not found`** (or *not accessible*)
@@ -414,6 +597,29 @@ module without Den set `standalone`.
 **`Version '1.0.0-rc.1' is not MAJOR.MINOR.PATCH`**
 : Release tags have no suffix. Delete the tag
   (`git push origin :refs/tags/v1.0.0-rc.1`) and tag `v1.0.0`.
+
+**`Version 2.12.1 has MAJOR 2, but this module is built for Den MAJOR 1 (den-major)`**
+: A module's MAJOR always equals its Den MAJOR. For a feature or a fix,
+  delete the tag (`git push origin :refs/tags/v2.12.1`) and tag the next
+  MINOR or PATCH of MAJOR 1. If the module was adapted to a new Den MAJOR,
+  raise `den-major` in its `ci.yml` first.
+
+**Chart release: `ghcr.io/aglelectronics/hr-backend has no tag 1.12.1-N` (or `... is not published`)**
+: The chart was tagged before the images existed. Release the app's
+  repository tag `v1.12.1` and wait for its CI, then re-run the failed
+  **Chart release** run (**Re-run jobs**); the tag can stay.
+
+**Chart release: `version 1.12.0 does not match the tag hr/v1.12.1`**
+: The tagged commit has the old chart version. Delete the tag
+  (`git push origin :refs/tags/hr/v1.12.1`), merge the version bump, and tag
+  the merge commit.
+
+**Chart release: `no Den 2.x.y is released (no tag den/v2.*)`**
+: Release Den's new MAJOR before any module built for it.
+
+**Deploy validate: `conservices.io/den-major is '1' but the chart's MAJOR is 2`**
+: Set the annotation to the chart's MAJOR. It must always match; it
+  exists so tools can read a chart's Den MAJOR without parsing versions.
 
 **`ghcr.io/aglelectronics/<image>:1.0.0-1 already exists; tags are never overwritten`**
 : Someone published this tag before (for example the tag was deleted and
@@ -482,5 +688,5 @@ module without Den set `standalone`.
 
 ## Related pages
 
-- [Versions and upgrades](../operations/versioning.md): what tags mean and how to pin them.
+- [Versions and upgrades](../operations/versioning.md): the Den-led version rules, what tags mean and how to pin them.
 - [Changelogs](changelog.md): what goes into a release section.

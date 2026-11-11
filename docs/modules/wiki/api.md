@@ -197,7 +197,7 @@ curl -s $WIKI/api/health
 ```
 
 ```json
-{"status":"ok","database":"ok","version":"1.2.0-1","uptime_sec":5231}
+{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5231}
 ```
 
 ### `GET /api/role-catalog`

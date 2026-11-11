@@ -208,7 +208,7 @@ and only see lists shared with you directly.
 | --- | --- | --- |
 | `GET /livez` | anyone | `{"status":"ok"}` while the process runs. |
 | `GET /readyz` | anyone | `200 {"status":"ok","database":"ok"}`, or `503` with `"database":"down"`. |
-| `GET /api/health` | anyone | `{"status":"ok","database":"ok","version":"1.1.0-1","uptime_sec":5231}` |
+| `GET /api/health` | anyone | `{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5231}` |
 | `GET /api/role-catalog` | anyone | Roles HR can grant, with their groups and permissions. |
 | `GET /api/v1/brand`, `GET /api/v1/brand/{role}` | anyone | Brand from Den once paired (`"source":"den"`), else `"standalone"`; `{role}` streams a logo or login background. |
 

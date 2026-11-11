@@ -28,8 +28,9 @@ managed S3 service, and Argo CD installs Den and the modules with these
 charts. The Kustomize platform in `deploy/kubernetes/` is for a local trial.
 
 !!! warning "The charts are a first version"
-    The module charts are version `0.2.1`, the Den chart `0.1.1`, and all
-    are marked *STUB: first scaffold, not yet tested on a cluster* in their
+    Every chart is versioned with its app (Den and the modules all start at
+    `1.0.0`, see [Versions and upgrades](versioning.md)), and all are marked
+    *STUB: first scaffold, not yet tested on a cluster* in their
     `Chart.yaml`. They render valid manifests
     and follow the same rules as the Kustomize files, but test each one on a
     staging cluster before relying on it, and report problems as issues.
@@ -70,17 +71,22 @@ Every chart in `deploy/charts/` follows the same rules:
   must be installed and the platform's `ClusterIssuer` must exist; see
   [Internal TLS](internal-tls.md#settings) for every `internalTLS.*` value.
 
-| Chart | `appVersion` | Secret it expects (`existingSecret`) | Migrations | Notes |
-| --- | --- | --- | --- | --- |
-| `den` | `1.0.0-1` | `den-secrets`, and `den-operator-secrets` (`operator.existingSecret`) | `/den-migrate` initContainer (backend image) | Install with the release name `den`. Three certificates (backend, web app, operator). Operator runs as user 70 (`postgres`). |
-| `stash` | `1.0.0-1` | `stash-secrets` | in the backend at start | |
-| `hr` | none (`0.0.0`) | `hr-secrets` | `hr-migrate` initContainer | Set all three tags yourself. |
-| `rally` | none (`0.0.0`) | `rally-secrets` | `rally-migrate` initContainer | Set tags yourself. Pairs with Den as `events`. The public submission site has no published image yet. |
-| `finance` | `1.0.0-1` | `finance-secrets` | `finance-migrate` initContainer | No access config file; uses `FINANCE_ACCESS_GROUPS`. |
-| `learn` | `1.0.0-1` | `learn-secrets` | `learn-migrate` initContainer | |
-| `wiki` | `1.0.0-1` | `wiki-secrets` | `wiki-migrate` initContainer | Creates a 1 GiB PersistentVolumeClaim for the live-edit buffer. |
-| `desk` | `1.0.0-1` | `desk-secrets` | `desk-migrate` initContainer | |
-| `tasks` | `1.0.0-1` | `tasks-secrets` | `tasks-migrate` initContainer | |
+Each chart's `version` and `appVersion` are its app's version, released by
+the tag `<app>/v<version>` in `con-services` (for example `stash/v1.0.0`),
+and its annotation `conservices.io/den-major` names the Den MAJOR it needs.
+The default image tag is that version's first build.
+
+| Chart | `version` / `appVersion` | Default image tag | Secret it expects (`existingSecret`) | Migrations | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `den` | `1.0.0` | `1.0.0-1` | `den-secrets`, and `den-operator-secrets` (`operator.existingSecret`) | `/den-migrate` initContainer (backend image) | Install with the release name `den`. Three certificates (backend, web app, operator). Operator runs as user 70 (`postgres`). |
+| `stash` | `1.0.0` | `1.0.0-1` | `stash-secrets` | in the backend at start | |
+| `hr` | `1.0.0` | none | `hr-secrets` | `hr-migrate` initContainer | Set all three tags yourself. |
+| `rally` | `1.0.0` | none | `rally-secrets` | `rally-migrate` initContainer | Set tags yourself. Pairs with Den as `events`. The published `rally-submit` image has the example sign-in settings; build your own for your domain. |
+| `finance` | `1.0.0` | `1.0.0-1` | `finance-secrets` | `finance-migrate` initContainer | No access config file; uses `FINANCE_ACCESS_GROUPS`. |
+| `learn` | `1.0.0` | `1.0.0-1` | `learn-secrets` | `learn-migrate` initContainer | |
+| `wiki` | `1.0.0` | `1.0.0-1` | `wiki-secrets` | `wiki-migrate` initContainer | Creates a 1 GiB PersistentVolumeClaim for the live-edit buffer. |
+| `desk` | `1.0.0` | `1.0.0-1` | `desk-secrets` | `desk-migrate` initContainer | |
+| `tasks` | `1.0.0` | `1.0.0-1` | `tasks-secrets` | `tasks-migrate` initContainer | |
 
 Each chart's `values.yaml` lists every key with a comment; the module's
 **Setup** and **Configuration** pages (under [Modules](../modules/index.md))
@@ -231,7 +237,7 @@ Den's chart can list the modules on Den's Modules page in advance.
 | Value | Chart | Default | What it does |
 | --- | --- | --- | --- |
 | `den.mode` | every module | `required` | `required`: the module waits for Den; until it is paired, its API answers `503 den_pairing_required` and its web app shows *Waiting for Den*. `standalone`: the module works without Den (pairing stays optional). Rendered as `DEN_MODE` into `<release>-config`. Any other value, or setting `config.DEN_MODE` as well, stops `helm template` with an error. |
-| `preregisterModules` | Den | `[]` | Modules Den lists as unpaired from its first start, so an admin only clicks **Pair**: `[{slug, display_name, base_url}]` (optional `environment`; Rally's slug is `events`). Rendered as JSON into `DEN_PREREGISTER_MODULES` when not empty. Den adds unknown slugs at start-up and never changes or removes existing ones ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
+| `preregisterModules` | Den | `[]` | Modules Den lists as unpaired from its first start. This never pairs them: an admin still creates the pairing URL and pastes it into the module ([pairing](../concepts/pairing.md)). Format: `[{slug, display_name, base_url}]` (optional `environment`; Rally's slug is `events`). Rendered as JSON into `DEN_PREREGISTER_MODULES` when not empty. Den adds unknown slugs at start-up and never changes or removes existing ones ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
 
 A module installed without Den sets:
 
@@ -388,10 +394,11 @@ networkPolicy:
     s3:       { podSelector: { app.kubernetes.io/name: s3 }, port: 9000 }
 ```
 
-The keys of chart version `0.1.0` (`data.postgresPort`, `data.s3Port` and
-a boolean `data.s3`) still work and win over the new ones when set; Helm
-prints `cannot overwrite table with non table` for a boolean `data.s3`,
-which is harmless. A boolean `data.s3` also turns `data.s3.external` off.
+The flat keys `data.postgresPort`, `data.s3Port` and a boolean `data.s3`
+are accepted too and win over the keys above when set; prefer the keys
+above. Helm prints `cannot overwrite table with non table` for a boolean
+`data.s3`, which is harmless. A boolean `data.s3` also turns
+`data.s3.external` off.
 
 ### External S3 (Hetzner Object Storage)
 
@@ -484,10 +491,13 @@ runs in the backend pod).
 ## Upgrade
 
 1. Read the module's `CHANGELOG.md` from your version to the new one
-   ([Versions and upgrades](versioning.md#upgrading)).
+   ([Versions and upgrades](versioning.md#upgrading)). If its *Needs Den*
+   line names a newer Den, or a different Den MAJOR, upgrade Den first.
 2. Make a backup: Den → **Backups → Back up now**.
-3. Change every image tag of the module in your values file to the same new
-   tag.
+3. Use the chart of the new version: check out its release tag, for
+   example `git checkout stash/v1.1.0` in your clone of `con-services`.
+   Change every image tag of the module in your values file to the same new
+   tag (`1.1.0-1`).
 4. Look at the difference. The [helm-diff](https://github.com/databus23/helm-diff)
    plugin shows it like `kubectl diff`:
 
@@ -511,20 +521,21 @@ runs in the backend pod).
 
 6. Check `/api/health` reports the new version and sign in once.
 
-!!! warning "Module charts 0.1.0 → 0.2.0 change defaults"
-    `ingress.enabled` and `internalTLS.ingressNginxAnnotations` are now
-    `false`, `route.enabled` is `true`, the OIDC rule goes to Keycloak
-    in-cluster instead of the ingress controller, and the data rules select
-    CloudNativePG and Garage pods. ingress-nginx is no longer maintained:
-    move to the Gateway API rather than keeping it. If you must keep a plain
-    `Ingress` for a while (for example with Traefik), set in your values
-    file `route.enabled: false`, `ingress.enabled: true`,
-    `ingress.className`, `networkPolicy.gateway.cilium: false`,
+!!! note "Running behind an ingress controller instead of the Gateway"
+    The charts default to the Gateway API: `route.enabled: true`,
+    `ingress.enabled: false`, `internalTLS.ingressNginxAnnotations: false`,
+    the OIDC rule to Keycloak in-cluster, and data rules that select
+    CloudNativePG and Garage pods. ingress-nginx is not maintained; do not
+    use it. To use a plain `Ingress` with another controller (for example
+    Traefik), set in your values file `route.enabled: false`,
+    `ingress.enabled: true`, `ingress.className`,
+    `networkPolicy.gateway.cilium: false`,
     `networkPolicy.ingressControllerNamespace` (your controller's
     namespace), `networkPolicy.oidcViaIngressController: true`,
-    `networkPolicy.oidc.inCluster: false` and, if needed, the old data
-    selectors from [Network policy values](#network-policy-values); the
-    controller's HTTPS settings are in
+    `networkPolicy.oidc.inCluster: false` and, if needed, data selectors
+    that match your database and S3 from
+    [Network policy values](#network-policy-values); the controller's HTTPS
+    settings are in
     [Internal TLS: Other ingress controllers](internal-tls.md#other-ingress-controllers).
 
 Always pass your values file (`-f`). `helm upgrade` without it resets every
@@ -541,8 +552,8 @@ helm history stash -n conservices-stash
 
 ```text
 REVISION  UPDATED                   STATUS      CHART        APP VERSION  DESCRIPTION
-1         Fri Nov  6 10:12:03 2026  superseded  stash-0.1.0  1.0.0-1      Install complete
-2         Fri Nov  6 14:40:51 2026  deployed    stash-0.1.0  1.0.0-1      Upgrade complete
+1         Fri Nov  6 10:12:03 2026  superseded  stash-1.0.0  1.0.0        Install complete
+2         Fri Nov  6 14:40:51 2026  deployed    stash-1.1.0  1.1.0        Upgrade complete
 ```
 
 ```sh
@@ -588,7 +599,7 @@ spec:
   project: default
   sources:
     - repoURL: https://github.com/AGlElectronics/con-services.git
-      targetRevision: v1.1.0          # a tag of con-services, never a branch
+      targetRevision: stash/v1.0.0    # the chart release tag <app>/vX.Y.Z, never a branch
       path: deploy/charts/stash
       helm:
         valueFiles:

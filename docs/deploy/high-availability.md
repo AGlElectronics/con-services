@@ -6,6 +6,12 @@ software allows it. This page lists, per component, how it is protected and
 what a failure looks like, including the parts that are not highly
 available yet and why.
 
+Everything on this page describes the default, `profile: standard`, which
+needs **3 or more nodes**. The [small profile](sizing.md#small-profile)
+(`profile: small`, for 1 or 2 nodes) runs one copy of PostgreSQL and
+Keycloak and is **not** highly available; see
+[Fewer than 3 nodes](#fewer-than-3-nodes-the-small-profile).
+
 ## Terms
 
 **Replica**
@@ -24,6 +30,23 @@ available yet and why.
 :   A majority of members (2 of 3). etcd and OpenBao keep working as
     long as a majority is up. With 3 members you can lose 1.
 
+## Why 3 nodes
+
+Two copies on two nodes survive one node failing, so why three?
+
+- **Quorum.** The Kubernetes control plane (etcd) and OpenBao (Raft)
+  keep working only while a majority of their members is up. With 2
+  members the majority is 2, so losing either one stops them. With 3, the
+  majority is 2 and one may fail.
+- **PostgreSQL keeps a synchronous standby while one node is down.** With
+  3 instances on 3 nodes, losing one still leaves a primary and a standby
+  that confirms every commit, so a second failure loses no data.
+- **Updates without downtime.** Draining one node for an update leaves two
+  nodes that still hold a copy of everything.
+
+That is why PostgreSQL requires its 3 instances on 3 different nodes, and
+why Keycloak's pods refuse to share a node in the standard profile.
+
 ## What survives what
 
 Argo CD, cert-manager, trust-manager, External Secrets, OpenBao and the
@@ -41,9 +64,9 @@ voters); the template only needs them to be there.
 | Argo CD (prerequisite) | server 2, repo-server 2, Redis HA 3 | no effect | no effect; syncing continues |
 | cert-manager, trust-manager, External Secrets, CloudNativePG operator (prerequisites) | 2 each | no effect | no effect |
 | OpenBao (prerequisite) | 3 Raft voters | no effect (a standby takes over) | keeps working; unless OpenBao auto-unseals, the restarted pod must be **unsealed** by its operator before it rejoins |
-| PostgreSQL (CloudNativePG) | 3 instances, 1 synchronous standby | if the primary dies, a standby is promoted in about 10–30 seconds; apps reconnect | same; no committed transaction is lost (synchronous replica) |
+| PostgreSQL (CloudNativePG) | 3 instances on 3 different nodes, 1 synchronous standby, PDB | if the primary dies, a standby is promoted in about 10–30 seconds; apps reconnect | same; no committed transaction is lost (synchronous replica) |
 | Object storage (managed S3, for example Hetzner) | run by the provider, outside the cluster | no effect | no effect; the cluster only needs outbound internet access |
-| Keycloak | 2+ instances, sessions in the database-backed cache | no effect; signed-in users stay signed in | no effect |
+| Keycloak | 2+ instances on different nodes, PDB, sessions in the database-backed cache | no effect; signed-in users stay signed in | no effect |
 | Web apps (`*-frontend`) | 2+, PDB, spread over nodes | no effect | no effect |
 | Den backend, module backends | **1** | requests fail until the pod is back, usually under a minute | the pod restarts on another node; under two minutes including volume reattach |
 | Den operator | **1** | backups and database actions wait until it is back | same |
@@ -97,6 +120,34 @@ Upgrading a node (k3s, the operating system) is safe one node at a time:
 5. Wait until `kubectl get pods -A` shows everything ready and Longhorn
    shows all volumes `Healthy` before you start the next node.
 
+## Fewer than 3 nodes: the small profile
+
+With `profile: small` in `cluster.yaml` the template runs:
+
+| Component | Standard profile | Small profile |
+| --- | --- | --- |
+| PostgreSQL | 3 instances, required on different nodes, PDB | 1 instance, no PDB |
+| Keycloak | 2 pods, `DoNotSchedule` spread, PDB | 1 pod, `ScheduleAnyway` spread, no PDB |
+| Den and module web apps | 2 replicas, spread, PDB | 2 replicas, no spread rule, no PDB |
+| Backends, Den operator | 1 | 1 |
+
+What a failure looks like then:
+
+- **One pod dies:** PostgreSQL or Keycloak is unavailable until Kubernetes
+  has restarted it, usually under a minute. Sign-in and the apps fail
+  meanwhile.
+- **A node reboots or dies:** everything on it is down until the node is
+  back, or until the pods have restarted on the other node (if there is
+  one and the volumes can follow).
+- **The PostgreSQL volume is lost:** restore from the backup in S3
+  ([Data: Restore](data.md#restore)).
+
+The PDBs are off on purpose: with one copy, a PDB with `minAvailable: 1`
+would block `kubectl drain` forever. Draining a node simply stops the pods
+on it. The prerequisites (Argo CD, OpenBao and the others) need their own
+non-HA settings; see
+[Sizing: the prerequisites are yours to size](sizing.md#the-prerequisites-are-yours-to-size).
+
 ## What HA does not replace
 
 - **Backups.** Replication copies mistakes too: a dropped table is dropped on
@@ -126,8 +177,13 @@ Upgrading a node (k3s, the operating system) is safe one node at a time:
 **CloudNativePG instances stay `Pending` after adding the cluster**
 : They require different nodes (`podAntiAffinityType: required`). With fewer
   than 3 schedulable nodes, the third instance cannot be placed. Make the
-  control-plane node schedulable or lower `postgres.instances` in
-  `cluster.yaml` (and accept less redundancy).
+  control-plane node schedulable, add a node, or switch to
+  `profile: small` in `cluster.yaml` (one instance, not highly available;
+  see [Small profile](sizing.md#small-profile)).
+
+**The second Keycloak pod stays `Pending` with `didn't match pod topology spread constraints`**
+: In the standard profile Keycloak's pods refuse to share a node. With
+  only one schedulable node, add a node or use `profile: small`.
 
 **After a full restart of all nodes nothing gets its secrets**
 : OpenBao is sealed. Have it unsealed (by its operator, or by its

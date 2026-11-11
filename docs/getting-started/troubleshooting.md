@@ -106,13 +106,6 @@ Storage, Cloudflare R2 or Backblaze B2.
   last lines should include `Added admin identity from AWS environment variables`
   and one line per bucket.
 
-!!! note "Coming from the MinIO trial"
-    Earlier versions ran MinIO here, whose images are no longer published
-    (`ImagePullBackOff` on `quay.io/minio/minio`). Applying the current
-    overlay starts `s3` instead; remove the old pieces with
-    `kubectl delete deployment,service,serviceaccount,networkpolicy,pvc -n conservices-data minio minio-data --ignore-not-found`
-    and `kubectl delete certificate,secret -n conservices-data minio-tls minio-secrets --ignore-not-found`.
-
 ## ImagePullBackOff or ErrImagePull
 
 **You see:** a pod with `ImagePullBackOff`; `kubectl describe pod` shows

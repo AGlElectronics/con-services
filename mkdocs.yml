@@ -108,6 +108,7 @@ nav:
       - Glossary: concepts/glossary.md
   - Proposals:
       - proposals/index.md
+      - Existing identity provider: proposals/existing-identity-provider.md
       - Staff communications: proposals/staff-communications.md
   - Modules:
       - modules/index.md

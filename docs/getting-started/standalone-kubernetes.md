@@ -88,7 +88,8 @@ exact `MAJOR.MINOR.PATCH-BUILD` tag, see [Versions and upgrades](../operations/v
 
 === "Helm chart"
 
-    The chart in `deploy/charts/stash` (version `0.3.0`) never
+    The chart in `deploy/charts/stash` (released with Stash, for example
+    the tag `stash/v1.0.0`) never
     creates Secrets or the namespace; it uses what you made in steps 1–3.
     Write your settings into a values file (`route.parentRefs` names your
     Gateway and its HTTPS listener):

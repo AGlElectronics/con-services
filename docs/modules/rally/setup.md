@@ -33,11 +33,13 @@ S3 storage are up. If not, start with
 [How the platform starts](../../getting-started/how-the-platform-starts.md).
 
 !!! warning "First version, not yet tested on a cluster"
-    The chart `deploy/charts/rally` (`0.1.0`) is new and no Rally images are
-    published yet. Build and push `rally-backend`, `rally-migrate` and
-    `rally-frontend` (plus the submission site if you want it) yourself and
-    set the tags. Rally's own `deploy/kubernetes` folder is an older sketch
-    (port 8100, namespace `rally`): do not use it.
+    The chart `deploy/charts/rally` (released with Rally as
+    `rally/vX.Y.Z`) has not been installed on a real cluster yet. It ships
+    empty image tags: set the tags of `rally-backend`, `rally-migrate`,
+    `rally-frontend` (and `rally-submit` if you want the submission site)
+    to the release you install, for example `1.0.0-1`. Rally's own
+    `deploy/kubernetes` folder is an unmaintained sketch (port 8100,
+    namespace `rally`): do not use it.
 
 ### 1. Register Rally in Den and create its database
 

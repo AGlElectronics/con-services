@@ -79,13 +79,22 @@ them but does not install them.
    at the top of the repository. Every value you must set is marked
    `change-me`:
 
-    ```sh
-    grep -n "change-me" cluster.yaml
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        grep -n "change-me" cluster.yaml
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        Select-String -Path cluster.yaml -SimpleMatch 'change-me'
+        ```
 
     When that command prints nothing, the file is complete.
 3. **Check your cluster.** You bring a Kubernetes cluster that meets the
-   [Prerequisites](prerequisites.md): at least 3 nodes, Cilium with the
+   [Prerequisites](prerequisites.md): 3 nodes for production (1 or 2 with
+   the [small profile](sizing.md#small-profile), not highly available), Cilium with the
    Gateway API, a replicated default StorageClass, Argo CD, cert-manager,
    External Secrets Operator with OpenBao, and CloudNativePG. Any
    conformant Kubernetes works (k3s, kubeadm, Talos, managed clouds).
@@ -95,15 +104,22 @@ them but does not install them.
    OpenBao (a KV engine, a login for External Secrets) and store its
    secrets there ([Secrets with OpenBao](secrets-openbao.md)).
 5. **Point Argo CD at your copy.** One command,
-   `bash bootstrap/install-root.sh`, checks the prerequisites and creates
+   `bash bootstrap/install-root.sh` (on Windows
+   `.\bootstrap\install-root.ps1`), checks the prerequisites and creates
    the root Application; from then on Argo CD installs every Con Services
    component in the right order and keeps it equal to your repository
    ([Argo CD](argocd.md)).
-6. **Do the steps only a person can do**: create the
-   DNS records and the port forward
+6. **Do the steps only a person can do**: start the OpenBao setup once
+   (it never runs without a person's go-ahead), create the DNS records and
+   the port forward or a Cloudflare Tunnel
    ([DNS and certificates](dns-and-certificates.md)), create the S3
    buckets ([Data](data.md)). Argo CD waits for these and continues by
    itself once they are done.
+
+Commands in the guides are given for Linux and macOS (bash) and for
+Windows (PowerShell) where they differ. The tools you need on your
+computer, and how to install them on each system, are on
+[Prerequisites](prerequisites.md#10-tools-on-your-computer).
 
 Secrets are never in your repository; they live in OpenBao.
 
@@ -143,11 +159,24 @@ memory every component requests and may use, and how to change it) and
 Each guide ends with the problems people actually hit at that step. If you
 are not sure where something broke, start with:
 
-```sh
-kubectl get applications -n argocd
-kubectl get pods -A | grep -v -E "Running|Completed"
-```
+=== "Linux / macOS"
+
+    ```sh
+    kubectl get applications -n argocd
+    kubectl get pods -A | grep -v -E "Running|Completed"
+    ```
+
+=== "Windows (PowerShell)"
+
+    ```powershell
+    kubectl get applications -n argocd
+    kubectl get pods -A | Select-String -NotMatch -Pattern 'Running|Completed'
+    ```
 
 The first shows which Argo CD Application is not `Synced`/`Healthy`; the
 second lists every pod that is not running. Then open the guide for that
-component.
+component. Start with the Application in the **lowest** sync wave that is
+not `Healthy`: an infrastructure Application that is stuck (for example
+`letsencrypt` or `keycloak-operator`) holds back every later wave, while
+Den and the modules share the last wave and do not hold each other back
+([Argo CD, step 7](argocd.md#7-do-the-steps-only-a-person-can-do)).

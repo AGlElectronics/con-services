@@ -1,4 +1,4 @@
-# Den Helm chart values. STUB (chart version 0.2.0).
+# Den Helm chart values. STUB: first scaffold, not yet tested on a cluster.
 # Docs: https://aglelectronics.github.io/con-services/modules/den/configuration/
 #
 # The namespace is NOT created by this chart. Create it first with the

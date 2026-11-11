@@ -26,21 +26,28 @@ Git; the full list is on [Secrets](../operations/secrets.md).
 | Keycloak Operator 26.8.2 (CRDs, RBAC, Deployment) | `components/keycloak-operator`, namespace `conservices-identity` | `keycloak-operator` (2) |
 | Keycloak 26.8.2, 2 instances | chart `charts/keycloak`: the Keycloak resource, hostnames, routes, realm imports and theme | `keycloak` (4) |
 
-The root chart passes `domain`, `keycloak.instances`, `keycloak.resources`
-and `keycloak.smtp.enabled` from `cluster.yaml` to `charts/keycloak`.
+The root chart passes `domain`, `keycloak.host`, `keycloak.adminHost`,
+`keycloak.instances`, `keycloak.resources`, `keycloak.smtp.enabled`, the
+host names of Den and the modules (for the clients' redirect URIs) and the
+[profile](sizing.md#small-profile) from `cluster.yaml` to
+`charts/keycloak`.
 
-- **High availability:** 2 instances (`keycloak.instances`) on different nodes. They share
+- **High availability:** 2 instances (`keycloak.instances`) on different
+  nodes, with a PodDisruptionBudget. With `profile: small` the default is
+  1 instance, allowed on any node, without a PodDisruptionBudget. They share
   sessions and caches (Infinispan) and find each other through the
   database, so one instance can fail without signing anyone out.
 - **Database:** `jdbc:postgresql://conservices-pg-rw...:5432/keycloak` with
   `sslmode=verify-full` against the internal CA. The password comes from
-  OpenBao `kv/conservices/postgres/roles/keycloak`.
+  OpenBao `conservices/infra/postgres/roles/keycloak`.
 - **TLS everywhere:** Keycloak serves HTTPS only (port 8443) with a
   certificate from the internal CA (`keycloak-tls`). The Gateway
   terminates public TLS and re-encrypts to Keycloak, checking that
   certificate with a `BackendTLSPolicy` against the `conservices-internal-ca`
   ConfigMap.
-- **Hostnames:**
+- **Hostnames** (the first label is `keycloak.host`, default `auth`, and
+  `keycloak.adminHost`, default `auth-admin`; see
+  [Changing a host name](#changing-a-host-name)):
     - `https://auth.example.org`: public sign-in. Only `/realms/` and
       `/resources/` are routed on the public Gateway; the admin console,
       `/metrics` and `/health` are not reachable from the internet.
@@ -55,7 +62,10 @@ and `keycloak.smtp.enabled` from `cluster.yaml` to `charts/keycloak`.
 - **Network policies** (`charts/keycloak/templates/networkpolicies.yaml`):
   ingress on 8443 only from the Gateway, Den and the module namespaces;
   the instances talk to each other on 7800 and 57800; egress to
-  PostgreSQL, DNS and SMTP (587 and 465).
+  PostgreSQL, DNS and SMTP (587 and 465). The Keycloak Operator's own
+  policies (egress to the Kubernetes API and to the Keycloak pods) are in
+  `components/keycloak-operator/networkpolicies.yaml` and come with the
+  operator in wave 2, so the operator can start before Keycloak exists.
 
 ## The realms
 
@@ -73,7 +83,9 @@ take your domain from `cluster.yaml`. The generator makes them fit for
 production:
 
 - no users, except the service-account users of the confidential clients;
-- redirect URIs only on `https://<app>.example.org` (no `localhost`);
+- redirect URIs only on `https://<host>.example.org` (no `localhost`),
+  where `<host>` is the app's host name from `cluster.yaml` (`den.host`,
+  `modules.<module>.host`, `modules.rally.submit.host`);
 - the password grant (*direct access grants*) off on all browser clients;
 - TLS required for every request (`sslRequired: all`);
 - self-registration **off** in `conservices` (HR creates staff accounts)
@@ -111,10 +123,10 @@ OpenBao:
 
 | Placeholder | OpenBao path, key |
 | --- | --- |
-| `DEN_KEYCLOAK_CLIENT_SECRET` | `kv/conservices/keycloak/clients`, `den-keycloak` |
-| `HR_PROVISIONER_CLIENT_SECRET` | `kv/conservices/keycloak/clients`, `hr-provisioner` |
-| `LEARN_PROVISIONER_CLIENT_SECRET` | `kv/conservices/keycloak/clients`, `learn-provisioner` |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, `SMTP_PASSWORD` | `kv/conservices/keycloak/smtp`, `host`, `port`, `from`, `username`, `password` |
+| `DEN_KEYCLOAK_CLIENT_SECRET` | `conservices/infra/keycloak/clients`, `den-keycloak` |
+| `HR_PROVISIONER_CLIENT_SECRET` | `conservices/infra/keycloak/clients`, `hr-provisioner` |
+| `LEARN_PROVISIONER_CLIENT_SECRET` | `conservices/infra/keycloak/clients`, `learn-provisioner` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, `SMTP_PASSWORD` | `conservices/infra/keycloak/smtp`, `host`, `port`, `from`, `username`, `password` |
 
 The same client secrets reach Den, HR and Learn through their own
 ExternalSecrets, so both sides always agree.
@@ -123,22 +135,31 @@ ExternalSecrets, so both sides always agree.
 
 1. **Fill in the secrets.** External Secrets creates the client secrets and
    the bootstrap admin's password. With `keycloak.smtp.enabled: true` you
-   enter the SMTP server (`kv/conservices/keycloak/smtp`: `host`, `port`,
+   enter the SMTP server (`conservices/infra/keycloak/smtp`: `host`, `port`,
    `from`, `username`, `password`), for example with the helper script:
 
     ```sh
-    BAO_TOKEN=<token> bash bootstrap/scripts/openbao-seed.sh
+    bash bootstrap/scripts/openbao-seed.sh     # Windows: .\bootstrap\scripts\openbao-seed.ps1
     ```
 
     You should see, after your answers,
-    `kv/conservices/keycloak/smtp written` (or `already exists, keeping it`).
+    `conservices/infra/keycloak/smtp written` (or `exists, keeping it`).
     `kubectl get pushsecret -n external-secrets generated-keycloak-clients`
     should be `Synced`.
 
-2. **Check your hostnames.** The chart builds `https://auth.<domain>` and
-   `https://auth-admin.<domain>` from `domain` in `cluster.yaml` and puts
+2. **Check your hostnames.** The chart builds `https://<keycloak.host>.<domain>`
+   and `https://<keycloak.adminHost>.<domain>` from `cluster.yaml` and puts
    both names on the certificate `keycloak-tls`. With `domain: example.org`
-   that is `https://auth.example.org` and `https://auth-admin.example.org`.
+   and the defaults that is `https://auth.example.org` and
+   `https://auth-admin.example.org`. To use other names, set them before
+   the first install (later changes need extra steps, see
+   [Changing a host name](#changing-a-host-name)):
+
+    ```yaml
+    keycloak:
+      host: login
+      adminHost: login-admin
+    ```
 
 3. **Make `auth-admin.example.org` reachable on your LAN.** Point it at the
    internal Gateway's IP address, like the other admin tools (see
@@ -198,7 +219,7 @@ hand in the admin console (**conservices → Users**). Den's admin group is
 ## E-mail (SMTP)
 
 Keycloak sends password resets and e-mail verification. The SMTP settings
-come from `kv/conservices/keycloak/smtp` at the first import. To change
+come from `conservices/infra/keycloak/smtp` at the first import. To change
 them later, edit **Realm settings → Email** in the admin console of each
 realm, and update OpenBao too so a rebuilt cluster gets the new values.
 **Test connection** on that page sends a test mail to your admin user's
@@ -236,11 +257,73 @@ For a new module `shop` with the browser client `shop-spa`:
    OpenBao, for example:
 
     ```sh
-    bao kv patch kv/conservices/keycloak/clients shop-backend=-
+    bao kv patch conservices/infra/keycloak/clients shop-backend=-
     ```
 
     (paste the secret, then Ctrl-D). Reference it from the module's
     ExternalSecret.
+
+## Changing a host name
+
+Every public address is `https://<host>.<domain>`, and the host label is a
+setting in `cluster.yaml`: `keycloak.host` (default `auth`),
+`keycloak.adminHost` (`auth-admin`), `den.host` (`den`),
+`modules.<module>.host` (the module's name; Rally `events`) and
+`modules.rally.submit.host` (`submit`). The full table is on
+[Den and the modules: Host names](apps.md#host-names).
+
+**Before the first install**, just set them; the realms are imported with
+the right addresses. **On a running installation**, a push changes the
+routes, certificates, web app settings and Keycloak's own hostname, but
+not the realms: Keycloak imports a realm only once. Do these steps:
+
+1. **Create the DNS record** for the new name, before you push, so the
+   certificate can be issued: public names (`keycloak.host`, Den, the
+   modules, Rally's submission site) point to the public Gateway IP, the
+   admin console (`keycloak.adminHost`) to the internal Gateway IP
+   ([DNS and certificates](dns-and-certificates.md)).
+2. **Changing `keycloak.host` only:** update the CoreDNS rewrite so that
+   the new name answers with `keycloak-public` inside the cluster
+   ([how](dns-and-certificates.md#inside-the-cluster-reaching-keycloak)).
+   Otherwise backends fail with `failed to discover OIDC issuer`. The
+   token issuer changes too, so everyone has to sign in again.
+3. **Change the setting** in `cluster.yaml`, check, commit and push:
+
+    ```yaml
+    modules:
+      rally: { enabled: true, version: "1.0.0-1", host: con }
+    ```
+
+    ```sh
+    helm template root charts/root -f cluster.yaml > /dev/null && git commit -am "Rally at con.example.org" && git push
+    ```
+
+4. **Update the client in Keycloak** (not needed for `keycloak.host` or
+   `keycloak.adminHost`). Open the admin console
+   (`https://auth-admin.example.org`), pick the realm and client from this
+   table, and on its **Settings** tab replace the old address with the new
+   one in **Root URL**, **Home URL**, **Valid redirect URIs**,
+   **Valid post logout redirect URIs** and **Web origins**. Save.
+
+    | Setting you changed | Realm | Client |
+    | --- | --- | --- |
+    | `den.host` | `conservices` | `den-spa` |
+    | `modules.rally.host` | `conservices` | `events-spa` |
+    | `modules.rally.submit.host` | `attendees` | `rally-submit` |
+    | `modules.<module>.host` (others) | `conservices` | `<module>-spa` |
+
+    For Rally at `con`, **Valid redirect URIs** becomes
+    `https://con.example.org/*` and **Web origins** `https://con.example.org`.
+
+5. **A module that is already paired:** edit its address in Den admin →
+   **Modules**. Den registers modules from `cluster.yaml` only once and
+   never changes an existing entry.
+6. **Check** that sign-in works from the new address. Open it in a private
+   browser window and sign in; Keycloak must send you back to the new
+   address. Remove the old DNS record afterwards.
+
+Keep the development realm of the main repository unchanged: it uses the
+`*.conservices.test` names, and the generator maps them to your settings.
 
 ## Troubleshooting
 
@@ -252,19 +335,30 @@ For a new module `shop` with the browser client `shop-spa`:
 
 **`password authentication failed for user "keycloak"`**
 : The Secret `keycloak-db` does not match the role's password. Both come
-  from `kv/conservices/postgres/roles/keycloak`; force a refresh with
+  from `conservices/infra/postgres/roles/keycloak`; force a refresh with
   `kubectl annotate externalsecret -n conservices-identity keycloak-db force-sync=$(date +%s) --overwrite`.
 
 **The realm import Job fails with `Could not resolve placeholder`**
 : An entry of `keycloak-realm-secrets` is missing. Run
   `kubectl describe externalsecret -n conservices-identity keycloak-realm-secrets`;
-  a missing `kv/conservices/keycloak/smtp` is the usual cause. Fill it with
+  a missing `conservices/infra/keycloak/smtp` is the usual cause. Fill it with
   the seed script, then delete the failed Job so the operator retries.
 
 **Browsers show `HTTPS required` or redirect to the wrong host**
 : The hostname settings do not match the address you use. Keycloak runs
   with `hostname.strict: true`; use exactly `https://auth.example.org` for
-  sign-in and `https://auth-admin.example.org` for the admin console.
+  sign-in and `https://auth-admin.example.org` for the admin console (or
+  the names in `keycloak.host` and `keycloak.adminHost`).
+
+**After changing a host name, sign-in fails with `Invalid parameter: redirect_uri`**
+: The client in Keycloak still has the old address; the realm import does
+  not run again. Update the client as in step 4 of
+  [Changing a host name](#changing-a-host-name).
+
+**`helm template` stops with `at '/keycloak/host': 'login.example.org' does not match pattern`**
+: A host setting contains a dot, an upper-case letter or other characters.
+  Write only the first label (`login`, not `login.example.org`); the
+  domain is added from `domain`.
 
 **`https://auth.example.org/admin/` returns 404**
 : Working as intended: the admin console is only on the internal Gateway

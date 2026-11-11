@@ -183,8 +183,10 @@ Every image has an exact tag, `MAJOR.MINOR.PATCH-BUILD`, for example
 `den-backend:1.4.2-3`. All images of one module share a tag. `BUILD` counts
 rebuilds of the same version and starts at `1` for each new version.
 Nothing ever uses `latest`: manifests, charts and docs all pin exact tags.
-A change that needs action on upgrade bumps `MAJOR` and comes with a
-**BREAKING:** changelog entry that says what to do.
+A change that needs action on upgrade comes with a **BREAKING:**
+changelog entry that says what to do. In Den it is a new `MAJOR` when it
+affects the modules; in a module it is a new `MINOR` (a module's `MAJOR`
+always follows Den's).
 
 **Why.** You must know exactly what is running, be able to roll back to it,
 and never be surprised by an upgrade in the middle of an event.

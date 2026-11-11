@@ -1,6 +1,8 @@
 # Validates this repository's deployment files and docs on every change:
-# Helm charts, Kustomize trees, Trivy misconfiguration scan, the docs site
-# and the workflow files themselves.
+# chart versions (a changed chart must raise its version), Helm charts,
+# Kustomize trees, Trivy misconfiguration scan, the docs site and the
+# workflow files themselves. Chart release tags (<app>/vX.Y.Z) are checked
+# by chart-release.yml.
 # Docs: https://aglelectronics.github.io/con-services/contributing/ci/
 name: Deploy validate
 
@@ -9,6 +11,7 @@ on:
     paths:
       - "deploy/**"
       - "scripts/check-den-mode.py"
+      - "scripts/check-chart-versions.py"
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/**"
@@ -17,6 +20,7 @@ on:
     paths:
       - "deploy/**"
       - "scripts/check-den-mode.py"
+      - "scripts/check-chart-versions.py"
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/**"
@@ -39,6 +43,35 @@ env:
   CI_IMAGE_TAG: 1.0.0-1
 
 jobs:
+  chart-versions:
+    name: Chart versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # Each chart is versioned with its app (version == appVersion, the
+      # den-major annotation == MAJOR). On a pull request, a chart whose
+      # files changed must also raise its version; other charts are untouched.
+      - name: Chart.yaml versions and den-major
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          pip install pyyaml==6.0.3
+          if [ -n "$BASE_REF" ]; then
+            python scripts/check-chart-versions.py --base "origin/$BASE_REF"
+          else
+            python scripts/check-chart-versions.py
+          fi
+
   manifests:
     name: Helm and Kustomize
     runs-on: ubuntu-24.04

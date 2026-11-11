@@ -25,9 +25,10 @@ You install HR into a running platform: Den, Keycloak and PostgreSQL are
 up. If not, start with [How the platform starts](../../getting-started/how-the-platform-starts.md).
 
 !!! warning "First version, not yet tested on a cluster"
-    The chart `deploy/charts/hr` (`0.1.0`) is new and no HR images are
-    published yet. Build and push `hr-backend`, `hr-migrate` and
-    `hr-frontend` yourself (see [Images](index.md#images)) and set the tags.
+    The chart `deploy/charts/hr` (released with HR as `hr/vX.Y.Z`) has not
+    been installed on a real cluster yet. It ships empty image tags: set
+    the tags of `hr-backend`, `hr-migrate` and `hr-frontend` to the release
+    you install, for example `1.0.0-1` (see [Images](index.md#images)).
 
 ### 1. Register HR in Den and create its database
 

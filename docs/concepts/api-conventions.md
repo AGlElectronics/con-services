@@ -422,8 +422,10 @@ There are two kinds of version, and they move independently.
 **The release version** is the image tag, `MAJOR.MINOR.PATCH-BUILD`, for
 example `1.4.2-3` (see [Versions and upgrades](../operations/versioning.md)).
 Any API change that can break a client (a removed or renamed endpoint or
-field, a new required field, a changed meaning) bumps **MAJOR** and gets a
-**BREAKING:** entry in the module's changelog that says what to change.
+field, a new required field, a changed meaning) gets a **BREAKING:** entry
+in the app's changelog that says what to change. In Den, a breaking change
+to something modules use bumps **MAJOR**; a module bumps **MINOR**, because
+its MAJOR always equals Den's.
 Adding endpoints, adding optional request fields and adding response fields
 are not breaking, and come in **MINOR** releases. So: **ignore response
 fields you do not know**, and do not depend on the order of fields.

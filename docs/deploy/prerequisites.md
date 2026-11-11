@@ -40,20 +40,34 @@ and gives a command for each item so you can check it.
     Secrets Operator, OpenBao and CloudNativePG. The template uses them but
     never installs, upgrades or removes them.
 
+**kubeconfig**
+:   The file that tells `kubectl` (and `helm`) which cluster to talk to and
+    how to log in. By default `~/.kube/config`; the environment variable
+    `KUBECONFIG` points the tools at another file.
+
+!!! info "Commands on Windows"
+    Every command on these pages works on Linux, macOS and Windows. Where
+    the shells differ, a block has two tabs, **Linux / macOS** (bash) and
+    **Windows (PowerShell)**; pick yours once and the other pages follow.
+    The PowerShell commands work in Windows PowerShell 5.1 (the version
+    built into Windows) and in PowerShell 7. A block without tabs is the
+    same in both shells.
+
 ## At a glance
 
 | Item | Version | Installed by | Check |
 | --- | --- | --- | --- |
-| Kubernetes, 3 or more schedulable nodes | 1.37 (validated); 1.35 or newer | you | [1](#1-kubernetes-and-nodes) |
+| Kubernetes, 3 or more schedulable nodes (recommended for production; 1 or 2 nodes with the [small profile](sizing.md#small-profile), not highly available) | 1.37 (validated); 1.35 or newer | you | [1](#1-kubernetes-and-nodes) |
 | Cilium with kube-proxy replacement and Gateway API | 1.20.4 (1.20 or newer) | you | [2](#2-cilium) |
 | Gateway API CRDs, standard channel | v1.6.3 | you (k3s ships them) | [3](#3-gateway-api-crds) |
 | A replicated default StorageClass | Longhorn 1.13.0 recommended | you | [4](#4-storage) |
-| Two LoadBalancer IPs; pods reach `https://auth.<domain>` | | you | [5](#5-loadbalancer-ips-dns-and-ports) |
+| Two LoadBalancer IPs (pin both); pods reach `https://auth.<domain>` | | you | [5](#5-loadbalancer-ips-dns-and-ports) |
 | cert-manager and trust-manager | v1.21.3 and v0.26.0 | you | [6](#6-cert-manager-and-trust-manager) |
 | External Secrets Operator | chart 2.14.0 (API `external-secrets.io/v1`) | you | [7](#7-external-secrets-operator-and-openbao) |
 | OpenBao, initialised and unsealed | 2.7.2 (chart `openbao` 0.30.7) | you | [7](#7-external-secrets-operator-and-openbao) |
 | CloudNativePG operator and Barman Cloud plugin | 1.30.1 (chart 0.29.1) and v0.15.1 (chart 0.8.1) | you | [8](#8-cloudnativepg-and-the-barman-cloud-plugin) |
 | Argo CD with the Application health check | v3.6.1 (chart `argo-cd` 10.14.0) | you | [9](#9-argo-cd) |
+| Tools on your computer: `kubectl`, `helm`, `git`, `jq`, `age` | | you | [10](#10-tools-on-your-computer) |
 | Accounts: DNS, S3, mail, Git hosting | | you | [11](#11-accounts) |
 | A cluster run along common practice (HA control plane, etcd backups, updates, ...) | | you | [12](#12-how-the-cluster-is-run) |
 
@@ -67,21 +81,44 @@ definitions) of the versions in this table, and the project's test
 cluster runs those versions. Newer patch releases normally work; older
 versions are not checked.
 
-`bootstrap/install-root.sh` checks Argo CD and items 6 to 8 before it does
-anything (see [Argo CD](argocd.md#5-apply-the-root-application)).
+`bootstrap/install-root.sh` (on Windows `bootstrap\install-root.ps1`)
+checks Argo CD and items 6 to 8 before it does anything (see
+[Argo CD](argocd.md#5-apply-the-root-application)).
 
 ## 1. Kubernetes and nodes
 
-You need **at least 3 schedulable nodes**. PostgreSQL, OpenBao and Argo
-CD's Redis each place their 3 copies on 3 different nodes, and refuse to
-put two on the same node; with 2 nodes the third copy stays `Pending`.
+**3 schedulable nodes are the recommended production setup.** Several
+components keep 3 copies and place each copy on a different node:
+
+- **PostgreSQL** runs 3 instances (one primary, two standbys that hold
+  every committed write);
+- **OpenBao** runs 3 pods, and **Argo CD's Redis** runs in high-availability
+  mode with 3 pods.
+
+Each of them refuses to put two copies on the same node, so that no single
+node holds the only copy. With 3 nodes the installation:
+
+- **survives the failure of any one node**: the remaining two copies keep
+  working, PostgreSQL promotes a standby within seconds, and no committed
+  data is lost;
+- **can be updated one node at a time** (operating system patches,
+  Kubernetes upgrades, reboots) without downtime, because one node can be
+  drained while the other two carry the load.
+
+With only 2 nodes and the default settings, the third copy of each stays
+`Pending` and the installation never becomes `Healthy`. For a trial, a
+small event or a lab with **1 or 2 nodes**, use the
+[small profile](sizing.md#small-profile), which runs fewer copies so that
+everything fits. That works, but it is **not highly available**: when a
+node goes down or reboots, Con Services (or part of it) is down until the
+node is back.
 
 Capacity for the default settings (all modules on, from
 [Sizing and resources](sizing.md)):
 
 | | Requested by the template | Recommended per node (3 nodes) |
 | --- | --- | --- |
-| CPU | about 2.3 cores | 4 cores |
+| CPU | about 2.2 cores | 4 cores |
 | Memory | about 6.6 GiB | 16 GiB |
 | Disk for volumes | 91 GiB of volumes (see [Storage](#4-storage)) | 150 GiB free for Longhorn (including OpenBao's), plus the operating system |
 
@@ -90,7 +127,31 @@ CoreDNS, the prerequisites below (Argo CD, cert-manager, External Secrets
 Operator, OpenBao, CloudNativePG; together about 1.9 cores and 4.5 GiB of
 requests, see [Sizing](sizing.md#platform-services)) and load peaks.
 
-Check:
+Check that `kubectl` talks to the right cluster, then look at the nodes:
+
+!!! tip "Several clusters on one computer?"
+    If you keep one kubeconfig file per cluster, point `kubectl` and `helm`
+    at the right one before you run anything on these pages. The setting
+    applies to the current terminal only, until you close it.
+
+    === "Linux / macOS"
+
+        ```sh
+        export KUBECONFIG=~/.kube/my-cluster.yaml
+        kubectl config current-context
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        $env:KUBECONFIG = "$HOME\.kube\my-cluster.yaml"
+        kubectl config current-context
+        ```
+
+    The second command prints the name of the context (cluster) in that
+    file, for example `default` on k3s. `kubectl get nodes` below must
+    then list the nodes of the cluster you mean to install on. The
+    [Argo CD guide](argocd.md#3-connect-argo-cd) repeats this.
 
 ```sh
 kubectl version
@@ -144,11 +205,25 @@ rules for S3), so another CNI is not supported.
 
 Check:
 
-```sh
-kubectl -n kube-system get ds cilium
-kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.kube-proxy-replacement} {.data.enable-gateway-api}{"\n"}'
-kubectl get gatewayclass cilium
-```
+=== "Linux / macOS"
+
+    ```sh
+    kubectl -n kube-system get ds cilium
+    kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.kube-proxy-replacement} {.data.enable-gateway-api}{"\n"}'
+    kubectl get gatewayclass cilium
+    ```
+
+=== "Windows (PowerShell)"
+
+    ```powershell
+    kubectl -n kube-system get ds cilium
+    kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.kube-proxy-replacement} {.data.enable-gateway-api}'
+    kubectl get gatewayclass cilium
+    ```
+
+    Windows PowerShell 5.1 drops double quotes inside arguments it passes
+    to programs, so the PowerShell variant leaves out the `{"\n"}` that
+    only adds a line break.
 
 ```text
 NAME     DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
@@ -170,10 +245,19 @@ starts.
 
 Check:
 
-```sh
-kubectl get crd backendtlspolicies.gateway.networking.k8s.io \
-  -o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version} {.metadata.annotations.gateway\.networking\.k8s\.io/channel}{"\n"}'
-```
+=== "Linux / macOS"
+
+    ```sh
+    kubectl get crd backendtlspolicies.gateway.networking.k8s.io \
+      -o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version} {.metadata.annotations.gateway\.networking\.k8s\.io/channel}{"\n"}'
+    ```
+
+=== "Windows (PowerShell)"
+
+    ```powershell
+    kubectl get crd backendtlspolicies.gateway.networking.k8s.io `
+      -o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version} {.metadata.annotations.gateway\.networking\.k8s\.io/channel}'
+    ```
 
 ```text
 v1.6.3 standard
@@ -186,15 +270,31 @@ across nodes, so a volume survives the loss of a node. Longhorn 1.13 is
 recommended and tested; a cloud provider's replicated block
 storage works too.
 
-Volumes the template creates (default sizes, all changeable in
-`cluster.yaml`):
+Volumes the template creates. The sizes are **suggested defaults, sized for
+a large convention** (thousands of attendees, several years of data); you
+set them in `cluster.yaml`:
 
-| Volume | Count | Size each | Total |
-| --- | --- | --- | --- |
-| PostgreSQL data | 3 | 20 GiB | 60 GiB |
-| PostgreSQL WAL (write-ahead log) | 3 | 10 GiB | 30 GiB |
-| Wiki editing buffers | 1 | 1 GiB | 1 GiB |
-| | | | **91 GiB** |
+| Volume | Count | Default size each | Total | `cluster.yaml` key |
+| --- | --- | --- | --- | --- |
+| PostgreSQL data | 3 | 20 GiB | 60 GiB | `postgres.storage.size` |
+| PostgreSQL WAL (write-ahead log) | 3 | 10 GiB | 30 GiB | `postgres.storage.walSize` |
+| Wiki editing buffers | 1 | 1 GiB | 1 GiB | |
+| | | | **91 GiB** | |
+
+For a small event or a trial they can be much smaller, for example:
+
+```yaml title="cluster.yaml"
+postgres:
+  storage:
+    size: 5Gi
+    walSize: 2Gi
+```
+
+which needs 3 × 7 GiB + 1 GiB = 22 GiB of volumes. Start small if you are
+unsure: a volume **can grow later** (Longhorn allows expansion; raise the
+value in `cluster.yaml`, push, and the volumes are resized while they run),
+but it **cannot shrink**. Making a volume smaller means a new PostgreSQL
+cluster restored from backup ([Data](data.md#restore)).
 
 PostgreSQL copies its data to its other instances itself. On a storage
 layer that also keeps 3 copies, every byte is stored 9 times. With
@@ -227,12 +327,28 @@ The template creates two Gateways, each a `Service` of type
 | `public` | Den, the modules, Keycloak | the internet: forward TCP 80 and 443 to it |
 | `internal` | the Keycloak admin console, and optionally the Longhorn and Hubble UIs | your LAN or VPN only |
 
+**Why two?** The public Gateway carries everything visitors and staff use
+from the internet: the apps and the Keycloak sign-in page. The internal
+Gateway carries the administration tools. Keeping them on a separate
+address that is never forwarded from the internet means nobody outside
+your network can even reach the Keycloak admin login, so it cannot be
+attacked with guessed or stolen passwords from outside.
+
 The cluster must give them addresses: a cloud load balancer, MetalLB, or a
 Cilium [LB IPAM](https://docs.cilium.io/en/stable/network/lb-ipam/) pool
-(with [L2 announcements](https://docs.cilium.io/en/stable/network/l2-announcements/)
-on bare metal). With Cilium you
-can pin the two addresses from the pool with
-`gateway.public.loadBalancerIP` and `gateway.internal.loadBalancerIP`.
+(LB IPAM: Cilium's *load balancer IP address management*, which hands out
+addresses from a range you define; on bare metal together with
+[L2 announcements](https://docs.cilium.io/en/stable/network/l2-announcements/)).
+
+!!! warning "Pin both addresses"
+    Set `gateway.public.loadBalancerIP` and `gateway.internal.loadBalancerIP`
+    in `cluster.yaml` ([how](dns-and-certificates.md#1-choose-the-gateway-ips)).
+    Without them the pool hands out addresses in whatever order the
+    Services are created, and that order is not fixed. On the project's
+    test install, Cilium gave `public` the second address of the pool and
+    `internal` the first, so the router's port forward (set up for the
+    first address) reached the **internal** Gateway and put the admin
+    console on the internet.
 
 **Pods must reach Keycloak at its public address.** Backends check
 sign-in tokens against `https://auth.<domain>`. If pods cannot reach the
@@ -271,6 +387,16 @@ What the template needs:
   `dns01RecursiveNameservers: "1.1.1.1:53,8.8.8.8:53"` and
   `dns01RecursiveNameserversOnly: true`. Otherwise certificates wait
   forever ([DNS and certificates](dns-and-certificates.md#troubleshooting)).
+
+    `1.1.1.1` is Cloudflare's public resolver and `8.8.8.8` is Google
+    Public DNS. They are only examples: **any public resolver works**, for
+    example Quad9 (`9.9.9.9`) or your provider's. If your organisation has
+    legal or privacy rules about which resolvers may be used, pick one
+    that meets them. cert-manager only sends them lookups for your own
+    domain while it checks a certificate: the TXT records
+    `_acme-challenge.<domain>` and the SOA records that tell it which
+    servers are authoritative. No visitor traffic and no other lookups go
+    there.
 
 You can keep the cluster's own ClusterIssuers; the template adds
 `conservices-internal-ca`, `letsencrypt-staging` and `letsencrypt-prod` next
@@ -319,8 +445,9 @@ What the template needs:
   the upstream chart grants it).
 - **Once, from the OpenBao administrator:** two policies and the role
   `conservices-setup` for the template's setup Job
-  (`bootstrap/scripts/openbao-configure.sh` writes them with an admin token
-  it asks for). The Job then enables the KV engine and writes External
+  (`bootstrap/scripts/openbao-configure.sh`, on Windows
+  `bootstrap\scripts\openbao-configure.ps1`, writes them with an admin
+  token it asks for). The Job then enables the KV engine and writes External
   Secrets' role when you sync the Application `openbao-setup`; ESO creates
   the random secrets. With `openbao.setup.enabled: false` the administrator
   creates the KV engine and that role too. Details, the exact policies and
@@ -434,10 +561,19 @@ What the template needs:
 
 Check:
 
-```sh
-kubectl -n argocd get deploy argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-kubectl -n argocd get cm argocd-cm -o yaml | grep -c health.argoproj.io_Application
-```
+=== "Linux / macOS"
+
+    ```sh
+    kubectl -n argocd get deploy argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+    kubectl -n argocd get cm argocd-cm -o yaml | grep -c health.argoproj.io_Application
+    ```
+
+=== "Windows (PowerShell)"
+
+    ```powershell
+    kubectl -n argocd get deploy argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}'
+    (kubectl -n argocd get cm argocd-cm -o yaml | Select-String -SimpleMatch 'health.argoproj.io_Application').Count
+    ```
 
 ```text
 quay.io/argoproj/argocd:v3.6.1
@@ -449,25 +585,109 @@ quay.io/argoproj/argocd:v3.6.1
 | Tool | Version used in the guides | Used for |
 | --- | --- | --- |
 | `kubectl` | 1.36 or newer | everything |
-| `helm` | 3.19 | `helm template` checks, `install-root.sh`, `openbao-configure.sh`, `openbao-seed.sh` |
+| `helm` | 3.19 | `helm template` checks and the bootstrap scripts (`install-root`, `openbao-configure`, `openbao-seed`) |
 | `git` | any | your copy of the template |
-| `bash`, `jq` | bash 4 or newer | the bootstrap scripts (on Windows: use WSL) |
-| `age` | 1.2 | the key Den encrypts its backups to |
+| `jq` | 1.7 | the bash versions of the bootstrap scripts |
+| `bash` | 4 or newer | the bash versions of the bootstrap scripts (Linux, macOS, or Git Bash on Windows) |
+| `age` | 1.2 | the key Den encrypts its backups to (`age-keygen`) |
 
-Check:
+### Install the tools
 
-```sh
-kubectl version --client && helm version --short && jq --version && openssl version && age --version
+1. Install them with your system's package manager:
+
+    === "Linux / macOS"
+
+        ```sh
+        # Debian, Ubuntu
+        sudo apt install age jq git
+
+        # Fedora
+        sudo dnf install age jq git
+
+        # macOS (Homebrew), including helm and kubectl
+        brew install age jq helm kubectl
+        ```
+
+        On Linux, install `helm` with its
+        [install script](https://helm.sh/docs/intro/install/#from-script)
+        or your distribution's package, and `kubectl` from the
+        [Kubernetes package repository](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        winget install Git.Git
+        winget install Kubernetes.kubectl
+        winget install Helm.Helm
+        winget install jqlang.jq
+        winget install FiloSottile.age
+        ```
+
+        `FiloSottile.age` contains both `age` and `age-keygen`. Git for
+        Windows brings **Git Bash**, which you need only if you run the
+        bash versions of the scripts (see below).
+
+2. **Windows only:** winget adds the tools to `PATH`, but only terminals
+   opened afterwards see the change. Open a new terminal, or reload `PATH`
+   in the current one:
+
+    ```powershell
+    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    ```
+
+3. Check that every tool is found:
+
+    === "Linux / macOS"
+
+        ```sh
+        kubectl version --client && helm version --short && jq --version && age --version
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        kubectl version --client; helm version --short; jq --version; age --version
+        ```
+
+    ```text
+    Client Version: v1.36.1
+    Kustomize Version: v5.8.1
+    v3.19.0+g3d8990f
+    jq-1.7.1
+    v1.2.1
+    ```
+
+    A line such as `The term 'age' is not recognized` (PowerShell) or
+    `age: command not found` (bash) means that tool is missing or not yet on
+    `PATH` (step 2).
+
+### The bootstrap scripts on Windows
+
+The template's scripts come in two versions:
+
+| Script | Linux / macOS | Windows (PowerShell) |
+| --- | --- | --- |
+| Apply the root Application | `bootstrap/install-root.sh` | `bootstrap\install-root.ps1` |
+| OpenBao administrator's one-time step | `bootstrap/scripts/openbao-configure.sh` | `bootstrap\scripts\openbao-configure.ps1` |
+| Enter your provider credentials in OpenBao | `bootstrap/scripts/openbao-seed.sh` | `bootstrap\scripts\openbao-seed.ps1` |
+
+On Windows, use the `.ps1` versions. Run them from the root of your copy of
+the template, for example `.\bootstrap\install-root.ps1`. If PowerShell
+refuses with `running scripts is disabled on this system`, allow local
+scripts for the current terminal only:
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned`.
+
+If you prefer the bash versions on Windows, start them with **Git Bash**
+explicitly, from the root of your copy:
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" bootstrap/scripts/openbao-seed.sh
 ```
 
-```text
-Client Version: v1.36.1
-Kustomize Version: v5.8.1
-v3.19.0+g3d8990f
-jq-1.7.1
-OpenSSL 3.0.13 30 Jan 2024
-v1.2.1
-```
+Do not type plain `bash` in PowerShell: on many Windows computers `bash`
+starts WSL (the Windows Subsystem for Linux) instead, for example the
+`docker-desktop` distribution of Docker Desktop, which has no `/bin/bash`,
+and the script fails before it starts.
 
 ## 11. Accounts
 
@@ -525,16 +745,18 @@ of the control-plane items for you.
 
 **Two StorageClasses say `(default)`**
 :   For example k3s' `local-path` next to Longhorn. Remove the mark from the
-    other one:
-    `kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'`.
+    other one (works in bash and PowerShell):
+    `kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=false --overwrite`.
 
 **Fewer than 3 nodes accept workloads**
 :   Control-plane nodes of kubeadm and many managed services are tainted.
     Add worker nodes, or, on a cluster of only 3 nodes, let all 3 run
     workloads:
     `kubectl taint nodes <node> node-role.kubernetes.io/control-plane:NoSchedule-`.
+    If you only have 1 or 2 nodes on purpose, use the
+    [small profile](sizing.md#small-profile) (not highly available).
 
-**`install-root.sh` stops with `missing: ...`**
+**`install-root.sh` (or `install-root.ps1`) stops with `missing: ...`**
 :   One of the prerequisites of steps 6 to 8 is not installed, or is not
     where `cluster.yaml` says. Each line names what is missing, for example
     `missing: Barman Cloud plugin (CRD objectstores.barmancloud.cnpg.io not found)`
@@ -552,5 +774,23 @@ of the control-plane items for you.
 **PostgreSQL backups fail with `plugin barman-cloud.cloudnative-pg.io not found`**
 :   The Barman Cloud plugin runs in another namespace than the CNPG
     operator. Install it in the operator's namespace.
+
+**On Windows, `bash bootstrap/...` fails with `/bin/bash: not found` or `execvpe(/bin/bash) failed`**
+:   PowerShell started WSL instead of Git Bash, often Docker Desktop's
+    `docker-desktop` distribution, which has no bash. Use the `.ps1` version
+    of the script, or start Git Bash by its full path:
+    `& "C:\Program Files\Git\bin\bash.exe" bootstrap/scripts/openbao-seed.sh`
+    ([The bootstrap scripts on Windows](#the-bootstrap-scripts-on-windows)).
+
+**`age-keygen`, `jq`, `helm` or `kubectl` is "not recognized" right after `winget install`**
+:   The terminal was opened before the installation and still has the old
+    `PATH`. Open a new terminal, or reload `PATH` as in
+    [Install the tools](#install-the-tools), step 2.
+
+**`kubectl get nodes` shows another cluster's nodes**
+:   `kubectl` uses another kubeconfig than you expect. Set `KUBECONFIG`
+    for the current terminal (see the tip in
+    [step 1](#1-kubernetes-and-nodes)) and check with
+    `kubectl config current-context`.
 
 Next: [Argo CD and cluster.yaml](argocd.md).

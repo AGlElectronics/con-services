@@ -215,7 +215,7 @@ Every part runs from an image with an exact tag of the form
 `MAJOR.MINOR.PATCH-BUILD`, such as `ghcr.io/aglelectronics/den-backend:1.4.2-3`.
 All images of one module share a tag, and nothing uses `latest`. Modules
 are released independently, so Den `1.4.2-3` can run next to Stash
-`1.1.0-1`. See [Versions and upgrades](../operations/versioning.md).
+`1.0.0-1`. See [Versions and upgrades](../operations/versioning.md).
 
 ## Rules every module follows
 
@@ -252,8 +252,8 @@ never gets credentials for Den's bucket. See
 
 **The bundled S3 server is for development and local trials only.**
 Docker Compose and the Kubernetes trial run
-[SeaweedFS](https://github.com/seaweedfs/seaweedfs) as the service `s3`
-(MinIO until it stopped publishing community images). It has example keys,
+[SeaweedFS](https://github.com/seaweedfs/seaweedfs) as the service `s3`.
+It has example keys,
 a single copy of the data and no encryption. In production, point the
 `S3_*` settings at a managed S3 service; any S3-compatible service works
 (AWS S3, Hetzner Object Storage, Cloudflare R2, Backblaze B2, ...). Do not

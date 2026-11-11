@@ -81,7 +81,7 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
 | `ghcr.io/aglelectronics/hr-frontend:<tag>` | `infra/Dockerfile.frontend` | Web app on nginx (non-root as UID 101, port 8080; the chart mounts its own config). |
 
 Use the same tag for all three ([Versions and upgrades](../../operations/versioning.md)).
-No HR release has been published yet; build the images yourself until one is.
+The images are published with every HR release, starting with `1.0.0-1`.
 
 HR holds personal data (addresses, dates of birth, emergency contacts):
 restrict who can read its database and backups.

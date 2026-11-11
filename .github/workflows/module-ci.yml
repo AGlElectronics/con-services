@@ -48,6 +48,13 @@ on:
         description: Rebuild an already tagged version (X.Y.Z, tag vX.Y.Z must exist). Empty uses the pushed tag.
         type: string
         default: ""
+      den-major:
+        description: >-
+          The Den MAJOR this module is built for (for example "1"). When set, a
+          release version whose MAJOR differs is refused, because a module's
+          MAJOR always equals its Den MAJOR. Empty skips the check (Den itself).
+        type: string
+        default: ""
       go-dir:
         description: Folder with go.mod. Empty skips the Go job.
         type: string
@@ -134,6 +141,7 @@ jobs:
           ARM64: ${{ inputs.arm64 }}
           PUSH: ${{ inputs.push }}
           INPUT_VERSION: ${{ inputs.version }}
+          DEN_MAJOR: ${{ inputs.den-major }}
           TEST_DATABASE_MODE: ${{ inputs.test-database-mode }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
@@ -151,6 +159,14 @@ jobs:
           fi
           if [ -n "$version" ] && ! [[ "$version" =~ $semver ]]; then
             echo "::error::Version '$version' is not MAJOR.MINOR.PATCH. Release tags look like v1.2.3 (no pre-release suffix)."
+            exit 1
+          fi
+          if [ -n "$DEN_MAJOR" ] && ! [[ "$DEN_MAJOR" =~ ^[0-9]+$ ]]; then
+            echo "::error::den-major must be a number such as 1, not '$DEN_MAJOR'."
+            exit 1
+          fi
+          if [ -n "$DEN_MAJOR" ] && [ -n "$version" ] && [ "${version%%.*}" != "$DEN_MAJOR" ]; then
+            echo "::error::Version $version has MAJOR ${version%%.*}, but this module is built for Den MAJOR $DEN_MAJOR (den-major). A module's MAJOR always equals its Den MAJOR: bump MINOR for features and PATCH for fixes, or raise den-major after adapting to the new Den."
             exit 1
           fi
           if [ "$PUSH" = "true" ] && [ -z "$version" ]; then

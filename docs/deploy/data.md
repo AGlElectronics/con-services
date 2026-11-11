@@ -75,21 +75,36 @@ Never set `SSL_CERT_FILE` on a workload: it would replace the public CAs.
 
 ### Buckets and keys
 
-Use **one bucket per module** and **one key per bucket**, plus separate
-backup buckets with their own keys. Then a leaked module key exposes one
-module's files and can never delete backups.
+Use **one bucket per module**, plus separate backup buckets. Every row of
+the table below **must get its own access key, restricted to its bucket**
+(and to the access in the last column), even if your provider would let one
+key reach every bucket and one key would technically work for all of them:
+
+- **A leaked key exposes one bucket only.** A key copied out of one
+  module's pod, a log or a backup cannot read the other modules' files.
+- **You can rotate one key without touching the others.** Replacing
+  Stash's key restarts Stash, nothing else.
+- **The applications cannot delete the backups.** No application key has
+  any access to the backup buckets, so a compromised module (or a bug)
+  cannot remove the backups you would restore from.
+
+The seed script warns when you enter an access key that is already used by
+another entry, but it does not stop you; take the warning seriously.
 
 | Bucket | Used by | Key in OpenBao (`access_key`, `secret_key`) | Access |
 | --- | --- | --- | --- |
-| `<prefix>-conservices-den` | Den (logos, branding) | `kv/conservices/den/s3` | read and write |
-| `<prefix>-conservices-stash` | Stash | `kv/conservices/stash/s3` | read and write |
-| `<prefix>-conservices-rally` | Rally | `kv/conservices/rally/s3` | read and write |
-| `<prefix>-conservices-learn` | Learn | `kv/conservices/learn/s3` | read and write |
-| `<prefix>-conservices-wiki` | Wiki | `kv/conservices/wiki/s3` | read and write |
-| `<prefix>-conservices-tasks` | Tasks | `kv/conservices/tasks/s3` | read and write |
-| all six module buckets | Den's operator, copying files into its backups | `kv/conservices/den/files-s3` | **read only** |
-| `<prefix>-pg-backups` | CloudNativePG (WAL archive, base backups) | `kv/conservices/postgres/backup-s3` | read and write |
-| `<prefix>-den-backups` | Den's operator (encrypted daily backups) | `kv/conservices/den/backup-s3` | read and write |
+| `<prefix>-conservices-den` | Den (logos, branding) | `conservices/modules/den/s3` | read and write |
+| `<prefix>-conservices-stash` | Stash | `conservices/modules/stash/s3` | read and write |
+| `<prefix>-conservices-rally` | Rally | `conservices/modules/rally/s3` | read and write |
+| `<prefix>-conservices-learn` | Learn | `conservices/modules/learn/s3` | read and write |
+| `<prefix>-conservices-wiki` | Wiki | `conservices/modules/wiki/s3` | read and write |
+| `<prefix>-conservices-tasks` | Tasks | `conservices/modules/tasks/s3` | read and write |
+| all six module buckets | Den's operator, copying files into its backups | `conservices/modules/den/files-s3` | **read only** |
+| `<prefix>-pg-backups` | CloudNativePG (WAL archive, base backups) | `conservices/infra/postgres/backup-s3` | read and write |
+| `<prefix>-den-backups` | Den's operator (encrypted daily backups) | `conservices/modules/den/backup-s3` | read and write |
+
+The paths are in OpenBao's KV mount `conservices`; the full list is on
+[Secrets with OpenBao](secrets-openbao.md#every-secret-keys-and-values).
 
 `<prefix>` is `s3.bucketPrefix` from `cluster.yaml`. HR, Finance and Desk
 store no files and get no bucket; create buckets only for the modules you
@@ -144,9 +159,11 @@ keys apart from the application keys, use **two projects**:
    Hetzner shows the **secret key only once**: keep the window open until
    step 8 has stored it, or put it in your password manager.
 
-5. **Restrict each module key to its bucket (recommended).** Within one
-   project every key reaches every bucket, so the Stash key could read
-   Wiki's files. A **bucket policy** limits a bucket to the keys you name.
+5. **Restrict each module key to its bucket (required).** Within one
+   project every key reaches every bucket, so without a policy the Stash
+   key could read Wiki's files
+   ([why each key must be restricted](#buckets-and-keys)). A **bucket
+   policy** limits a bucket to the keys you name.
    Hetzner identifies a key as `arn:aws:iam:::user/p<project-id>:<access-key>`;
    the project ID is shown in the project's settings. For Stash's bucket,
    allow the Stash key everything and the `den-files` key reading:
@@ -173,11 +190,21 @@ keys apart from the application keys, use **two projects**:
 
     Apply it with the Stash key (the AWS CLI is introduced in step 9):
 
-    ```sh
-    aws s3api put-bucket-policy --bucket <prefix>-conservices-stash \
-      --policy file://policy-stash.json \
-      --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        aws s3api put-bucket-policy --bucket <prefix>-conservices-stash \
+          --policy file://policy-stash.json \
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        aws s3api put-bucket-policy --bucket <prefix>-conservices-stash `
+          --policy file://policy-stash.json `
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
 
     Repeat for the other module buckets. Check that it works: listing
     `<prefix>-conservices-stash` with the **Wiki** key must now fail with
@@ -203,11 +230,21 @@ keys apart from the application keys, use **two projects**:
     }
     ```
 
-    ```sh
-    aws s3api put-bucket-cors --bucket <prefix>-conservices-stash \
-      --cors-configuration file://cors-stash.json \
-      --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        aws s3api put-bucket-cors --bucket <prefix>-conservices-stash \
+          --cors-configuration file://cors-stash.json \
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        aws s3api put-bucket-cors --bucket <prefix>-conservices-stash `
+          --cors-configuration file://cors-stash.json `
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
 
     Use each module's own address (`https://events.example.org` for Rally,
     `https://den.example.org` for Den, ...).
@@ -230,61 +267,118 @@ keys apart from the application keys, use **two projects**:
 
     Check that it renders:
 
-    ```sh
-    helm template root charts/root -f cluster.yaml > /dev/null && echo OK
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        helm template root charts/root -f cluster.yaml > /dev/null && echo OK
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        helm template root charts/root -f cluster.yaml | Out-Null; if ($LASTEXITCODE -eq 0) { "OK" }
+        ```
 
     ```text
     OK
     ```
 
-8. **Store the keys in OpenBao.** Run the seed script; it asks for each
-   missing key (only for the modules you enabled) and never prints the
-   secret:
+8. **Store the keys in OpenBao.** Run the seed script from the root of
+   your copy; it asks for each missing key (only for the modules you
+   enabled) and never prints the secret. The OpenBao token is read from a
+   prompt, not typed into the command, so it stays out of your shell
+   history:
 
-    ```sh
-    BAO_TOKEN=<token> bash bootstrap/scripts/openbao-seed.sh
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        read -rsp "OpenBao token: " BAO_TOKEN; echo; export BAO_TOKEN
+        bash bootstrap/scripts/openbao-seed.sh
+        unset BAO_TOKEN
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        $secure = Read-Host "OpenBao token" -AsSecureString
+        $env:BAO_TOKEN = (New-Object System.Management.Automation.PSCredential("x", $secure)).GetNetworkCredential().Password
+        .\bootstrap\scripts\openbao-seed.ps1
+        Remove-Item Env:BAO_TOKEN; Remove-Variable secure
+        ```
 
     You should see, for every S3 key:
 
     ```text
-    ==> kv/conservices/stash/s3: S3 access key from your object storage provider
+    ==> conservices/modules/stash/s3: S3 access key from your object storage provider
       Access key (empty = skip): 9LP3XRBS0K7T2EXAMPLE
       Secret key:
-    ==> kv/conservices/stash/s3 written
+    ==> conservices/modules/stash/s3 written
     ```
 
-    The S3 paths are listed in [Buckets and keys](#buckets-and-keys).
-    Entries that already exist are kept. How to get a token is in
-    [Secrets with OpenBao](secrets-openbao.md).
+    Enter a **different** access key for every entry
+    ([why](#buckets-and-keys)); the script warns if you reuse one. The S3
+    paths are listed in [Buckets and keys](#buckets-and-keys). Entries
+    that already exist are kept. How to get a token, and the script's
+    options, are in [Secrets with OpenBao](secrets-openbao.md).
 
 9. **Verify every key.** Install the [AWS CLI](https://aws.amazon.com/cli/)
-   and list the bucket with each key. Read the secret from your password
-   manager into the environment (`read -s` keeps it off the screen and out
-   of your shell history):
+   (on Windows: `winget install Amazon.AWSCLI`) and list the bucket with
+   each key. Read the secret from your password manager into the
+   environment (the prompt keeps it off the screen and out of your shell
+   history):
 
-    ```sh
-    export AWS_ACCESS_KEY_ID=<stash access key>
-    read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
-    aws s3 ls s3://<prefix>-conservices-stash \
-      --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
-    echo "ok: $?"
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        export AWS_ACCESS_KEY_ID=<stash access key>
+        read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
+        aws s3 ls s3://<prefix>-conservices-stash \
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        echo "ok: $?"
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        $env:AWS_ACCESS_KEY_ID = "<stash access key>"
+        $secure = Read-Host "Secret key" -AsSecureString
+        $env:AWS_SECRET_ACCESS_KEY = (New-Object System.Management.Automation.PSCredential("x", $secure)).GetNetworkCredential().Password
+        aws s3 ls s3://<prefix>-conservices-stash `
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        "ok: $LASTEXITCODE"
+        ```
 
     An empty bucket prints nothing and then `ok: 0`. Upload and delete a
     test file to check writing:
 
-    ```sh
-    echo test | aws s3 cp - s3://<prefix>-conservices-stash/healthcheck.txt \
-      --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
-    aws s3 rm s3://<prefix>-conservices-stash/healthcheck.txt \
-      --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        echo test | aws s3 cp - s3://<prefix>-conservices-stash/healthcheck.txt \
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        aws s3 rm s3://<prefix>-conservices-stash/healthcheck.txt \
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        "test" | aws s3 cp - s3://<prefix>-conservices-stash/healthcheck.txt `
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        aws s3 rm s3://<prefix>-conservices-stash/healthcheck.txt `
+          --endpoint-url https://fsn1.your-objectstorage.com --region fsn1
+        ```
+
+    Also check the restriction: listing another module's bucket with this
+    key must fail with `AccessDenied`.
 
     You should see `upload: - to s3://<prefix>-conservices-stash/healthcheck.txt`
     and `delete: s3://<prefix>-conservices-stash/healthcheck.txt`. Do the same
     for the backup keys with `--endpoint-url https://hel1.your-objectstorage.com --region hel1`.
+    When you are done, remove the key from the environment
+    (`unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`; PowerShell:
+    `Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY`) or
+    close the terminal.
 
 ### Using another provider
 
@@ -338,12 +432,11 @@ s3:
 A name containing `*` becomes a Cilium `matchPattern`. A `*` matches within
 one label only (it does not cross a dot), which is why virtual-host style
 needs the second entry.
-Check that a backend can reach the provider:
+Check that a backend can reach the provider (same command in bash and
+PowerShell):
 
 ```sh
-kubectl -n conservices-stash debug -it deploy/stash-backend \
-  --image=curlimages/curl:8.11.1 --target=backend -- \
-  curl -sI https://fsn1.your-objectstorage.com
+kubectl -n conservices-stash debug -it deploy/stash-backend --image=curlimages/curl:8.11.1 --target=backend -- curl -sI https://fsn1.your-objectstorage.com
 ```
 
 You should see an HTTP status line (often `HTTP/1.1 403 Forbidden` without
@@ -352,15 +445,13 @@ credentials). A timeout means the policy does not match.
 ### Protect the backup buckets
 
 A backup that an attacker or a mistake can delete is not a backup. On both
-backup buckets:
+backup buckets (the commands are the same in bash and PowerShell):
 
 1. **Turn on versioning.** A deleted or overwritten object stays available
    as an older version:
 
     ```sh
-    aws s3api put-bucket-versioning --bucket <prefix>-pg-backups \
-      --versioning-configuration Status=Enabled \
-      --endpoint-url https://hel1.your-objectstorage.com --region hel1
+    aws s3api put-bucket-versioning --bucket <prefix>-pg-backups --versioning-configuration Status=Enabled --endpoint-url https://hel1.your-objectstorage.com --region hel1
     ```
 
     `aws s3api get-bucket-versioning ...` should then print
@@ -391,9 +482,7 @@ backup buckets:
     ```
 
     ```sh
-    aws s3api put-bucket-lifecycle-configuration --bucket <prefix>-pg-backups \
-      --lifecycle-configuration file://lifecycle-backups.json \
-      --endpoint-url https://hel1.your-objectstorage.com --region hel1
+    aws s3api put-bucket-lifecycle-configuration --bucket <prefix>-pg-backups --lifecycle-configuration file://lifecycle-backups.json --endpoint-url https://hel1.your-objectstorage.com --region hel1
     ```
 
 Repeat for `<prefix>-den-backups`. Check your provider's documentation for
@@ -417,7 +506,10 @@ the cluster's admin installs them, in the namespace set in
 network policy admits the operator from that namespace.
 
 Argo CD syncs the waves in order and waits until each is healthy before
-starting the next. Keycloak (wave 4), Den (5) and the modules (10) follow.
+starting the next, so a `postgres` Application that is not `Healthy` holds
+back Keycloak, Den and the modules. Keycloak (wave 4) follows, then Den and
+the modules together in the last wave
+([sync waves](argocd.md#6-watch-the-sync-waves)).
 The `platform-namespaces` and `postgres` Applications have no finalizer:
 deleting them in Argo CD leaves the namespaces and the database running.
 
@@ -427,7 +519,11 @@ with the defaults of the `postgres` block in `cluster.yaml`:
 - **3 instances** (`postgres.instances`) of PostgreSQL 16.15 on 3 different
   nodes (required anti-affinity), each with a 20 GiB data volume
   (`postgres.storage.size`) and a 10 GiB WAL volume
-  (`postgres.storage.walSize`) on `postgres.storage.className`. When that
+  (`postgres.storage.walSize`) on `postgres.storage.className`. These sizes
+  are suggested defaults for a large convention; a small event or a trial
+  does well with `size: 5Gi` and `walSize: 2Gi`. Volumes can be enlarged
+  later (raise the value and push; Longhorn expands them) but never
+  shrunk ([Prerequisites: Storage](prerequisites.md#4-storage)). When that
   is empty, the volumes use `longhorn-single` if
   `storage.longhornSingle.enabled` is `true`, otherwise `storage.className`
   (empty: the default StorageClass). PostgreSQL replicates itself, so a
@@ -455,22 +551,48 @@ with the defaults of the `postgres` block in `cluster.yaml`:
    passwords ([Secrets with OpenBao](secrets-openbao.md)), and the backup
    key was stored in step 8 of the worked example. Check:
 
-    ```sh
-    kubectl get pushsecret -n external-secrets | grep postgres
-    BAO_TOKEN=<token> bash bootstrap/scripts/openbao-seed.sh --no-prompt
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        kubectl get pushsecret -n external-secrets | grep postgres
+        read -rsp "OpenBao token: " BAO_TOKEN; echo; export BAO_TOKEN
+        bash bootstrap/scripts/openbao-seed.sh --no-prompt
+        unset BAO_TOKEN
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        kubectl get pushsecret -n external-secrets | Select-String -SimpleMatch postgres
+        $secure = Read-Host "OpenBao token" -AsSecureString
+        $env:BAO_TOKEN = (New-Object System.Management.Automation.PSCredential("x", $secure)).GetNetworkCredential().Password
+        .\bootstrap\scripts\openbao-seed.ps1 -NoPrompt
+        Remove-Item Env:BAO_TOKEN; Remove-Variable secure
+        ```
+
+        The PowerShell script's options may be spelled differently; see
+        [Secrets with OpenBao](secrets-openbao.md).
 
     Every `generated-postgres-*` PushSecret should be `Synced`, and the
     script should show `already exists, keeping it` for every entry and no
-    `Still missing` list. A missing `kv/conservices/postgres/backup-s3`
-    keeps the `postgres` Application `Degraded`.
+    `Still missing` list. A missing `conservices/infra/postgres/backup-s3`
+    keeps the `postgres` Application `Degraded`, and because `postgres`
+    is an infrastructure wave, Keycloak, Den and the modules wait for it.
 
 2. **Sync.** The root Application picks up the platform Applications by
    itself. Watch them:
 
-    ```sh
-    kubectl get applications -n argocd | grep -E "platform|postgres"
-    ```
+    === "Linux / macOS"
+
+        ```sh
+        kubectl get applications -n argocd | grep -E "platform|postgres"
+        ```
+
+    === "Windows (PowerShell)"
+
+        ```powershell
+        kubectl get applications -n argocd | Select-String -Pattern 'platform|postgres'
+        ```
 
     After a few minutes every line shows `Synced   Healthy`.
 
@@ -493,12 +615,18 @@ with the defaults of the `postgres` block in `cluster.yaml`:
     kubectl cnpg version
     ```
 
-    or with the project's install script, pinned to the operator's version:
+    or, on Linux and macOS only, with the project's install script, pinned
+    to the operator's version:
 
     ```sh
     curl -sSfL https://github.com/cloudnative-pg/cloudnative-pg/raw/v1.30.1/hack/install-cnpg-plugin.sh \
       | sudo sh -s -- -b /usr/local/bin v1.30.1
     ```
+
+    On Windows use krew, or download the Windows archive of `kubectl-cnpg`
+    for v1.30.1 from the
+    [CloudNativePG releases](https://github.com/cloudnative-pg/cloudnative-pg/releases)
+    and put `kubectl-cnpg.exe` in a folder on your `PATH`.
 
 5. **Look at the details:**
 
@@ -557,7 +685,7 @@ in `cluster.yaml`:
 | `events` | Rally |
 
 - Roles: `spec.managed.roles` in `charts/postgres/templates/cluster.yaml`,
-  each with a password Secret from `kv/conservices/postgres/roles/<role>`.
+  each with a password Secret from `conservices/infra/postgres/roles/<role>`.
 - Databases: `Database` objects in `charts/postgres/templates/databases.yaml`,
   with `databaseReclaimPolicy: retain`, so deleting the object (for example
   by disabling a module) never drops the data.
@@ -585,7 +713,7 @@ module list of the root chart. For a module `shop` (role and database
 2. Add `shop` to `modules` in `cluster.yaml` (and in
    `charts/root/values.yaml` and `values.schema.json`) with `enabled: true`.
 3. Nothing to do for the password: External Secrets reads the module list
-   from the chart and creates `kv/conservices/postgres/roles/shop` after the
+   from the chart and creates `conservices/infra/postgres/roles/shop` after the
    sync (PushSecret `generated-postgres-roles-shop`), without the password
    ever showing on screen.
 
@@ -613,7 +741,7 @@ Two independent kinds of backup run every day. Keep both.
 | When | WAL continuously, base backup daily 02:15 UTC (`postgres.backup.schedule`; and once right after the first start) | daily (time set in Den admin → Backups) |
 | Restore to | any second of the last 30 days (point-in-time recovery) | a whole backup, or single databases and buckets |
 | Encrypted | by the provider at rest; TLS in transit | yes, with your [age](https://age-encryption.org) key before upload |
-| Bucket and key | `<prefix>-pg-backups`, `kv/conservices/postgres/backup-s3` | `<prefix>-den-backups`, `kv/conservices/den/backup-s3` |
+| Bucket and key | `<prefix>-pg-backups`, `conservices/infra/postgres/backup-s3` | `<prefix>-den-backups`, `conservices/modules/den/backup-s3` |
 | Retention | 30 days (`postgres.backup.retention`) | daily 7, weekly 4, monthly 6 (Den admin) |
 
 Den's backups need your age public key in `den.backupAgeRecipients` in
@@ -721,6 +849,12 @@ cluster from the backups, check it, and then decide what to copy back.
 
     Use the current primary instead of `conservices-pg-1` (see
     `kubectl get cluster`).
+
+    These commands are **bash only**. PowerShell cannot pass binary data
+    through `>` and `<` unchanged (Windows PowerShell 5.1 has no `<` at
+    all and rewrites `>` output as text), so the dump would be damaged.
+    On Windows, run this step in Git Bash
+    (`& "C:\Program Files\Git\bin\bash.exe"`).
 5. Delete the restore cluster when done:
 
     ```sh
@@ -739,7 +873,7 @@ full procedure, including Den's backups, is in
 
 **The `postgres` Application stays `Progressing` or `Degraded` with
 `SecretSyncedError`**
-: An OpenBao entry is missing, usually `kv/conservices/postgres/backup-s3`.
+: An OpenBao entry is missing, usually `conservices/infra/postgres/backup-s3`.
   Run `kubectl get externalsecret -n conservices-data` and look for
   `SecretSyncedError`, then
   `kubectl describe externalsecret -n conservices-data <name>`. Store the
@@ -754,7 +888,7 @@ full procedure, including Den's backups, is in
 **`ContinuousArchiving` is `False`, or a backup fails with `AccessDenied`,
 `InvalidAccessKeyId` or `SignatureDoesNotMatch`**
 : The backup key, bucket or region is wrong. Compare
-  `kv/conservices/postgres/backup-s3` with the provider, and
+  `conservices/infra/postgres/backup-s3` with the provider, and
   `s3.backup.endpoint`, `s3.backup.region` and `s3.bucketPrefix` in
   `cluster.yaml` (the bucket is `<prefix>-pg-backups`). The plugin's log is
   in the `plugin-barman-cloud` container of the instance pods:
@@ -798,8 +932,16 @@ policy**
 : The role's password Secret and the application's `DATABASE_URL` come
   from the same OpenBao entry, but are refreshed separately (every hour).
   After a password change, wait or force a refresh with
-  `kubectl annotate externalsecret -n <namespace> <name> force-sync=$(date +%s) --overwrite`,
+  `kubectl annotate externalsecret -n <namespace> <name> force-sync=$(date +%s) --overwrite`
+  (PowerShell: `force-sync="$(Get-Date -UFormat %s)"`),
   then restart the application.
+
+**The seed script warns that an access key is already used by another entry**
+: You entered the same S3 access key for two entries. It still works, but
+  then one leaked key exposes several buckets, and an application key may
+  reach the backups. Create a separate key for each entry, restricted to
+  its bucket ([Buckets and keys](#buckets-and-keys)), and store it again
+  ([Secrets with OpenBao](secrets-openbao.md#change-a-secret)).
 
 **`no pg_hba.conf entry ... no encryption`**
 : The client connected without TLS. The URL needs

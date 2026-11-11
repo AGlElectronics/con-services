@@ -10,7 +10,17 @@ its default look.
 
 Pairing uses a one-time **pairing URL**. An admin makes one in Den, pastes it
 into the module, and the module exchanges it for a long-lived **module
-credential**. No passwords or storage keys change hands. The reasoning is in
+credential**. No passwords or storage keys change hands.
+
+!!! note "Pairing is always done by a person"
+    No setting, Helm chart, Kustomize overlay or GitOps template pairs a
+    module automatically, and none ever should: connecting a module to Den
+    gives it the organisation's settings and branding, so an admin decides
+    it, every time. The GitOps template only **pre-registers** the enabled
+    modules (`DEN_PREREGISTER_MODULES`): they appear on Den's Modules page
+    as *unpaired*, and no pairing URL or credential is created. An admin
+    still mints the pairing URL in Den (**Modules → Pair**) and pastes it
+    into the module's *Den connection* page. The reasoning is in
 [ADR 0002](https://github.com/AGlElectronics/den/blob/main/docs/adr/0002-pairing-url-and-token.md).
 
 ## Required or standalone

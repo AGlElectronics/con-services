@@ -159,7 +159,7 @@ curl -s $DESK/api/health
 ```
 
 ```json
-{"status":"ok","database":"ok","version":"0.3.0-1","uptime_sec":5400}
+{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5400}
 ```
 
 ### `GET /api/role-catalog`

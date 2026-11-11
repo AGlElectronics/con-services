@@ -8,6 +8,10 @@ admin and **pairs** the modules with Den.
 `conservices-pg` healthy, the buckets created and their keys in OpenBao,
 Keycloak serving `https://auth.<domain>`.
 
+Addresses on this page use the default host names (`den`, `stash`, `auth`
+and so on, see [Host names](#host-names)); if you changed them in
+`cluster.yaml`, use yours.
+
 **You are done when:** every Application in `kubectl get applications -n argocd`
 is `Synced` and `Healthy`, you can sign in to `https://den.<domain>` as an
 admin, and Den admin → Modules shows every module you selected as
@@ -30,35 +34,89 @@ one for every module with `enabled: true` under `modules` in
 
 | Source | What |
 | --- | --- |
-| The Helm chart `deploy/charts/<module>` of [`con-services`](https://github.com/AGlElectronics/con-services), at the tag `charts.targetRevision` | Deployments, Services, HTTPRoute, NetworkPolicies, PodDisruptionBudgets, certificates. Its values are computed by the root chart from `cluster.yaml` (addresses, buckets, image tags, network policy settings), then `modules.<module>.values` (or `den.values`) is merged on top. |
+| The Helm chart `deploy/charts/<module>` of [`con-services`](https://github.com/AGlElectronics/con-services) (or the repository in `charts.repoURL`), at the app's own tag, for example `stash/v1.0.0` | Deployments, Services, HTTPRoute, NetworkPolicies, PodDisruptionBudgets, certificates. Its values are computed by the root chart from `cluster.yaml` (addresses, buckets, image tags, network policy settings), then `modules.<module>.values` (or `den.values`) is merged on top. |
 | `charts/module-extras` of your GitOps repository | The ExternalSecrets (`<module>-secrets`, and `ghcr-pull` when `images.pullSecret.enabled`) and the module's access configuration |
 
 | Application | Namespace | Sync wave | Rendered by |
 | --- | --- | --- | --- |
 | `den` | `conservices-den` | 5 | `charts/root/templates/platform.yaml` |
-| `stash`, `hr`, `rally`, `finance`, `learn`, `wiki`, `desk`, `tasks` | `conservices-<module>` | 10 | `charts/root/templates/modules.yaml` |
+| `stash`, `hr`, `rally`, `finance`, `learn`, `wiki`, `desk`, `tasks` | `conservices-<module>` | 5 | `charts/root/templates/modules.yaml` |
+
+Den and the modules share the **last** sync wave on purpose. Argo CD
+does not wait for the last wave to become healthy, so a module that fails
+to start (for example a wrong version) never blocks Den, the other
+modules, or a later push that fixes it. Modules started before Den is
+ready show *Waiting for Den* until it is; they need Den only for pairing.
+The full wave order is on
+[Argo CD: sync waves](argocd.md#6-watch-the-sync-waves).
 
 Argo CD creates the namespaces with the labels the platform needs:
 `app.kubernetes.io/part-of: conservices` (trust-manager copies the internal
 CA there), `conservices.io/tier: module` (PostgreSQL and Keycloak admit
 module namespaces), and Pod Security `restricted`.
 
-Every Application pins the chart to the same tag of `con-services`
-(`charts.targetRevision`) and every image to an exact tag (`images.tag`,
-for example `1.0.0-1`). Nothing uses `latest`.
+Den and every module have **their own version**, `den.version` and
+`modules.<module>.version` in `cluster.yaml`, written `MAJOR.MINOR.PATCH-BUILD`
+(for example `"1.0.0-1"`). One value pins both:
 
-!!! note "Chart tag `v1.1.0`"
-    The template points at the tag `v1.1.0` of `con-services`, the first
-    release whose charts know `den.mode` and `preregisterModules`. Until
-    that tag exists Argo CD shows
-    `unable to resolve 'v1.1.0' to a commit SHA`.
+- every image of that app to that exact tag (`ghcr.io/aglelectronics/stash-backend:1.0.0-1`);
+- the app's chart to the tag `<app>/v<MAJOR.MINOR.PATCH>` of
+  `con-services` (`stash/v1.0.0`). Set `den.chartRevision` or
+  `modules.<module>.chartRevision` only to use another Git tag, branch or
+  commit for the chart.
+
+Nothing uses `latest`. Every enabled module's MAJOR must equal Den's
+MAJOR; the root chart stops otherwise
+([Versions and upgrades](../operations/versioning.md)).
+
+!!! note "Chart tags `<app>/v1.0.0`"
+    The defaults point at version `1.0.0` (`"1.0.0-1"`). Until the tag of
+    an app exists in `con-services`, its Application shows
+    `unable to resolve 'stash/v1.0.0' to a commit SHA`.
 
 The root chart also sets two values that connect the modules to Den:
 
 | Application | Value | Set to |
 | --- | --- | --- |
 | every module | `den.mode` | `required`, always. `cluster.yaml` has no option to change it, and the root chart stops if `modules.<module>.values.den.mode` tries. |
-| `den` | `preregisterModules` | One entry per enabled module: `slug` (Rally: `events`), `display_name` (`Stash`, `HR`, `Rally`, `Finance`, `Learn`, `Wiki`, `Desk`, `Tasks`) and `base_url` `https://<host>.<domain>`. Den lists them on its Modules page as unpaired ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
+| `den` | `preregisterModules` | One entry per enabled module: `slug` (Rally: `events`), `display_name` (`Stash`, `HR`, `Rally`, `Finance`, `Learn`, `Wiki`, `Desk`, `Tasks`) and `base_url` `https://<modules.<module>.host>.<domain>`. Den lists them on its Modules page as unpaired ([details](../modules/den/configuration.md#modules-registered-at-start-up)). |
+
+### Host names
+
+Every app is served at `https://<host>.<domain>`. The host is one label
+(no dots) you can change in `cluster.yaml`:
+
+| App | Key | Default | Address with `domain: example.org` |
+| --- | --- | --- | --- |
+| Den | `den.host` | `den` | `https://den.example.org` |
+| Stash, HR, Finance, Learn, Wiki, Desk, Tasks | `modules.<module>.host` | the module's name | `https://stash.example.org` |
+| Rally | `modules.rally.host` | `events` | `https://events.example.org` |
+| Rally's submission site | `modules.rally.submit.host` | `submit` | `https://submit.example.org` |
+| Keycloak sign-in | `keycloak.host` | `auth` | `https://auth.example.org` |
+| Keycloak admin console | `keycloak.adminHost` | `auth-admin` | `https://auth-admin.example.org` |
+
+For example, Den at `portal` and Rally at `con`:
+
+```yaml
+den:
+  host: portal
+modules:
+  rally: { enabled: true, version: "1.0.0-1", host: con }
+```
+
+The root chart writes the host everywhere it is needed: the HTTPRoute and
+certificate, the web app's `/config.json`, Den's `preregisterModules`,
+CORS settings, and the Keycloak clients' redirect URIs. Each label must
+be lowercase letters, digits and `-`, and unique; `helm template` stops
+otherwise. Create a DNS record for each one
+([DNS](prerequisites.md#5-loadbalancer-ips-dns-and-ports)).
+
+!!! warning "Changing a host after the first install"
+    Keycloak imports its realms only once. After changing a host on a
+    running installation, also update the client in Keycloak; see
+    [Identity: Changing a host name](identity.md#changing-a-host-name).
+    A module that is already paired keeps the old address in Den: edit it
+    in Den admin → Modules.
 
 ### Where each module's secrets come from
 
@@ -74,15 +132,16 @@ S3_SECRET_ACCESS_KEY: "{{ .s3SecretKey }}"
 
 | Module | OpenBao entries it reads |
 | --- | --- |
-| Den | `postgres/roles/den`, `den/s3`, `keycloak/clients` (`den-keycloak`), `den/operator-token`; operator: `postgres/superuser`, `den/backup-s3`, `den/files-s3` |
-| Stash, Rally, Wiki, Tasks, Learn | `postgres/roles/<role>`, `<module>/s3`; Wiki, Tasks and Learn also `service-tokens/<module>` |
-| HR | `postgres/roles/hr`, `keycloak/clients` (`hr-provisioner`), and `service-tokens/learn`, `service-tokens/wiki`, `service-tokens/tasks` for the ones enabled |
-| Learn | also `keycloak/clients` (`learn-provisioner`) |
-| Finance | `postgres/roles/finance` |
-| Desk | `postgres/roles/desk`, `desk/secret-key` |
+| Den | `infra/postgres/roles/den`, `modules/den/s3`, `infra/keycloak/clients` (`den-keycloak`), `modules/den/operator-token`; operator: `infra/postgres/superuser`, `modules/den/backup-s3`, `modules/den/files-s3` |
+| Stash, Rally, Wiki, Tasks, Learn | `infra/postgres/roles/<role>`, `modules/<module>/s3`; Wiki, Tasks and Learn also `modules/<module>/service-token` |
+| HR | `infra/postgres/roles/hr`, `infra/keycloak/clients` (`hr-provisioner`), and `modules/learn/service-token`, `modules/wiki/service-token`, `modules/tasks/service-token` for the ones enabled |
+| Learn | also `infra/keycloak/clients` (`learn-provisioner`) |
+| Finance | `infra/postgres/roles/finance` |
+| Desk | `infra/postgres/roles/desk`, `modules/desk/secret-key` |
 | all, with `images.pullSecret.enabled: true` | `infra/ghcr` (pull secret) |
 
-All paths are below `kv/conservices/` except `kv/infra/ghcr`. Rally's
+All paths are below Con Services' OpenBao mount `conservices/`
+([layout](secrets-openbao.md#how-the-entries-are-organised)). Rally's
 database role is `events`. The seed script creates exactly the entries of
 the modules you enabled.
 
@@ -98,7 +157,7 @@ every namespace needs a **pull secret**: credentials Kubernetes sends to the
 registry when it downloads an image. With `images.pullSecret.enabled: true`
 in `cluster.yaml`, an ExternalSecret in every Con Services namespace builds
 a Secret `ghcr-pull` of type `kubernetes.io/dockerconfigjson` from
-`kv/infra/ghcr`, and every chart gets:
+`conservices/infra/ghcr`, and every chart gets:
 
 ```yaml
 imagePullSecrets:
@@ -124,15 +183,22 @@ imagePullSecrets:
    token without echoing the token:
 
     ```sh
-    BAO_TOKEN=<token> bash bootstrap/scripts/openbao-seed.sh
+    bash bootstrap/scripts/openbao-seed.sh     # Windows: .\bootstrap\scripts\openbao-seed.ps1
     ```
 
     ```text
-    ==> kv/infra/ghcr: GitHub user + PAT with only read:packages, for the ghcr-pull Secrets
-      GitHub username (empty = skip): conservices-bot
-      Personal access token (read:packages):
-    ==> kv/infra/ghcr written
+    == GitHub Container Registry (private images) ==
+    ==> conservices/infra/ghcr
+            GitHub user and a classic token with only read:packages, for the ghcr-pull Secrets
+      GitHub user name (empty = skip): conservices-bot
+      Classic token with only read:packages (hidden):
+      ok    received: 40 characters, ghp_...x9Qz
+      ok    conservices/infra/ghcr written
     ```
+
+    The script asks for an OpenBao token (or reads `BAO_TOKEN`) and shows
+    only the length and the ends of the hidden token; to replace a stored
+    one, run it with `--overwrite conservices/infra/ghcr`.
 
 4. **Check it** once the Applications exist:
 
@@ -143,7 +209,7 @@ imagePullSecrets:
     You should see `kubernetes.io/dockerconfigjson`.
 
 To rotate the token, create a new one, store it with
-`bao kv patch kv/infra/ghcr token=-` (paste it, then Ctrl-D), wait for the
+`bao kv patch conservices/infra/ghcr token=-` (paste it, then Ctrl-D), wait for the
 ExternalSecrets to refresh (up to an hour), then revoke the old token on
 GitHub.
 
@@ -207,8 +273,9 @@ GitHub.
 
     No `Still missing` list should appear.
 
-4. **Commit and push (sync).** Argo CD deploys Den first (wave 5) and the
-   selected modules once Den is healthy (wave 10). Watch:
+4. **Commit and push (sync).** Argo CD deploys Den and the selected
+   modules together (wave 5), after Keycloak and PostgreSQL are healthy.
+   Watch:
 
     ```sh
     kubectl get applications -n argocd
@@ -253,7 +320,7 @@ its backend:
 modules:
   stash:
     enabled: true
-    imageTag: ""
+    version: "1.0.0-1"
     accessConfig: ""
     values:
       frontend:
@@ -269,7 +336,7 @@ must stay at one replica because it migrates its database at start-up.
 
 The web apps use the published images, which name no domain. The root
 chart writes each one's sign-in settings (`frontend.config`, served to the
-browser as `/config.json`) from `domain`: issuer
+browser as `/config.json`) from `domain` and `keycloak.host`: issuer
 `https://auth.<domain>/realms/conservices` and client `<module>-spa`
 (`events-spa` for Rally). Rally's submission site gets `submit.config` with
 the attendee realm `https://auth.<domain>/realms/attendees` and client
@@ -338,27 +405,32 @@ and its API answers `503 den_pairing_required`. For each module:
 
 ## Upgrade
 
-A release of Con Services bumps the chart tag and the image tags together.
+Den and each module are upgraded on their own, by changing that app's
+`version` in `cluster.yaml`. The full procedure, including a new Den
+MAJOR, is on [Argo CD: Upgrading](argocd.md#upgrading). In short:
 
-1. Read the release's changelog. Entries starting with **BREAKING:** say
+1. Read the app's changelog. Entries starting with **BREAKING:** say
    what to do before upgrading.
 2. Take a backup: Den admin → Backups → **Back up now**, and a PostgreSQL
    base backup ([Check the backups](data.md#check-the-backups)).
-3. In `cluster.yaml`, set the new chart tag and image tag, for example:
+3. In `cluster.yaml`, set the new version, for example:
 
     ```yaml
-    charts:
-      targetRevision: v1.2.0
-    images:
-      tag: "1.2.0-1"
+    modules:
+      stash:
+        enabled: true
+        version: "1.2.0-1"   # images stash-*:1.2.0-1, chart stash/v1.2.0
     ```
 
-    All images of a module share one tag. To hold one module back, set its
-    `imageTag` (and pin its chart with care: all modules use the same chart
-    tag).
-4. Commit and push. Argo CD rolls out Den first, then the modules. The
-   database migrations run as an initContainer (Stash: at start-up) before
-   the new version serves traffic.
+4. Check, commit and push:
+
+    ```sh
+    helm template root charts/root -f cluster.yaml > /dev/null && git commit -am "Upgrade Stash to 1.2.0" && git push
+    ```
+
+    Only that app's Application changes. The database migrations run as
+    an initContainer (Stash: at start-up) before the new version serves
+    traffic.
 5. Check: `kubectl get applications -n argocd` all `Healthy`, and each
    module's version in Den admin → Modules.
 
@@ -371,19 +443,27 @@ The modules are a fixed list in the root chart. To add a new module `shop`
 from a chart `deploy/charts/shop` in `con-services`:
 
 1. **Root chart:** add `shop` to `root.moduleNames` and a line to
-   `root.moduleMeta` in `charts/root/templates/_helpers.tpl` (host prefix,
-   database role, Den slug and display name for `preregisterModules`,
-   whether it uses S3, has a migrate image, reads an access config), and add `shop` under `modules` in `charts/root/values.yaml`,
+   `root.moduleMeta` in `charts/root/templates/_helpers.tpl` (database
+   role, Keycloak host key, Den slug and display name for
+   `preregisterModules`, whether it uses S3, has a migrate image, reads an
+   access config), and add `shop` under `modules` in
+   `charts/root/values.yaml` (with `version` and `host: shop`),
    `charts/root/values.schema.json` and your `cluster.yaml`. This gives it
    an Application, a database and role
    ([details](data.md#add-a-database-for-a-new-module)), and, if it uses S3,
    the bucket `<prefix>-conservices-shop` in Den's backups.
 2. **Secrets:** copy `charts/module-extras/templates/stash.yaml` to
    `shop.yaml` and adapt names and keys. If it stores files, create the
-   bucket with its own key, store the key at `kv/conservices/shop/s3`, and
-   give the `den-files` key read access to the bucket.
+   bucket with its own key, store the key at `conservices/modules/shop/s3`
+   (the seed script asks for it once the module is marked as using S3 in
+   the root chart), and give the key of `modules/den/files-s3` read access
+   to the bucket.
 3. **Keycloak client** `shop-spa`: see
-   [Add a module client](identity.md#add-a-module-client).
+   [Add a module client](identity.md#add-a-module-client). Write its
+   addresses as `https://shop.conservices.test` in the dev realm; the
+   generator script turns them into `{{.Values.appHosts.shop}}.{{.Values.domain}}`
+   once `shop` is in `APP_HOSTS` of `bootstrap/scripts/keycloak-realm.py`
+   and under `appHosts` in `charts/keycloak/values.yaml`.
 4. Check the render, commit, push, and [pair](#pair-the-modules) it:
 
     ```sh
@@ -424,22 +504,31 @@ from a chart `deploy/charts/shop` in `con-services`:
 : The images are private and the pull secret is missing or the token
   cannot read the packages. Check that `images.pullSecret.enabled` is
   `true`, `kubectl get externalsecret ghcr-pull -n <namespace>` (must be
-  `SecretSynced`), that `kv/infra/ghcr` holds the right username and a
+  `SecretSynced`), that `conservices/infra/ghcr` holds the right username and a
   token with `read:packages`, and that the token's account has access to
   the packages on GitHub. An expired token gives `denied`.
 
 **`ImagePullBackOff` with `manifest unknown`**
-: The image tag does not exist. Compare `images.tag` (or the module's
-  `imageTag`) with the package's tags on GitHub.
+: The image tag does not exist. Compare `den.version` (or
+  `modules.<module>.version`) with the package's tags on GitHub
+  (`https://github.com/orgs/AGlElectronics/packages`). Every image of an
+  app has the same tag, `MAJOR.MINOR.PATCH-BUILD`.
+
+**`helm template` stops with `needs Den 2.x, but den.version is 1.0.0`**
+: An enabled module's MAJOR differs from Den's. Upgrade Den first, or set
+  the module to a version with Den's MAJOR
+  ([Versions and upgrades](../operations/versioning.md)).
 
 **Pods stay in `CreateContainerConfigError`: `secret "stash-secrets" not found`**
 : The ExternalSecret could not be built. Run
   `kubectl describe externalsecret -n conservices-stash stash-secrets`; the
   event names the missing OpenBao entry. Run the seed script for it.
 
-**Argo CD: `unable to resolve 'v1.1.0' to a commit SHA`**
-: The chart tag does not exist in `con-services` yet. See the note at the
-  top of this page.
+**Argo CD: `unable to resolve 'stash/v1.0.0' to a commit SHA`**
+: The app's chart tag does not exist in `con-services` (or in
+  `charts.repoURL`). Check the version for typos and that the release
+  exists; see the note under [What is deployed](#what-is-deployed). To use
+  another tag or branch, set `modules.<module>.chartRevision`.
 
 **A module stays on *Waiting for Den* after pairing**
 : Check what the module itself reports:
@@ -468,9 +557,17 @@ from a chart `deploy/charts/shop` in `con-services`:
 : Pairing URLs are valid for 15 minutes and work once. Click **Pair** in
   Den again and paste the new URL straight away.
 
-**The modules stay `OutOfSync`/waiting while Den is `Progressing`**
-: Working as designed: the modules (wave 10) start only after Den (wave 5)
-  is healthy. Fix Den first.
+**Den or a module stays `Degraded`, but the root Application says `Synced`**
+: Expected: Den and the modules are in the last sync wave, which Argo CD
+  does not wait for, so one broken app does not hold up the others.
+  Look at the app itself (`kubectl describe application <app> -n argocd`
+  and its pods), fix the cause in `cluster.yaml` and push; the fix is
+  applied straight away.
+
+**Den and the modules never appear, the root Application stops at an earlier wave**
+: An infrastructure Application (for example `postgres` or `keycloak`) is
+  not healthy. See
+  [An infrastructure Application is Degraded](argocd.md#an-infrastructure-application-is-degraded-and-later-waves-never-start).
 
 **A backend crashes with `x509: certificate signed by unknown authority`**
 : For an internal address (database, Den, Keycloak) the ConfigMap

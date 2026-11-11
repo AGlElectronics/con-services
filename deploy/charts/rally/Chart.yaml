@@ -5,8 +5,11 @@ description: >-
   public schedule API, live-day announcements). STUB: first scaffold, not
   yet tested on a cluster.
 type: application
-version: 0.3.0
-appVersion: "0.0.0"
+version: 1.0.0
+appVersion: "1.0.0"
+annotations:
+  # The Den MAJOR this chart is built for; always equals the chart's MAJOR.
+  conservices.io/den-major: "1"
 home: https://aglelectronics.github.io/con-services/modules/rally/
 sources:
   - https://github.com/AGlElectronics/Rally

@@ -1,0 +1,180 @@
+# Checks a chart release. Den and every module have their own version, and
+# their chart in deploy/charts/<app> is released with it by a tag
+# <app>/vMAJOR.MINOR.PATCH (for example hr/v1.12.1). Argo CD and Helm read the
+# chart straight from that tag; this workflow refuses a tag that does not
+# match: Chart.yaml version and appVersion, the conservices.io/den-major
+# annotation, a released Den of the same MAJOR, published images of that
+# version, and helm lint/template of that one chart.
+# Docs: https://aglelectronics.github.io/con-services/operations/versioning/
+name: Chart release
+
+on:
+  push:
+    tags: ["*/v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  KUBERNETES_VERSION: "1.33.0"
+  KUBECONFORM_VERSION: v0.8.0
+  HELM_VERSION: v4.0.0
+
+jobs:
+  check:
+    name: Check ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Tag, Chart.yaml and den-major
+        id: plan
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          pip install pyyaml==6.0.3
+          python scripts/check-chart-versions.py --tag "$TAG"
+          app="${TAG%%/*}"
+          version="${TAG#*/v}"
+          major="${version%%.*}"
+          if ! git branch -r --contains HEAD | grep -qE '^\s*origin/main$'; then
+            echo "::error::$TAG is not on main. Tag the merge commit on main (docs: operations/versioning, 'Cut a release')."
+            exit 1
+          fi
+          if [ "$app" != "den" ] && [ -z "$(git tag -l "den/v${major}.*")" ]; then
+            echo "::error::$app $version is built for Den MAJOR $major, but no Den $major.x.y is released (no tag den/v${major}.*). Release Den first."
+            exit 1
+          fi
+          python scripts/check-chart-versions.py --tag "$TAG" --list-images > "$RUNNER_TEMP/images.txt"
+          {
+            echo "app=$app"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+        with:
+          version: v0.22.1
+
+      # Every image of the chart must have at least one build <version>-N.
+      # A registry that refuses to answer (private package this repository
+      # may not read) only gives a warning.
+      - name: Images of this version are published
+        id: images
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | crane auth login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null 2>&1 || true
+          failed=0
+          build=1
+          echo "### Images for ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          while read -r repo _; do
+            if ! tags="$(crane ls "$repo" 2>"$RUNNER_TEMP/crane.err")"; then
+              if grep -qiE 'NAME_UNKNOWN|MANIFEST_UNKNOWN|404' "$RUNNER_TEMP/crane.err"; then
+                echo "::error::$repo is not published. Release the module repository's tag v${VERSION} first."
+                failed=1
+              else
+                echo "::warning::Could not list the tags of $repo: $(head -c 300 "$RUNNER_TEMP/crane.err")"
+                echo "- \`$repo\`: not checked (registry refused)" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              continue
+            fi
+            highest=0
+            for t in $tags; do
+              if [[ "$t" =~ ^${VERSION//./\\.}-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -gt "$highest" ]; then
+                highest="${BASH_REMATCH[1]}"
+              fi
+            done
+            if [ "$highest" -eq 0 ]; then
+              echo "::error::$repo has no tag ${VERSION}-N. Release the module repository's tag v${VERSION} first, or fix the chart's version."
+              failed=1
+            else
+              echo "- \`$repo:${VERSION}-${highest}\`" >> "$GITHUB_STEP_SUMMARY"
+              build="$highest"
+            fi
+          done < "$RUNNER_TEMP/images.txt"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          exit "$failed"
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}"
+          curl -fsSLO --retry 3 "$base/kubeconform-linux-amd64.tar.gz"
+          curl -fsSLO --retry 3 "$base/CHECKSUMS"
+          grep ' kubeconform-linux-amd64.tar.gz$' CHECKSUMS | sha256sum -c -
+          tar -xzf kubeconform-linux-amd64.tar.gz kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Helm lint and template (this chart only)
+        env:
+          APP: ${{ steps.plan.outputs.app }}
+          IMAGE_TAG: ${{ steps.plan.outputs.version }}-${{ steps.images.outputs.build }}
+        run: |
+          set -euo pipefail
+          chart="deploy/charts/$APP"
+          out="$RUNNER_TEMP/rendered"
+          mkdir -p "$out"
+          args=()
+          case "$APP" in
+            hr|rally)
+              args=(--set "image.backend.tag=$IMAGE_TAG" --set "image.frontend.tag=$IMAGE_TAG" --set "image.migrate.tag=$IMAGE_TAG")
+              ;;
+          esac
+          helm lint --strict "$chart" "${args[@]}"
+          helm template "$APP" "$chart" "${args[@]}" > "$out/helm-$APP.yaml"
+          if [ "$APP" = "rally" ]; then
+            helm template "$APP" "$chart" "${args[@]}" --set submit.enabled=true > "$out/helm-$APP-submit.yaml"
+          fi
+          if [ "$APP" != "den" ]; then
+            python scripts/check-den-mode.py "$out"
+          fi
+          kubeconform -strict -summary -output text \
+            -kubernetes-version "$KUBERNETES_VERSION" \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            "$out"
+
+      - name: Summary
+        env:
+          APP: ${{ steps.plan.outputs.app }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          BUILD: ${{ steps.images.outputs.build }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "### Released chart \`$TAG\`"
+            echo
+            echo "In cluster.yaml of the GitOps template:"
+            echo
+            echo '```yaml'
+            if [ "$APP" = "den" ]; then
+              printf 'den:\n  version: "%s"\n' "$VERSION-$BUILD"
+            else
+              printf 'modules:\n  %s:\n    version: "%s"\n' "$APP" "$VERSION-$BUILD"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

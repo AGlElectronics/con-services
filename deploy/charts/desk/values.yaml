@@ -1,4 +1,4 @@
-# Desk Helm chart values. STUB (chart version 0.3.0).
+# Desk Helm chart values. STUB: first scaffold, not yet tested on a cluster.
 # Docs: https://aglelectronics.github.io/con-services/modules/desk/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the

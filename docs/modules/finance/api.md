@@ -131,7 +131,7 @@ curl -s $FIN/livez
 ```
 
 ```json
-{"status":"ok","version":"0.2.0-1","uptime_sec":7260}
+{"status":"ok","version":"1.0.0-1","uptime_sec":7260}
 ```
 
 ### `GET /readyz`

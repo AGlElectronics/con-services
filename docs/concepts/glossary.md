@@ -123,6 +123,12 @@ too, with a link to where they are explained.
 :   One piece of information inside a token, such as `sub`, `email` or
     `groups`.
 
+**Cloudflare Tunnel** { #cloudflare-tunnel }
+:   A way to publish web apps without a public IP or port forward: the
+    program `cloudflared` runs in the cluster, keeps an outgoing connection
+    to Cloudflare, and Cloudflare sends visitors' requests through it. See
+    [DNS and certificates](../deploy/dns-and-certificates.md#cloudflare-tunnel-instead-of-a-port-forward).
+
 **Client**
 :   An application registered in a Keycloak realm. *Public* clients (the web
     apps, such as `den-spa`) cannot keep a secret and use PKCE.
@@ -187,8 +193,15 @@ too, with a link to where they are explained.
     successor of [Ingress](#ingress). A **Gateway** is the entry point: it
     holds the public HTTPS certificate and listens on ports 80 and 443.
     Each app attaches an [HTTPRoute](#httproute) to it. Con Services uses
-    Cilium's implementation (GatewayClass `cilium`) and one Gateway called
-    `public` in the namespace `conservices-gateway`.
+    Cilium's implementation (GatewayClass `cilium`) and two Gateways in the
+    namespace `conservices-gateway`: `public` for the apps and sign-in, and
+    `internal` for the admin tools, reachable only from your LAN or VPN.
+
+**Git Bash** { #git-bash }
+:   The bash shell that comes with Git for Windows
+    (`C:\Program Files\Git\bin\bash.exe`). It can run the bash versions of
+    the template's bootstrap scripts on Windows. Not the same as `bash` typed
+    in PowerShell, which may start [WSL](#wsl) instead.
 
 **GitOps** { #gitops }
 :   Running a cluster from a Git repository: every setting, version and
@@ -278,6 +291,11 @@ too, with a link to where they are explained.
     Docker containers on your computer. The local trial uses it; see
     [Run Den on Kubernetes](../getting-started/den-quickstart.md).
 
+**kubeconfig**
+:   The file that tells `kubectl` and `helm` which cluster to talk to and how
+    to log in. The default is `~/.kube/config`; the environment variable
+    `KUBECONFIG` selects another file for the current terminal.
+
 **kubectl**
 :   The command-line tool for talking to a Kubernetes cluster.
 
@@ -290,6 +308,13 @@ too, with a link to where they are explained.
     *base* set of manifests with an *overlay*, a folder holding only your
     changes: image tags, passwords, host names.
 
+**LB IPAM** { #lb-ipam }
+:   Cilium's *load balancer IP address management*: it gives each `Service`
+    of type `LoadBalancer`, such as a [Gateway](#gateway-api), an address
+    from a pool you define. Pin the addresses of the two Con Services
+    Gateways; otherwise the order in which they get addresses is not fixed
+    ([DNS and certificates](../deploy/dns-and-certificates.md#1-choose-the-gateway-ips)).
+
 **Liveness probe, readiness probe**
 :   Kubernetes' regular checks on a pod. A failing *liveness* probe
     (`/livez`) restarts the pod; a failing *readiness* probe (`/readyz`)
@@ -298,8 +323,8 @@ too, with a link to where they are explained.
 **Load balancer**
 :   A network service that spreads incoming traffic over several servers,
     or gives a Service an address outside the cluster. On Con Services
-    clusters, Cilium's LB IPAM gives the [Gateway](#gateway-api) its
-    address.
+    clusters, Cilium's [LB IPAM](#lb-ipam) gives the
+    [Gateways](#gateway-api) their addresses.
 
 **Managed database**
 :   A module database the operator created for Den, and which Den may
@@ -321,11 +346,6 @@ too, with a link to where they are explained.
     separate migration step (Den's `migrate` initContainer, the
     `den-migrate` service in Docker Compose) using
     [Goose](https://github.com/pressly/goose).
-
-**MinIO**
-:   An S3-compatible file storage server that earlier versions used for
-    development and the local trial. Replaced by [SeaweedFS](#seaweedfs)
-    because MinIO no longer publishes community images.
 
 **Module**
 :   One application of the suite: Den, HR, Rally, Stash, Finance, Learn,
@@ -501,6 +521,13 @@ too, with a link to where they are explained.
 **Subject (`sub`)**
 :   The permanent, unique id of a person in the identity provider.
 
+**Sync wave**
+:   A number on each [Argo CD](#argo-cd) Application. Argo CD installs lower
+    waves first and starts a wave only when every earlier one is healthy, so
+    a stuck infrastructure Application holds back everything after it. Den
+    and the modules share the last wave. See
+    [Argo CD and cluster.yaml](../deploy/argocd.md#6-watch-the-sync-waves).
+
 **TLS (Transport Layer Security)**
 :   The encryption behind `https://`. It also lets the client check that the
     server is who it claims to be, using a certificate. Con Services uses
@@ -515,3 +542,9 @@ too, with a link to where they are explained.
 **Upstream**
 :   A system a module depends on, such as Keycloak or Den. `upstream_failed`
     and `unavailable` errors mean an upstream did not answer as expected.
+
+**WSL (Windows Subsystem for Linux)** { #wsl }
+:   Runs Linux distributions inside Windows. Typing `bash` in PowerShell
+    often starts WSL rather than [Git Bash](#git-bash); with only Docker
+    Desktop's `docker-desktop` distribution installed, that fails because it
+    has no bash. The guides use PowerShell scripts or Git Bash instead.

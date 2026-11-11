@@ -28,7 +28,7 @@ PostgreSQL and S3 storage are already up. If they are not, start with
 [How the platform starts](../../getting-started/how-the-platform-starts.md).
 
 !!! warning "The Helm chart is a first version"
-    `deploy/charts/stash` (chart `0.1.0`) mirrors the tested Kustomize
+    `deploy/charts/stash` (released with Stash as `stash/vX.Y.Z`) mirrors the tested Kustomize
     manifests in `deploy/kubernetes/modules/stash/`, but has not been
     installed on a real cluster yet. For a local trial, the Kustomize
     overlay is the tested path; see [Local trial with Kustomize](#local-trial-with-kustomize).

@@ -95,8 +95,8 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
 | `ghcr.io/aglelectronics/rally-submit:<tag>` | `infra/Dockerfile.frontend` with `--build-arg RALLY_APP=submit` | Submission site. The published image is built with the example sign-in settings (realm `attendees`, client `rally-submit`); for your own domain, build it yourself (see [Setup](setup.md#build-the-submission-site) and [CI and releases](../../contributing/ci.md#frontend-images-and-sign-in-settings)). |
 
 Use the same tag for all of them ([Versions and upgrades](../../operations/versioning.md)).
-No Rally release has been published yet; build the images yourself until
-one is.
+The images are published with every Rally release, starting with
+`1.0.0-1`.
 
 !!! warning "Known limitation: one organisation, one edition"
     Rally has no screen or API yet to create organisations or editions. The
