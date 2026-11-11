@@ -34,7 +34,7 @@ on the account row.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Enabled** | off | Turns the connector on (only possible when it is available). |
+| **Enabled** | off | Turns the connector on. HR refuses it while the connector is unavailable (always in 1.0.0). |
 | **Domain** | the organisation email domain | Domain of the accounts, for example `volunteers.example.org`. |
 | **Admin email** | none | A Workspace super admin the service account acts as (domain-wide delegation, below). |
 | **Organisational unit** | `/` | Where new accounts go, for example `/Volunteers`. |
