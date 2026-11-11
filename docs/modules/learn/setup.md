@@ -61,8 +61,14 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
       KEYCLOAK_CLIENT_SECRET=change-me \
       LEARN_SERVICE_TOKEN="$(openssl rand -hex 32)" \
+      LEARN_FEEDBACK_PEPPER="$(openssl rand -hex 32)" \
       SMTP_PASSWORD=change-me
     ```
+
+    `LEARN_FEEDBACK_PEPPER` is required outside development, and both it and
+    `LEARN_SERVICE_TOKEN` must be at least 32 random characters: the backend
+    refuses to start with a short or placeholder value. Add
+    `TELEGRAM_BOT_TOKEN` here too if you use Telegram.
 
     ```yaml
     apiVersion: external-secrets.io/v1
@@ -132,13 +138,38 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
    backend; that rule belongs to the platform manifests (see
    [Network policies](../../operations/network-policies.md#calls-between-modules)).
    Without it, group sync logs errors and everything else works. To turn
-   group sync off, leave `KEYCLOAK_BASE_URL` empty and set
+   the group directory off (for example with an identity provider other
+   than Keycloak), set `config.GROUP_DIRECTORY: "off"` and
    `networkPolicy.keycloakAdmin.enabled: false`.
 
-8. **Pair with Den:** Den: **Modules → Pair** on the Learn row; Learn (as
-   `learn-admin`): **Settings → Den connection**, paste, **Connect**.
+   Two things about groups:
 
-9. **Connect HR** (only if you run HR). In HR's settings:
+    - Learn links groups by **full path**. In Keycloak, open **Clients →
+      learn-spa → Client scopes → learn-spa-dedicated → groups** (or your
+      groups mapper) and turn **Full group path** on, so tokens carry
+      `/learn/cohort-a` rather than `cohort-a`.
+    - Trainers may only link groups under `LEARN_LINKABLE_GROUPS` (default
+      `/learn/*`). Create the groups trainers should use below a `/learn`
+      parent group, or set the value to your own parents:
+
+        ```yaml
+        config:
+          LEARN_LINKABLE_GROUPS: "/learn/*,/teams/*"
+        ```
+
+8. **Give out the roles.** Add people to the Keycloak groups (or assign them
+   from HR): `learn-admin`, `learn-trainer`, `learn-manager` (training
+   managers: decide who teaches) and `learn-coordinator` (training office:
+   reports, qualifications, revoking certificates). Trainers can no longer
+   make other people trainers; someone in `learn-manager` does that on
+   **Course roles**.
+
+9. **Pair with Den:** Den: **Modules → Pair** on the Learn row; Learn (as
+   `learn-admin`): **Settings → Den connection**, paste, **Connect**.
+   While paired, Den's module settings for Learn decide the data retention
+   (**Settings → Data retention** in Learn shows them read-only).
+
+10. **Connect HR** (only if you run HR). In HR's settings:
 
     ```text
     QUALIFICATION_CATALOG_SOURCES=learn=https://learn-backend.conservices-learn.svc.cluster.local:8080/api/qualification-catalog
@@ -149,7 +180,7 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
     The Learn chart already admits HR's backend. HR's namespace needs the
     matching egress rule to `conservices-learn` port 8080.
 
-10. **Verify:**
+11. **Verify:**
 
     ```sh
     kubectl get certificate -n conservices-learn
@@ -283,6 +314,8 @@ in `not_after`.
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
 | `imagePullSecrets` | `[]` | Pull Secrets for private images on every pod, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
 | `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
+| `networkPolicy.telegram.enabled` / `.fqdns` / `.cidrs` / `.port` | `false` / `["api.telegram.org"]` / `[]` / `443` | Egress to the Telegram Bot API for reminders; turn on with `TELEGRAM_BOT_TOKEN`. Host names with Cilium (`CiliumNetworkPolicy` `learn-telegram`), address ranges otherwise; see [Network policies](../../operations/network-policies.md#telegram-learn-reminders). |
+| `config.GROUP_DIRECTORY`, `config.LEARN_LINKABLE_GROUPS` | `keycloak`, `/learn/*` | Where groups and people come from, and which groups trainers may link; see [Configuration](configuration.md). Any `GROUP_DIRECTORY` other than `keycloak` or `off` stops the chart. |
 
 ### Without cert-manager
 
@@ -348,7 +381,8 @@ then add:
     depends_on:
       learn-migrate: { condition: service_completed_successfully }
     networks: [internal, egress]
-    # DATABASE_URL, S3_*, KEYCLOAK_CLIENT_SECRET, LEARN_SERVICE_TOKEN, SMTP_PASSWORD
+    # DATABASE_URL, S3_*, KEYCLOAK_CLIENT_SECRET, LEARN_SERVICE_TOKEN,
+    # LEARN_FEEDBACK_PEPPER, SMTP_PASSWORD (and TELEGRAM_BOT_TOKEN if used)
     env_file: /etc/conservices/learn-backend.env
     environment:
       APP_ENV: production
@@ -433,10 +467,32 @@ in the browser** (CORS or network error): the browser cannot reach the
 bucket at the presigned address; set `S3_PUBLIC_BASE_URL` to an address
 browsers can reach and allow your Learn origin in the bucket's CORS rules.
 
+**The backend refuses to start with `LEARN_FEEDBACK_PEPPER is required
+outside development`** or `LEARN_SERVICE_TOKEN must be at least 32
+characters`. Generate the value with `openssl rand -hex 32`, store it in
+your secret manager (key in `learn-secrets`) and restart. Values such as
+`learn-service-dev-token` or `change-me` are refused on purpose.
+
 **Group sync does nothing.** One of `KEYCLOAK_BASE_URL`, `KEYCLOAK_REALM`,
 `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` is empty (all four turn it
-on), the client lacks group read rights, or a network policy blocks
-Keycloak (timeouts in the log).
+on), `GROUP_DIRECTORY` is `off`, the client lacks group read rights, or a
+network policy blocks Keycloak (timeouts in the log). The start-up log says
+`group directory off; group links use the groups people sign in with` when
+it is off.
+
+**A linked group enrols nobody when people sign in.** The token carries
+plain group names (`cohort-a`) while the link is `/learn/cohort-a`. Turn
+**Full group path** on in Keycloak's groups mapper (see step 7).
+
+**Trainers see an empty group list.** No group matches
+`LEARN_LINKABLE_GROUPS` (default `/learn/*`). Create the groups below
+`/learn`, or set the parents you use.
+
+**Telegram reminders don't arrive.** `TELEGRAM_BOT_TOKEN` is empty,
+Telegram is switched off in **Settings**, the person has no chat id under
+**My notifications** (or never sent the bot `/start`), or the network
+policy blocks `api.telegram.org` (Helm: `networkPolicy.telegram.enabled`).
+The backend logs `notification delivery failed` with the Bot API's reason.
 
 **Den's portal shows no Learn to-dos.** Den's web app calls Learn from the
 browser: `OIDC_EXTRA_AUDIENCES` must include `den-spa` and

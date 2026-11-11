@@ -20,8 +20,9 @@ platform conventions that means:
   [holdings](api.md#get-apiinternalholdings) with a shared service token;
   no other module reads Learn's database.
 - **Access through Keycloak groups, like every module.** Staff roles come
-  from `learn-admin`, `learn-trainer` and `learn-coordinator`, published in
-  the [role catalog](api.md#get-apirole-catalog). Learners need no role:
+  from `learn-admin`, `learn-trainer`, `learn-manager` and
+  `learn-coordinator`, published in the
+  [role catalog](api.md#get-apirole-catalog). Learners need no role:
   an enrolment is enough, and courses linked to a Keycloak group enrol its
   members automatically.
 - **Hidden until ready.** Unpublished courses do not exist for anyone but
@@ -47,24 +48,32 @@ platform conventions that means:
   QR code for check-in at the venue, walk-ins and a roster.
 - **Rules:** prerequisites between activities and due dates with overdue
   tracking.
-- **Group sync:** courses and paths linked to Keycloak groups enrol their
-  members automatically (every 5 minutes; members who leave are
-  deactivated, never deleted).
-- **Media:** pictures, audio and video uploaded to object storage (alt text
-  required for pictures), plus YouTube and Vimeo embeds.
+- **Group sync:** courses and paths linked to Keycloak groups (by full
+  path) enrol their members automatically (every 5 minutes; members who
+  leave are deactivated, never deleted).
+- **Media:** pictures, audio and video uploaded to object storage and
+  checked by their contents (alt text required for pictures), plus YouTube
+  and Vimeo embeds.
+- **Archive, audit and privacy:** courses are archived (hidden, read-only,
+  reversible), never deleted; an audit log records enrolments, course
+  roles, grading, resets and revokes; people can be erased (GDPR) and are
+  anonymised after a retention period.
 - **Qualifications:** earned by finishing a course or path, with expiry and
   renewal, printable certificates and a public QR verify page.
 - **Learning paths:** ordered (optionally sequential) course bundles.
-- **Engagement:** email reminders (hourly), team progress boards, course and
-  session feedback, and to-dos on Den's portal home.
+- **Engagement:** email and Telegram reminders (hourly), team progress
+  boards, course and session feedback, and to-dos on Den's portal home.
 - **Reports:** completion and qualification status, with CSV export.
 - **Languages:** courses in several languages with a translation editor;
   the interface is in English and Dutch.
 
 **Who uses it:** everyone enrolled in a course learns in it (there is no
 "learner" role: an enrolment gives access). `learn-trainer` creates and
-runs courses, `learn-coordinator` reads every report, `learn-admin` does
-everything.
+runs courses, `learn-manager` decides who teaches which course,
+`learn-coordinator` (the training office) reads every report and manages
+qualifications, `learn-admin` does everything. The guides walk through each:
+[learners](guides/learner.md), [trainers](guides/trainer.md),
+[admins and managers](guides/admin.md).
 
 ### HR role gating
 
@@ -105,7 +114,8 @@ HTTP:
 | Direction | What |
 | --- | --- |
 | Learn → Den | Pairing, brand and settings ([Pairing](../../concepts/pairing.md)). |
-| Learn → Keycloak admin API | Read-only group lookups for group sync (client `learn-provisioner`). |
+| Learn → Keycloak admin API | Read-only group and people lookups for group sync and the people picker (client `learn-provisioner`; off with `GROUP_DIRECTORY=off`). |
+| Learn → Telegram Bot API | Reminders to people who saved a chat id (`api.telegram.org`, only with `TELEGRAM_BOT_TOKEN`). |
 | HR → Learn | Role catalog, qualification catalog, holdings (service token). |
 | Browser (Den's web app) → Learn | Portal to-dos and "my learning" widgets, with Den's token (`OIDC_EXTRA_AUDIENCES`). |
 | Browser → S3 | Media upload and download through presigned links (`S3_PUBLIC_BASE_URL`). |
@@ -128,7 +138,9 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
 
 - [Setup](setup.md): install Learn in each of the five ways.
 - [Configuration](configuration.md): every environment variable.
-- [API reference](api.md): all 140 HTTP endpoints (courses, quizzes,
+- Guides: [for learners](guides/learner.md), [for trainers](guides/trainer.md)
+  and [for admins and managers](guides/admin.md).
+- [API reference](api.md): all 147 HTTP endpoints (courses, quizzes,
   sessions, media, qualifications, paths, group sync, reports, and the
   HR and portal contracts), with permissions, bodies, errors and `curl`
   examples.
