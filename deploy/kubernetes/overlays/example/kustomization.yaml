@@ -49,6 +49,7 @@ configMapGenerator:
     literals:
       # DEV ONLY key pair: the secret half is infra/operator/dev-backup-identity.txt.
       - BACKUP_AGE_RECIPIENTS=age1777a9j365d2nmjl24nvp45jz8ww9sg4xv9n4h84rl4nay9xww39sc5t73k
+      # Add wiki-data once Wiki is installed (its page bodies exist only there).
       - FILES_S3_BUCKETS=den-data,stash-data
   # Copied from infra/keycloak/ into local/ (kustomize only reads files
   # inside this folder).

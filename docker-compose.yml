@@ -1167,6 +1167,14 @@ services:
       # internal API off. Matches OFFBOARD_HOOKS on hr-backend.
       WIKI_SERVICE_TOKEN: wiki-service-dev-token
       WIKI_OFFBOARD_GRACE_DAYS: "30"
+      # Revisions older than this many days are deleted; 0 keeps them all.
+      WIKI_REVISION_RETENTION_DAYS: "0"
+      # Share dialog group picker (dev values). HR's departments and access
+      # groups while paired with Den; empty until HR serves
+      # GET /api/internal/directory/groups. Without it the picker offers the
+      # person's own groups. See docs/modules/wiki/configuration.md.
+      HR_DIRECTORY_URL: ""
+      HR_DIRECTORY_TOKEN: ""
     volumes:
       - ./wiki/infra/access-config.toml:/etc/wiki/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro

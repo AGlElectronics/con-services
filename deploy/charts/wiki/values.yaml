@@ -28,8 +28,10 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and WIKI_SERVICE_TOKEN. This chart never creates
-# Secrets.
+# S3_SECRET_ACCESS_KEY and WIKI_SERVICE_TOKEN, plus HR_DIRECTORY_TOKEN or
+# IDP_DIRECTORY_CLIENT_SECRET when the group picker uses HR or Keycloak
+# (config.HR_DIRECTORY_URL / config.IDP_DIRECTORY_URL). This chart never
+# creates Secrets.
 existingSecret: wiki-secrets
 
 # Wiki's access config (roles, permissions, OIDC group bindings).
@@ -64,6 +66,21 @@ config:
   # Must match backend.buffer.mountPath.
   WIKI_BUFFER_DIR: /var/lib/wiki/buffer
   WIKI_OFFBOARD_GRACE_DAYS: "30"
+  # Page history: revisions older than this many days are deleted; "0"
+  # keeps every revision. Once paired, Den's module settings win.
+  WIKI_REVISION_RETENTION_DAYS: "0"
+  # Share dialog group picker; any group name can always be typed in.
+  # HR (used while paired with Den): HR's backend, e.g.
+  #   https://hr-backend.conservices-hr.svc.cluster.local:8080
+  # Needs HR_DIRECTORY_TOKEN in existingSecret and networkPolicy.hr.enabled.
+  HR_DIRECTORY_URL: ""
+  # Identity provider (used otherwise): Keycloak's address, e.g.
+  #   https://keycloak.conservices-identity.svc.cluster.local:8443
+  # Needs IDP_DIRECTORY_CLIENT_SECRET in existingSecret and
+  # networkPolicy.keycloakAdmin.enabled.
+  IDP_DIRECTORY_URL: ""
+  IDP_DIRECTORY_REALM: conservices
+  IDP_DIRECTORY_CLIENT_ID: ""
   # Standalone switch for public share links; once paired, Den's
   # wiki_public_links organisation setting wins.
   PUBLIC_LINKS_ENABLED: "false"
@@ -277,7 +294,16 @@ networkPolicy:
   # a matching egress rule.
   allowFromNamespaces:
     - conservices-hr
-  # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
+  # HR's backend, for the group picker (config.HR_DIRECTORY_URL, GET
+  # /api/internal/directory/groups). HR's namespace also needs an ingress
+  # rule admitting Wiki (HR chart networkPolicy.allowFromNamespaces).
+  hr:
+    enabled: false
+    namespace: conservices-hr
+    port: 8080
+  # Keycloak admin API, for the group picker without HR
+  # (config.IDP_DIRECTORY_URL). Keycloak's namespace also needs an ingress
+  # rule admitting this backend.
   keycloakAdmin:
     enabled: false
     namespace: conservices-identity

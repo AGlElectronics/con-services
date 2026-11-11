@@ -58,6 +58,8 @@ configMapGenerator:
       - BACKUP_TIMEZONE=Europe/Vienna
       # A different provider or account than the live data.
       - BACKUP_S3_ENDPOINT=https://s3.backup-provider.example
+      # Every installed module's bucket, e.g. den-data,stash-data,wiki-data.
+      # Wiki's page bodies exist only in its bucket.
       - FILES_S3_BUCKETS=den-data
 
 # The HTTPRoutes attach to the Gateway "public" in conservices-gateway
