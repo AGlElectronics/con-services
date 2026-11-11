@@ -393,3 +393,22 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- end -}}
 {{- $mode -}}
 {{- end -}}
+
+{{/* The web app's security headers: files/security-headers.conf (a copy of
+con-services shared/nginx/security-headers.conf) with KEYCLOAK_ORIGIN from
+frontend.securityHeaders.keycloakOrigin (default: scheme and host of
+config.OIDC_ISSUER_URL) and DEN_ORIGIN from frontend.securityHeaders.denOrigin
+(empty: removed). */}}
+{{- define "wiki.securityHeaders" -}}
+{{- $sh := .Values.frontend.securityHeaders | default dict -}}
+{{- $kc := $sh.keycloakOrigin | default "" -}}
+{{- if and (not $kc) .Values.config.OIDC_ISSUER_URL -}}
+{{- $u := urlParse .Values.config.OIDC_ISSUER_URL -}}
+{{- $kc = printf "%s://%s" $u.scheme $u.host -}}
+{{- end -}}
+{{- $den := $sh.denOrigin | default "" -}}
+{{- $out := .Files.Get "files/security-headers.conf" -}}
+{{- $out = $out | replace "'self' KEYCLOAK_ORIGIN" (trim (printf "'self' %s" $kc)) -}}
+{{- $out = $out | replace " DEN_ORIGIN;" (printf "%s;" (ternary (printf " %s" $den) "" (ne $den ""))) -}}
+{{- $out -}}
+{{- end -}}

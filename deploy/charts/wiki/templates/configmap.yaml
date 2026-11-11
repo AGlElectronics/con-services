@@ -30,6 +30,10 @@ metadata:
   labels:
     {{- include "wiki.labels" . | nindent 4 }}
 data:
+  # files/security-headers.conf is con-services shared/nginx/security-headers.conf;
+  # its placeholders are filled from frontend.securityHeaders.
+  security-headers.conf: |
+    {{- include "wiki.securityHeaders" . | nindent 4 }}
   default.conf: |
     upstream wiki_backend {
         server wiki-backend.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.backend.port }};
@@ -94,11 +98,13 @@ data:
             proxy_buffering off;
         }
         location = /manifest.webmanifest {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             types {} default_type "application/manifest+json";
             try_files $uri =404;
         }
         location = /brand.json {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             try_files $uri =404;
         }
@@ -106,16 +112,19 @@ data:
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
         location /static/ {
             expires 1y;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "public, immutable" always;
             try_files $uri =404;
         }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
         }
     }

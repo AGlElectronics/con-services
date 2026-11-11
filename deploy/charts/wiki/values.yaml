@@ -28,7 +28,10 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and WIKI_SERVICE_TOKEN, plus HR_DIRECTORY_TOKEN or
+# S3_SECRET_ACCESS_KEY, WIKI_SERVICE_TOKEN and DEN_LINK_ENCRYPTION_KEY
+# (required: the backend refuses to start without it; openssl rand -base64 32),
+# optionally DEN_LINK_ENCRYPTION_KEY_PREVIOUS (key rotation) and
+# HR_SERVICE_TOKEN (lets HR read the role catalog), plus HR_DIRECTORY_TOKEN or
 # IDP_DIRECTORY_CLIENT_SECRET when the group picker uses HR or Keycloak
 # (config.HR_DIRECTORY_URL / config.IDP_DIRECTORY_URL). This chart never
 # creates Secrets.
@@ -54,7 +57,18 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: wiki-spa
-  OIDC_AUDIENCE: wiki-spa
+  # The web app sends access tokens for Wiki's API; Keycloak adds this
+  # audience with an audience mapper on wiki-spa. ID tokens are refused.
+  OIDC_AUDIENCE: wiki-api
+  # Groups come only from this claim ("roles" is never read); full: the
+  # whole group path must match, last: only the last segment; an optional
+  # parent group (e.g. /con2026) is removed before matching.
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  OIDC_GROUP_PREFIX: ""
+  # Hosts a pasted Den pairing URL may point at when DEN_INTERNAL_URL is
+  # empty, e.g. den.example.org.
+  DEN_ALLOWED_HOSTS: ""
   CORS_ALLOWED_ORIGINS: https://wiki.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -176,6 +190,16 @@ frontend:
   resources:
     requests: { cpu: 10m, memory: 16Mi }
     limits: { cpu: 200m, memory: 64Mi }
+  # Security headers of the web app (con-services shared/nginx snippet):
+  # Content Security Policy, X-Frame-Options, Referrer-Policy,
+  # Permissions-Policy. The CSP lets the browser talk to the sign-in server
+  # and, when set, Den. Origins are scheme + host (+ port), no path.
+  securityHeaders:
+    # Empty: the scheme and host of config.OIDC_ISSUER_URL.
+    keycloakOrigin: ""
+    # Den's public address, e.g. https://den.conservices.test. Empty: the
+    # browser never talks to Den directly (brand assets come through Wiki).
+    denOrigin: ""
   # Web app settings, served to the browser as /config.json from the
   # ConfigMap <release>-frontend-config (mounted at /etc/conservices).
   # The image itself names no domain. Keys left out get these defaults:

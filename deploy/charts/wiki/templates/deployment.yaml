@@ -241,6 +241,10 @@ spec:
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
               readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/snippets/security-headers.conf
+              subPath: security-headers.conf
+              readOnly: true
             {{- if $tls }}
             - name: nginx-conf
               mountPath: /docker-entrypoint.d/90-reload-tls.sh
