@@ -6,9 +6,10 @@
 # end; the smoke course stays behind (unpublished), like the HR smoke leaves
 # its test people.
 $ErrorActionPreference = 'Stop'
-$kcBase = 'http://localhost:8085'
+. "$PSScriptRoot/smoke-lib.ps1"
+$kcBase = Get-SmokeUrl 'KEYCLOAK' 'http://localhost:8085'
 $kc = "$kcBase/realms/conservices/protocol/openid-connect/token"
-$learn = 'http://localhost:8120'
+$learn = Get-SmokeUrl 'LEARN_API' 'http://localhost:8120'
 
 function Get-IdToken($user, $pass) {
   $body = @{ grant_type = 'password'; client_id = 'learn-spa'; username = $user; password = $pass; scope = 'openid profile email' }

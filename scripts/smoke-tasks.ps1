@@ -8,12 +8,13 @@
 # Usage: scripts/smoke-tasks.ps1                                  # live (:3009)
 #        scripts/smoke-tasks.ps1 -Base http://localhost:8161      # dev copy
 param(
-  [string]$Base = 'http://localhost:3009',
-  [string]$Keycloak = 'http://localhost:8085',
+  [string]$Base = $(if ($env:SMOKE_TASKS_WEB) { $env:SMOKE_TASKS_WEB } else { 'http://localhost:3009' }),
+  [string]$Keycloak = $(if ($env:SMOKE_KEYCLOAK) { $env:SMOKE_KEYCLOAK } else { 'http://localhost:8085' }),
   [string]$User = 'admin',
   [string]$Password = 'adminadmin'
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/smoke-lib.ps1"
 $api = "$Base/api/v1"
 
 $token = (Invoke-RestMethod -Method Post -Uri "$Keycloak/realms/conservices/protocol/openid-connect/token" -Body @{
@@ -109,10 +110,10 @@ try {
   Api POST '/favorites/remove' @{ space_id = $sp.id } | Out-Null
 
   Step 'attachments (skipped when S3 is not configured)'
-  $tmp = Join-Path $env:TEMP 'tasks-smoke.txt'
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) 'tasks-smoke.txt'
   'smoke attachment' | Set-Content -Path $tmp
   try {
-    $up = curl.exe -s -X POST "$api/tasks/$($t.id)/attachments" -H "Authorization: Bearer $token" -F "file=@$tmp" | ConvertFrom-Json
+    $up = & $SmokeCurl @SmokeCurlArgs -s -X POST "$api/tasks/$($t.id)/attachments" -H "Authorization: Bearer $token" -F "file=@$tmp" | ConvertFrom-Json
     if ($up.error) { throw ($up.error.message) }
     $bytes = Invoke-RestMethod -Uri "$api/attachments/$($up.id)" -Headers $h
     Assert ($bytes -match 'smoke attachment') 'attachment round-trip'

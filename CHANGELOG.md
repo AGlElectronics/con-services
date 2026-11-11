@@ -177,7 +177,20 @@ led by Den's MAJOR; see
   `BACKUP_SAME_STORAGE_AS_DATA` flag Den's operator gets (the dev stack
   sets it to `true`). The secrets inventory lists each module's generated
   `conservices/modules/<module>/den-link` entry in OpenBao.
-
+- Nightly **Smoke** workflow (`.github/workflows/smoke.yml`, also run by
+  hand with a module image tag): the Den quickstart cluster on kind with
+  Den's pinned images, every module from its Helm chart with published
+  images (`scripts/ci/smoke-cluster.sh`), then `smoke-access-catalog.ps1`,
+  `smoke-learn.ps1` and `smoke-tasks.ps1` under PowerShell 7 on Ubuntu
+  ([Smoke tests](docs/contributing/ci.md#smoke-tests)).
+- Smoke scripts read their addresses from `SMOKE_*` variables
+  (`scripts/smoke-lib.ps1`, defaults are the Compose dev ports) and run on
+  Linux. `smoke-access-catalog.ps1` now checks all nine role catalogs
+  (Den, HR, Rally, Stash, Learn, Finance, Desk, Tasks, Wiki), signs in when
+  a catalog answers `401`, and takes `-Skip <modules>`.
+- Docs: [Wiring a new module](docs/contributing/new-module.md), a checklist
+  for adding a module to the dev stack, the Helm charts and Argo CD
+  template, Docker production, secrets and docs.
 ### Security
 
 - Default-deny NetworkPolicies in every namespace with an explicit allow

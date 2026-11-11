@@ -1,0 +1,105 @@
+# Nightly smoke test: the local-trial platform (overlays/example: Keycloak,
+# PostgreSQL, S3, Den) on a kind cluster, every module from its Helm chart
+# with pinned published images, then scripts/smoke-*.ps1 (PowerShell 7)
+# against it. Also runs by hand (Actions -> Smoke -> Run workflow) with
+# another module version. Nothing is published.
+# Docs: https://aglelectronics.github.io/con-services/contributing/ci/#smoke-tests
+name: Smoke
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      modules-version:
+        description: "Image tag of every module (MAJOR.MINOR.PATCH-BUILD); its vX.Y.Z tag provides the access configurations"
+        required: false
+        default: "1.0.0-1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  KIND_VERSION: v0.33.0
+  KUBECTL_VERSION: v1.37.0
+  HELM_VERSION: v4.0.0
+  MODULES_VERSION: ${{ inputs.modules-version || '1.0.0-1' }}
+
+jobs:
+  smoke:
+    name: kind cluster and smoke scripts
+    # Needs Docker for kind: GitHub-hosted, not the arc-conservices runners.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SMOKE_INSECURE: "1"
+      SMOKE_KEYCLOAK: https://127.0.0.1:8443
+      SMOKE_DEN_API: https://127.0.0.1:8090
+      SMOKE_STASH_API: https://127.0.0.1:8088
+      SMOKE_HR_API: https://127.0.0.1:8110
+      SMOKE_EVENTS_API: https://127.0.0.1:8100
+      SMOKE_LEARN_API: https://127.0.0.1:8120
+      SMOKE_FINANCE_API: https://127.0.0.1:8130
+      SMOKE_DESK_API: https://127.0.0.1:8150
+      SMOKE_TASKS_API: https://127.0.0.1:8160
+      SMOKE_TASKS_WEB: https://127.0.0.1:3009
+      SMOKE_WIKI_API: https://127.0.0.1:8140
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kind and kubectl (pinned, checksummed)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLo kind --retry 3 "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "$(curl -fsSL --retry 3 "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum" | cut -d' ' -f1)  kind" | sha256sum -c -
+          curl -fsSLo kubectl --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$(curl -fsSL --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256")  kubectl" | sha256sum -c -
+          chmod +x kind kubectl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # The access configurations ship with each module's release.
+      - name: Module access configurations (release tag)
+        run: |
+          set -euo pipefail
+          ref="v${MODULES_VERSION%-*}"
+          for repo in stash Rally learn desk tasks wiki; do
+            git clone --quiet --depth 1 --branch "$ref" "https://github.com/AGlElectronics/$repo.git" "modules/$repo"
+            test -f "modules/$repo/infra/access-config.toml"
+          done
+
+      - name: Cluster, platform and modules
+        id: up
+        run: bash scripts/ci/smoke-cluster.sh up
+
+      - name: Port-forwards
+        run: bash scripts/ci/smoke-cluster.sh port-forward
+
+      - name: Smoke - every role catalog, HR aggregation, Den gating
+        if: ${{ !cancelled() && steps.up.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/smoke-access-catalog.ps1
+
+      - name: Smoke - Learn
+        if: ${{ !cancelled() && steps.up.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/smoke-learn.ps1
+
+      - name: Smoke - Tasks
+        if: ${{ !cancelled() && steps.up.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/smoke-tasks.ps1
+
+      - name: Diagnose
+        if: failure()
+        run: bash scripts/ci/smoke-cluster.sh diagnose
