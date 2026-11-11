@@ -143,7 +143,7 @@ Entries marked *rotatable* can be rotated by deleting them
 | `conservices/infra/postgres/superuser` | `password` (user `postgres`) | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` | CloudNativePG, Den operator | generated; rotatable (CNPG applies the new password) |
 | `conservices/infra/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); `DATABASE_URL` of the application; `keycloak-db` | CloudNativePG, each application | generated; rotatable, then restart the application |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | Barman Cloud plugin (WAL archive, base backups) | your S3 provider; rotate there, then `bao kv put` |
-| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
+| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`, `desk`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` in `<module>-secrets` | the module's backend | your S3 provider, one key per bucket |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, backup bucket only |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, read-only on the module buckets |
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
@@ -151,7 +151,7 @@ Entries marked *rotatable* can be rotated by deleting them
 | `conservices/modules/den/smtp` | `password` | `DEN_SMTP_PASSWORD` in `den-secrets` (`conservices-den`) | Den backend; served to paired modules | you enter it; optional, not generated. Leave it unset to send mail without a login. Rotate: update it in OpenBao, wait for the ExternalSecret (or force a sync), then restart `den-backend` |
 | `conservices/modules/<module>/service-token` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
 | `conservices/modules/learn/feedback-pepper` | `pepper` | `LEARN_FEEDBACK_PEPPER` in `learn-secrets` (`conservices-learn`) | Learn (anonymous-feedback dedupe hash) | generated; rotatable, but rotating lets everyone give anonymous feedback once more |
-| `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
+| `conservices/modules/desk/secret-key` | `key`, optional `previous` | `DESK_SECRET_KEY` and `DESK_SECRET_KEY_PREVIOUS` in `desk-secrets` | Desk (encrypts stored IMAP and SMTP passwords) | generated; rotatable with the previous key, **not** by deleting the entry ([Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key)) |
 | `conservices/modules/<module>/den-link` (every enabled module) | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | the module's backend (shared `denlink`) | generated (43 letters and digits = 32 bytes as unpadded base64); rotate with the [two-step rotation](#den-link-encryption-key), never by deleting the entry alone |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` (user `temp-admin`) | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR, Learn | Keycloak, Den, HR, Learn | generated; to rotate, regenerate in Keycloak, then `bao kv patch` |
@@ -196,7 +196,7 @@ with each module's docs):
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `LEARN_FEEDBACK_PEPPER` (required outside development), `DEN_LINK_ENCRYPTION_KEY` (required outside development), `HR_SERVICE_TOKEN` (when HR reads the role catalog), `TELEGRAM_BOT_TOKEN`, SMTP password if any | `conservices-learn` |
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY` (required), `HR_SERVICE_TOKEN` (when HR reads Wiki's role catalog); optional for the share dialog's group picker: `HR_DIRECTORY_TOKEN` (equals the token HR accepts on `GET /api/internal/directory/groups`) or `IDP_DIRECTORY_CLIENT_SECRET` (a read-only Keycloak client, see [Wiki configuration](../modules/wiki/configuration.md#group-picker)) | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
-| Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
+| Desk | `DATABASE_URL`, `S3_*` keys, `DESK_SECRET_KEY` (encrypts stored mailbox passwords) and `DESK_SECRET_KEY_PREVIOUS` while rotating, `SMTP_PASSWORD` for notifications if any; Secret `desk-google` with the Google service account key (`service-account.json`) if Google Workspace mailboxes are used | `conservices-desk` |
 | Finance | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read and write on the PDF bucket; delete is not needed), `DEN_LINK_ENCRYPTION_KEY` (required; see below), `HR_SERVICE_TOKEN` (optional, lets HR read the role catalog) | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `DEN_LINK_ENCRYPTION_KEY`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
 
@@ -397,12 +397,12 @@ that come from a provider. Both only for what `cluster.yaml` enables.
 | `conservices/modules/den/credential-key` | `key` | `DEN_CREDENTIAL_KEY` in `den-secrets` | generated | delete the entry; restart `den-backend`, then pair every module again |
 | `conservices/modules/den/smtp` | `password` | `DEN_SMTP_PASSWORD` in `den-secrets` | you | `bao kv patch conservices/modules/den/smtp password=-` (the value is not printed), then restart `den-backend`. Leaving the entry unset is fine |
 | `conservices/modules/learn/service-token`, `.../wiki/service-token`, `.../tasks/service-token` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | delete the entry; restart HR and the module |
-| `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
+| `conservices/modules/desk/secret-key` | `key`, optional `previous` | `DESK_SECRET_KEY`, `DESK_SECRET_KEY_PREVIOUS` in `desk-secrets` | generated | **never delete the entry** (stored mailbox passwords become unreadable); instead `bao kv patch` `previous=<old>` `key=<new>`, restart Desk, run `/server reencrypt`, then remove `previous` ([Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key)) |
 | `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | generated | two steps, see [Den link encryption key](#den-link-encryption-key); deleting the entry alone makes the module pair again |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (first realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR and Learn | generated | regenerate in the Keycloak admin console, then `bao kv patch conservices/infra/keycloak/clients <client>=-` and restart the module |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` (first realm import only) | your mail provider | at the provider, then in Keycloak: **Realm settings → Email** |
-| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |
+| `conservices/modules/<module>/s3` (`den`, `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`, `desk`) | `access_key`, `secret_key` | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` of the module | your S3 provider, one key per bucket | new key at the provider, `bao kv put`, restart the module, delete the old key |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | S3 provider, **read-only** on all module buckets | as above |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | S3 provider, own key for the Den backup bucket | as above |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | `cnpg-backups-s3` (`conservices-data`) | S3 provider, own key for the PostgreSQL backup bucket | as above; CloudNativePG picks up the new key by itself |
@@ -418,6 +418,14 @@ External Secrets refreshes every Secret hourly. To apply a rotated value
 at once, run
 `kubectl annotate externalsecret -n <namespace> <name> force-sync=$(date +%s) --overwrite`,
 then restart the workload (environment variables are read at start).
+
+!!! warning "Desk 1.0.0 needs a newer GitOps reference"
+    Desk 1.0.0 needs its own S3 bucket and key (`conservices/modules/desk/s3`),
+    and optionally `previous` in `modules/desk/secret-key` and the Google
+    entry `modules/desk/google`. GitOps reference releases that only map
+    `modules/desk/secret-key` start Desk without S3, and it refuses to
+    start. Use a GitOps reference that lists Desk under the S3 entries
+    above.
 
 !!! note "Not a secret: Rally's `PUBLIC_API_BUILTIN_KEY`"
     The public event submission site hands this key to every visitor (it is
@@ -631,6 +639,66 @@ module's `values.yaml` under `existingSecret`):
 
 Then install the module ([Helm](helm.md#install-a-module) or Kustomize).
 
+#### Example: Desk, including the Google service account key
+
+Desk needs two Secrets in `conservices-desk`: `desk-secrets` (environment
+variables) and, only when it manages Google Workspace mailboxes,
+`desk-google`, which the chart mounts as a file. Store the values (the
+placeholders are not real values):
+
+```sh
+vault kv put secret/conservices/desk/backend \
+  DATABASE_URL='postgres://desk:change-me@db.example.org:5432/desk?sslmode=require' \
+  DESK_SECRET_KEY="$(openssl rand -base64 32)" \
+  S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
+  SMTP_PASSWORD=change-me
+vault kv put secret/conservices/desk/google \
+  service-account.json=@desk-service-account.json
+```
+
+Delete the downloaded `desk-service-account.json` afterwards. With the
+policy and `SecretStore` from steps 2 and 3 (for `conservices-desk`), apply:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: desk-secrets
+  namespace: conservices-desk
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault
+    kind: SecretStore
+  target:
+    name: desk-secrets
+  dataFrom:
+    - extract:
+        key: conservices/desk/backend   # DESK_SECRET_KEY_PREVIOUS too, while rotating
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: desk-google
+  namespace: conservices-desk
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault
+    kind: SecretStore
+  target:
+    name: desk-google            # chart value google.existingSecret
+  data:
+    - secretKey: service-account.json   # chart value google.secretKey
+      remoteRef:
+        key: conservices/desk/google
+        property: service-account.json
+```
+
+Rotating `DESK_SECRET_KEY` is described in
+[Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key);
+setting up the service account in [Google Workspace](../modules/desk/google-workspace.md).
+
 ### Other providers
 
 Only the `SecretStore`'s `provider` block changes; the `ExternalSecret`
@@ -801,7 +869,7 @@ On PowerShell, replace `$(date +%s)` with
 | Service tokens (`WIKI_SERVICE_TOKEN`, …) | Change on both sides at the same time, restart both. | Calls between the two fail until both restarted. |
 | Pairing token | Nothing to rotate: single use, expires after 15 minutes. | |
 | Module credential | Pair the module again (Den → Modules → Pair, paste in the module). The new credential replaces every older one at once. To cut a module off first, revoke in Den → Modules → Credentials. | None when pairing again; after revoking, the module is disconnected until it is paired. |
-| `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
+| `DESK_SECRET_KEY` | Move the old key to `DESK_SECRET_KEY_PREVIOUS`, set the new one, restart Desk, run `/server reencrypt`, then remove the previous key ([Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key)). Changing the key **without** keeping the old one as previous makes every stored mailbox password unreadable: Desk then reports *the stored password cannot be decrypted (DESK_SECRET_KEY changed without DESK_SECRET_KEY_PREVIOUS?); enter it again*. | A restart. |
 | `DEN_LINK_ENCRYPTION_KEY` | Old value into `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, new value into `DEN_LINK_ENCRYPTION_KEY`, restart; after a minute remove the previous key and restart again. [Details](#den-link-encryption-key). | Two restarts. |
 | `HR_SERVICE_TOKEN` | New value in HR's and every module's entry, restart the modules, then HR. [Details](#hr-service-token). | HR's access picker cannot read catalogs until all are restarted. |
 | Google Workspace service-account key | New key in the Google Cloud console, replace the file in the secret manager, restart, delete the old key. [Details](#google-workspace-service-account-key). | A restart. |

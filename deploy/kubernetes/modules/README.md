@@ -13,7 +13,7 @@ copy its shape for the others.
 | Finance | `conservices-finance` | `finance-backend`, `finance-frontend`, `finance-migrate` | `finance-migrate` | docs coming soon |
 | Learn | `conservices-learn` | `learn-backend`, `learn-frontend`, `learn-migrate` | `learn-migrate` | docs coming soon |
 | Wiki | `conservices-wiki` | `wiki-backend`, `wiki-frontend`, `wiki-migrate` | `wiki-migrate` | docs coming soon |
-| Desk | `conservices-desk` | `desk-backend`, `desk-frontend`, `desk-migrate` | `desk-migrate` | docs coming soon |
+| Desk | `conservices-desk` | `desk-backend`, `desk-frontend`, `desk-migrate` | `desk-migrate` | Helm chart `deploy/charts/desk`; docs: modules/desk/setup |
 | Tasks | `conservices-tasks` | `tasks-backend`, `tasks-frontend`, `tasks-migrate` | `tasks-migrate` | docs coming soon |
 
 The environment each module needs is in the root `docker-compose.yml`

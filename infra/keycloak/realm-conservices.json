@@ -51,7 +51,9 @@
     { "name": "finance_bookkeeper", "path": "/finance_bookkeeper" },
     { "name": "finance_read-only", "path": "/finance_read-only" },
     { "name": "desk-admin", "path": "/desk-admin" },
-    { "name": "desk-agent", "path": "/desk-agent" },
+    { "name": "desk-support-viewer", "path": "/desk-support-viewer" },
+    { "name": "desk-support-manager", "path": "/desk-support-manager" },
+    { "name": "desk-support-delete", "path": "/desk-support-delete" },
     { "name": "tasks-admin", "path": "/tasks-admin" },
     { "name": "tasks-creator", "path": "/tasks-creator" },
     { "name": "wiki-admin", "path": "/wiki-admin" },
@@ -81,7 +83,7 @@
       "credentials": [
         { "type": "password", "value": "alicealice", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-agent", "/tasks-creator", "/wiki-editor", "/finance_approver"],
+      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-support-manager", "/tasks-creator", "/wiki-editor", "/finance_approver"],
       "realmRoles": ["member"]
     },
     {

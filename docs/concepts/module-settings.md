@@ -105,6 +105,28 @@ Printed on Finance's receipts and invoices.
 | `finance.seller.registration` | Register court and number. |
 | `finance.seller.email`, `finance.seller.website` | Contact details. |
 
+### Desk: how long mail is kept
+
+Den's `desk.retention.*` keys replace the matching field on Desk's own
+retention page. A key Den leaves out stays on Desk's setting. The shared
+`retention.module_data_days` is not used: it is not the same decision as
+how long a closed conversation or the trash is kept. Days are a whole
+number, 1 to 3650; `0` is refused on Desk's own page.
+
+| Key | Meaning |
+| --- | --- |
+| `desk.retention.closed_conversation_days` | Closed conversations, with their threads, attachments and raw mail, are deleted this long after closing. |
+| `desk.retention.attachment_days` | Attachments are deleted this long after they arrive. |
+| `desk.retention.raw_mail_days` | The raw `.eml` copies are deleted this long after they arrive. |
+| `desk.retention.trash_days` | Deleted emails and conversations stay in Desk's trash this long. |
+| `desk.retention.mailbox_trash_days` | A deleted mailbox is purged this long after deletion. |
+
+When Den sets `smtp.host`, Desk sends through that server. If
+`smtp.password_set` is true, Desk fetches the password from
+`GET /api/v1/integrations/module-settings/secrets` when it sends, and does
+not store it. `NOTIFY_FROM`, when set, is still the From address; otherwise
+Desk uses `smtp.from` and `smtp.from_name`.
+
 ### Wiki: revision history
 
 | Key | Default | Meaning |

@@ -99,9 +99,15 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Values.existingSecret }}
-          {{- with .Values.backend.extraEnv }}
+          {{- if or .Values.google.enabled .Values.backend.extraEnv }}
           env:
+            {{- if .Values.google.enabled }}
+            - name: GOOGLE_WORKSPACE_CREDENTIALS_FILE
+              value: {{ printf "%s/%s" .Values.google.mountPath .Values.google.secretKey | quote }}
+            {{- end }}
+            {{- with .Values.backend.extraEnv }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: {{ $scheme }}
@@ -137,6 +143,11 @@ spec:
               mountPath: {{ .mountPath }}
             {{- end }}
             {{- end }}
+            {{- if .Values.google.enabled }}
+            - name: google-service-account
+              mountPath: {{ .Values.google.mountPath }}
+              readOnly: true
+            {{- end }}
             {{- if $tls }}
             {{- include "desk.tlsVolumeMounts" . | nindent 12 }}
             {{- end }}
@@ -161,6 +172,16 @@ spec:
           emptyDir: {}
           {{- end }}
         {{- end }}
+        {{- end }}
+        {{- if .Values.google.enabled }}
+        # Service account key with domain-wide delegation (google.existingSecret).
+        - name: google-service-account
+          secret:
+            secretName: {{ required "google.existingSecret is required when google.enabled" .Values.google.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.google.secretKey }}
+                path: {{ .Values.google.secretKey }}
         {{- end }}
         {{- if $tls }}
         {{- include "desk.tlsVolumes" (dict "root" . "secret" "desk-backend-tls") | nindent 8 }}
@@ -210,6 +231,18 @@ spec:
         - name: frontend
           image: {{ include "desk.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          {{- $csp := .Values.frontend.securityHeaders | default dict }}
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ $csp.keycloakOrigin | default "" | quote }}
+            - name: DEN_ORIGIN
+              value: {{ $csp.denOrigin | default "" | quote }}
+            - name: S3_ORIGIN
+              value: {{ $csp.s3Origin | default "" | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ $csp.extraConnectSrc | default "" | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ $csp.extraFrameSrc | default "about:srcdoc" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -259,6 +292,10 @@ spec:
             # nginx-unprivileged: nginx.pid and temporary files
             - name: tmp
               mountPath: /tmp
+            # The image entrypoint writes the filled CSP snippet here.
+            # readOnlyRootFilesystem would otherwise block that write.
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
       volumes:
         - name: nginx-conf
           configMap:
@@ -272,6 +309,8 @@ spec:
         - name: run
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: nginx-snippets
           emptyDir: {}
         {{- if $tls }}
         {{- include "desk.tlsVolumes" (dict "root" . "secret" "desk-frontend-tls") | nindent 8 }}

@@ -217,13 +217,17 @@ module_spa tasks-spa "Tasks SPA"
 spa_urls tasks-spa 3009 tasks.conservices.test
 
 DESK_ADMIN_GID=$(learn_group desk-admin | tail -n1)
-DESK_AGENT_GID=$(learn_group desk-agent | tail -n1)
+# Per-mailbox groups desk-<slug>-viewer|manager|delete for the dev mailbox
+# support@conservices.test (slug "support").
+learn_group desk-support-viewer >/dev/null
+DESK_SUPPORT_MANAGER_GID=$(learn_group desk-support-manager | tail -n1)
+learn_group desk-support-delete >/dev/null
 TASKS_ADMIN_GID=$(learn_group tasks-admin | tail -n1)
 TASKS_CREATOR_GID=$(learn_group tasks-creator | tail -n1)
-# DEV users: admin runs both; alice answers tickets and creates spaces.
+# DEV users: admin runs both; alice answers the support mailbox and creates spaces.
 add_user_to_group admin "$DESK_ADMIN_GID"
 add_user_to_group admin "$TASKS_ADMIN_GID"
-add_user_to_group alice "$DESK_AGENT_GID"
+add_user_to_group alice "$DESK_SUPPORT_MANAGER_GID"
 add_user_to_group alice "$TASKS_CREATOR_GID"
 
 module_spa wiki-spa "Wiki SPA"

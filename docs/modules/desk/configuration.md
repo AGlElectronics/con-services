@@ -13,7 +13,8 @@ of every problem.
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` (from `values.yaml` `config:`) | Every setting below that is not a secret. The chart adds `ACCESS_CONFIG_PATH`. |
-| Secret `desk-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `DESK_SECRET_KEY`, and `SMTP_PASSWORD` if the fallback SMTP server needs one. |
+| Secret `desk-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `DESK_SECRET_KEY`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`; `DESK_SECRET_KEY_PREVIOUS` while rotating the key; `SMTP_PASSWORD` if the module-wide SMTP server needs one. See [Secrets](../../operations/secrets.md). |
+| Secret `desk-google` (`google.existingSecret`, only with `google.enabled`) | The Google service account key, key `service-account.json`, mounted at `/etc/desk-google`. See [Google Workspace](google-workspace.md). |
 | ConfigMap `desk-access-config` | The access config file. |
 | Secrets `desk-backend-tls`, `desk-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -22,33 +23,69 @@ of every problem.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. |
+| `APP_ENV` | `production` | no | no | Unset is production. Only `development` allows `AUTH_MODE=dev`, `GOOGLE_FAKE` and the built-in `DESK_SECRET_KEY`. Set `development` explicitly in Docker Compose and tests. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address, for example `https://desk.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | no | Listen address inside the container. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3008` | no | no | Comma-separated browser origins. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
-| `AUTH_MODE` | `dev` | no | no | `oidc` for real sign-in; `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers (local only). |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` verifies a Bearer **access** token. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. Those headers are stripped, and not listed in CORS, outside that mode. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer URL. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `desk-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Normally `desk-spa`. |
+| `OIDC_AUDIENCE` | `desk-api` | no | no | Audience the access token must carry. ID tokens (`typ` `ID`) are refused. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the [access config file](#access-config-file). |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `desk-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); empty without Den. |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **yes** | 32 bytes, base64 (`openssl rand -base64 32`). Encrypts the Den credential Desk stores. One key per module. See [Secrets](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The previous key, only while rotating. Remove it after the second restart. |
+| `HR_SERVICE_TOKEN` | none | no | **yes** | Bearer HR sends to `GET /api/role-catalog`. At least 32 characters. Empty: only a signed-in staff member may read the catalog. Same value as on HR. |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
-| `DESK_SECRET_KEY` | a fixed development key, **only** with `APP_ENV=development` | **yes** outside development | **yes** | Encrypts the IMAP and SMTP passwords stored per mailbox (AES-GCM; any length, hashed to a 256-bit key). Generate with `openssl rand -hex 32`. **Changing it makes stored mailbox passwords unreadable**; they must then be entered again. |
-| `FETCH_INTERVAL` | `60s` | no | no | How often every mailbox is polled over IMAP. |
-| `SMTP_HOST` | none | no | no | Fallback SMTP server for mailboxes without their own. Empty: such mailboxes cannot send. |
-| `SMTP_PORT` | `587` | no | no | Fallback SMTP port. |
-| `SMTP_SECURITY` | `starttls` | no | no | `tls`, `starttls` or `none` (none only for test servers). Anything else stops the backend from starting. |
-| `SMTP_USERNAME` | none | no | no | Fallback SMTP login. |
-| `SMTP_PASSWORD` | none | no | **yes** | Fallback SMTP password. |
+| `DESK_SECRET_KEY` | a fixed development key, **only** when `APP_ENV=development` is set explicitly | **yes** outside development | **yes** | Encrypts the IMAP and SMTP passwords stored per mailbox (AES-256-GCM, each value bound to its mailbox). Outside development at least 32 characters and not the development key. Generate with `openssl rand -base64 32`. Rotatable: see [Rotate DESK_SECRET_KEY](operations.md#rotate-desk_secret_key). |
+| `DESK_SECRET_KEY_PREVIOUS` | none | no | **yes** | Comma-separated old keys that still open stored passwords, during a key rotation until `/server reencrypt` has run. Must not contain the current key. |
+| `FETCH_INTERVAL` | `60s` | no | no | How often every mailbox is polled. At least `5s`. A failing mailbox waits longer (doubling, at most an hour). |
+| `DESK_ALLOWED_MAIL_HOSTS` | none | no | no | Comma-separated host names or CIDRs of mail servers on private, loopback or link-local addresses that Desk may connect to (for example `mail.internal.example.org,10.20.30.0/24`). Everything else on such addresses is refused. See [IMAP and SMTP](imap.md#safety-rules). |
+| `SMTP_HOST` | none | no | no | Module-wide SMTP server: for IMAP mailboxes without their own, and for Desk's own emails (`NOTIFY_FROM`). Empty: such mailboxes cannot send. |
+| `SMTP_PORT` | `587` | no | no | Module-wide SMTP port (1–65535). |
+| `SMTP_SECURITY` | `starttls` | no | no | `tls` or `starttls`. `none` (plaintext) only with `APP_ENV=development`. Anything else stops the backend from starting. |
+| `SMTP_USERNAME` | none | no | no | Module-wide SMTP login. |
+| `SMTP_PASSWORD` | none | no | **yes** | Module-wide SMTP password. |
+| `NOTIFY_FROM` | none | no | no | Sender of Desk's own emails (purge reminders, notifications), for example `Desk <desk@example.org>`. Empty: Desk sends none. Sent through `SMTP_HOST` if set, else through the Google shared mailbox. |
+| `S3_ENDPOINT` | none | **yes** | no | S3 address for attachments and original emails, `http://` or `https://`. Platform: `https://s3.conservices-data.svc.cluster.local:9000`. |
+| `S3_BUCKET` | none | **yes** | no | The bucket, `desk-data` on the platform. Must exist outside development (in development Desk creates it). Add it to Den's `FILES_S3_BUCKETS`. |
+| `S3_ACCESS_KEY_ID` | none | **yes** | **yes** | S3 access key that can read and write the bucket. |
+| `S3_SECRET_ACCESS_KEY` | none | **yes** | **yes** | Its secret. |
+| `S3_REGION` | `us-east-1` | no | no | S3 region. |
+| `S3_USE_PATH_STYLE` | `true` | no | no | `true` for Garage, MinIO and SeaweedFS (`endpoint/bucket/key`); `false` for virtual-host style. |
+| `GOOGLE_WORKSPACE_DOMAIN` | none | no | no | Your Workspace domain, for example `example.org`. Set: Google mailboxes can be created. Empty: only IMAP/SMTP mailboxes. See [Google Workspace](google-workspace.md). |
+| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | with the domain, unless `GOOGLE_FAKE` | file is **secret** | Path of the service account key (JSON) with domain-wide delegation. The chart sets it with `google.enabled`. The old name `GOOGLE_SERVICE_ACCOUNT_FILE` is refused. |
+| `GOOGLE_WORKSPACE_ADMIN_EMAIL` | none | with the domain, unless `GOOGLE_FAKE` | no | Workspace admin Desk impersonates for Directory calls. Must be in the domain. The old name `GOOGLE_ADMIN_USER` is refused. |
+| `GOOGLE_SHARED_MAILBOX` | none | for group mailboxes | no | Licensed account group mailboxes deliver into, for example `desk@example.org`. Must be in the domain. |
+| `GOOGLE_LABEL` | `Desk` | no | no | Gmail label for handled mail; `<label>/Unrouted` for shared-account mail no mailbox claims. |
+| `GOOGLE_FAKE` | `false` | no | no | **Development only**: an in-memory Google Workspace, to try the Google flow without Google. Refused outside `APP_ENV=development`. |
 
 Per-mailbox IMAP and SMTP servers, logins and passwords are not environment
-variables; admins set them in the app under **Mailboxes**.
+variables; Desk admins set them in the app under **Mailboxes**.
+
+Example `.env` for a production Docker host (placeholders; real values
+come from your secret manager):
+
+```sh
+APP_ENV=production
+DATABASE_URL=postgres://desk:change-me@db.example.org:5432/desk?sslmode=verify-full
+DESK_SECRET_KEY=change-me-to-32-or-more-random-characters
+S3_ENDPOINT=https://fsn1.your-objectstorage.com
+S3_BUCKET=example-desk
+S3_REGION=fsn1
+S3_ACCESS_KEY_ID=change-me
+S3_SECRET_ACCESS_KEY=change-me
+NOTIFY_FROM=Desk <desk@example.org>
+SMTP_HOST=smtp.example.org
+SMTP_USERNAME=desk@example.org
+SMTP_PASSWORD=change-me
+```
 
 ## Internal TLS
 
@@ -186,6 +223,14 @@ installation-specific; the sign-in settings live in `/config.json` (above).
 | `DESK_VERSION` | `dev` | Version shown in the app. |
 | `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config. The Helm chart (and the Kustomize manifests) mount their own. |
 
+The frontend container, not the backend, reads one more variable when nginx
+starts. It is not in `.env`. Compose, the chart and the image default all
+set it.
+
+| Variable | Default | Required | What it does |
+| --- | --- | --- | --- |
+| `EXTRA_FRAME_SRC` | `about:srcdoc` | no | Extra `frame-src` token. `about:srcdoc` lets the sandboxed mail iframe render. It is the token itself, not an origin. Empty leaves the mail pane blank. |
+
 ```sh
 docker build -f infra/Dockerfile.frontend \
   --build-arg DESK_VERSION=1.0.0 \
@@ -199,13 +244,37 @@ ignore these.
 
 ## Access config file
 
+The file (`ACCESS_CONFIG_PATH`) binds Keycloak groups to Desk's
+module-wide roles. Mailbox access is **not** in it: every mailbox has its
+own three roles, granted by the groups `desk-<slug>-viewer`, `-manager` and
+`-delete`. See [Access](access.md).
+
 | Keycloak group | Role | Permissions |
 | --- | --- | --- |
-| `desk-admin` | `organization_admin` | `tickets.work`, `mailbox.manage`, `settings.manage` |
-| `desk-agent` | `agent` | `tickets.work` |
+| `desk-admin` | `organization_admin` (Desk admin) | `mailbox.manage`, `settings.manage` |
 
 | Permission | Allows |
 | --- | --- |
-| `tickets.work` | Read and work conversations in **every** mailbox (per-mailbox access is planned). |
-| `mailbox.manage` | Create, edit, test, fetch and delete mailboxes. |
+| `mailbox.manage` | Desk admin: every mailbox of the organization, mailbox setup, trash and purge, retention, audit log. |
 | `settings.manage` | The Den connection. |
+
+## Troubleshooting
+
+The backend checks every setting at start and stops with one line that
+lists every problem, for example:
+
+```text
+invalid config: DESK_SECRET_KEY must be at least 32 characters (openssl rand -base64 32); S3_ENDPOINT is required (attachments and raw mail are stored in S3)
+```
+
+| Message | Fix |
+| --- | --- |
+| `DESK_SECRET_KEY is required (the built-in key needs APP_ENV=development set explicitly)` | Set the key, or `APP_ENV=development` on a development machine. |
+| `DESK_SECRET_KEY is the built-in development key; set your own outside APP_ENV=development` | Generate a real key. |
+| `S3_ENDPOINT is required …`, `S3_BUCKET is required`, `S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required` | Set the `S3_*` settings; they are required since 1.0.0. |
+| `bucket "desk-data" does not exist; create it first` | Create the bucket (outside development Desk does not create it). |
+| `SMTP_SECURITY=none (plaintext) is only allowed with APP_ENV=development` | Use `tls` or `starttls`. |
+| `FETCH_INTERVAL must be at least 5s` | Raise it. |
+| `NOTIFY_FROM must be an email address …` | Use `Desk <desk@example.org>` or a plain address. |
+| `DESK_ALLOWED_MAIL_HOSTS: "…" is not a valid CIDR` | Fix the range, for example `10.20.30.0/24`. |
+| `GOOGLE_FAKE is only allowed with APP_ENV=development` | Remove `GOOGLE_FAKE`. |

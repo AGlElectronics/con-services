@@ -53,6 +53,8 @@ led by Den's MAJOR; see
   Telegram Bot API on the network-policy page. `scripts/smoke-learn.ps1`
   now also covers quizzes, media uploads, in-person sessions with QR
   check-in, and certificates.
+- Desk's development stack expects access tokens with audience `desk-api` (`OIDC_AUDIENCE` in Compose and the Desk chart). The Desk chart admits `den-backend` from `conservices-den` (portal to-dos and the role catalog), fills the shared nginx security-header snippet on the web app only, and names the Google settings `GOOGLE_WORKSPACE_CREDENTIALS_FILE` and `GOOGLE_WORKSPACE_ADMIN_EMAIL`. The Desk frontend sets `EXTRA_FRAME_SRC=about:srcdoc` (Compose and the chart) and serves `/silent-callback.html` with the shared frame-self headers.
+
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
@@ -341,6 +343,23 @@ led by Den's MAJOR; see
   and [a failing Keycloak name sync](docs/operations/disaster-recovery.md#the-keycloak-name-sync-fails).
 - `scripts/check-chart-versions.py --base` no longer asks for a version bump
   of a chart whose version was never released (no `<app>/vX.Y.Z` tag yet).
+- Desk in the shared stack: the bucket `desk-data-dev` in the Docker
+  Compose S3 server (and in the Den operator's `FILES_S3_BUCKETS`, so dev
+  backups include it), `desk-data` in the trial S3 server of
+  `deploy/kubernetes/base/data/s3.yaml`, and the Desk backend in Compose
+  now stores attachments in S3, may reach GreenMail and Mailpit
+  (`DESK_ALLOWED_MAIL_HOSTS`) and sends its own emails as
+  `Desk <desk@conservices.test>` through Mailpit (`NOTIFY_FROM`).
+- `scripts/smoke-desk.ps1`: an end-to-end check of Desk against the dev
+  stack (mailbox on GreenMail, incoming mail, reply, undo, note, access per
+  mailbox, trash), cleaning up after itself
+  ([Desk setup](docs/modules/desk/setup.md#option-4-development-on-docker)).
+- Desk documentation: Google Workspace and IMAP setup, access, user guide,
+  operations (trash, retention, rotating `DESK_SECRET_KEY`), and the full
+  API reference. The secrets inventory lists Desk's S3 key, the previous
+  secret key and the Google service account key (Secret `desk-google`, with
+  an ExternalSecret example); the network policy flow table lists Desk's
+  egress to Google APIs and to mail servers.
 
 ### Changed
 
@@ -543,6 +562,15 @@ led by Den's MAJOR; see
   needs it).
 - Module settings contract: Wiki's key `wiki.revision_retention_days`
   (revision history retention).
+- **BREAKING (dev realm):** the Keycloak group `desk-agent` is gone from the
+  dev realm (`infra/keycloak/realm-conservices.json`, `apply-mvp.sh`). Desk
+  grants access per mailbox with groups `desk-<slug>-viewer`, `-manager`
+  and `-delete`; the dev realm has them for the `support` mailbox, and
+  `alice` is in `desk-support-manager`. On an existing dev Keycloak, run
+  `infra/keycloak/apply-mvp.sh` again and delete the `desk-agent` group.
+- `DESK_SECRET_KEY` can be rotated now (with `DESK_SECRET_KEY_PREVIOUS` and
+  `/server reencrypt`); the secrets pages no longer say to treat it as
+  fixed ([Rotate DESK_SECRET_KEY](docs/modules/desk/operations.md#rotate-desk_secret_key)).
 
 ### Security
 

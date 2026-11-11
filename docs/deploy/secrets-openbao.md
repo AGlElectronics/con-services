@@ -70,7 +70,7 @@ conservices/                       KV version 2 mount (openbao.kvPath)
 │   ├── learn/service-token        generated  token (wiki, tasks alike)
 │   ├── stash/den-link             generated  key (every enabled module)
 │   ├── learn/feedback-pepper      generated  pepper
-│   └── desk/secret-key            generated  key
+│   └── desk/secret-key            generated  key (and previous while rotating)
 └── infra/
     ├── postgres/
     │   ├── superuser              generated  password
@@ -482,11 +482,11 @@ application runs without them and the feature stays off.
 | `conservices/modules/hr/directory-token` | `hr_directory_token` | `HR_DIRECTORY_TOKEN`: Wiki sends it when it asks HR for groups | generated | `hr`, `wiki` | HR enabled |
 | `conservices/modules/learn/feedback-pepper` | `pepper` | key of the hash that stops a person giving anonymous feedback on a course twice (`LEARN_FEEDBACK_PEPPER`); rotating it lets everyone give feedback once more | generated | `learn` | Learn enabled |
 | `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY`: 43 letters and digits, which is 32 bytes as unpadded base64. Encrypts the Den credential that module stores. One per module, never shared. Lost or replaced without a rotation: pair the module again | generated | that module | that module enabled |
-| `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
+| `conservices/modules/desk/secret-key` | `key`, optional `previous` | encrypts the mailbox passwords Desk stores. **Never delete it**; to change it, follow [Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key) | generated | `desk` | Desk enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |
 | `conservices/modules/den/s3` | `access_key`, `secret_key` | S3 access key ID and secret key, read and write on bucket `<prefix>-conservices-den` only | you | `den` | always |
-| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks`, `desk` | you | that module | that module enabled |
 | `conservices/modules/stash/telegram` | `token` | Lost & Found bot token from [@BotFather](https://t.me/BotFather), like `123456789:AA…`. Do not share the bot with another module | you, optional | none | Stash enabled. Missing: Telegram stays off |
 | `conservices/modules/learn/telegram` | `token` | Learn's reminder bot token from BotFather. Do not share the bot with another module | you, optional | none | Learn enabled. Missing: Telegram stays off |
 | `conservices/modules/stash/smtp` | `password` | Password of the SMTP server in Stash's settings | you, optional | none | Stash enabled. Missing: mail is sent without a login |
@@ -499,7 +499,7 @@ application runs without them and the feature stays off.
 | `conservices/infra/ghcr` | `username`, `token` | GitHub user and a classic token (`ghp_...`) with only `read:packages` | you | `den` and every module | `images.pullSecret.enabled` |
 
 With every module enabled that is 29 generated entries (31 values: the
-Keycloak client entry holds three) and 16 entries you enter (17 with
+Keycloak client entry holds three) and 17 entries you enter (18 with
 `images.pullSecret.enabled`), each S3 entry with its own key. The Telegram,
 Stash SMTP and Den SMTP entries are optional. The password at
 `conservices/modules/den/smtp` is extra: leaving it unset does not Degrade
@@ -663,7 +663,9 @@ Then force-sync the ExternalSecrets that read it and restart the
 Deployments, as above. This works for the database passwords
 (CloudNativePG changes them in PostgreSQL), the Den operator token and the
 service tokens. **Never** do it for `modules/desk/secret-key` (it encrypts
-stored mailbox passwords), for `modules/<module>/den-link` alone (the
+stored mailbox passwords; change it as in
+[Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key)),
+for `modules/<module>/den-link` alone (the
 module could no longer read its Den credential and must be paired again;
 use the [two-step rotation](../operations/secrets.md#den-link-encryption-key))
 or the Keycloak entries (Keycloak keeps its own

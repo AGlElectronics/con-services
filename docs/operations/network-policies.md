@@ -126,6 +126,9 @@ belong to which.
 | `stash-backend` | your SMTP server | 587, 465 | Helm (`networkPolicy.smtp`, default off); Kustomize: add the host to `stash-backend-external` | Overdue-return emails. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 | `wiki-backend` | `keycloak` | 8443 | Helm, opt-in (`networkPolicy.keycloakAdmin.enabled`; merged with the OIDC rule when it targets the same pods) | Keycloak admin API, read-only: the group picker lists realm groups when Wiki is not paired with HR. Only with `IDP_DIRECTORY_URL` set. |
+| `desk-backend` | Google APIs: `gmail.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `www.googleapis.com` | 443 | Helm, only with `networkPolicy.google.enabled` | [Google Workspace mailboxes](../modules/desk/google-workspace.md): reading and labelling mail, sending replies, creating users and groups. Cilium: the `CiliumNetworkPolicy` `desk-backend-google` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.google.cidrs`. Checked against public CAs. |
+| `den-backend` (`conservices-den`) | `desk-backend` | 8080 | Helm (`networkPolicy.allowFromNamespaces` includes `conservices-den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with Desk's pairing credential. |
+| `desk-backend` | mail servers on the internet | 993, 143 (IMAP), 465, 587 (SMTP) | Helm (`networkPolicy.extraEgress`, on by default) | [IMAP and SMTP mailboxes](../modules/desk/imap.md) and the notification mail server (`SMTP_HOST`). Narrow the `ipBlock` to your provider where you can; with only Google mailboxes and no `SMTP_HOST`, set `extraEgress: []`. Desk itself refuses private and internal addresses unless they are listed in `DESK_ALLOWED_MAIL_HOSTS`. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
 backends on 8443, CloudNativePG admitting them on 5432, an in-cluster S3
@@ -157,9 +160,9 @@ namespaces start from a default deny with only DNS allowed.
 
 Not listed, so blocked: one module calling another (except the documented
 integrations below), the operator being reached by anything but
-`den-backend`, any pod reaching the internet (except external S3 and HR's
-Google Workspace connector when you allow them), and the gateway reaching
-backends directly.
+`den-backend`, any pod reaching the internet (except external S3, HR's
+Google Workspace connector, and Desk's mail servers and Google APIs when
+you allow them), and the gateway reaching backends directly.
 
 Every flow in this table except DNS is encrypted with TLS and checked against
 the internal certificate authority (external S3: against public CAs); see
@@ -184,8 +187,9 @@ namespace and an *ingress* rule in the target's namespace.
 | Wiki | HR | `GET /api/internal/directory/groups` (group picker, `HR_DIRECTORY_TOKEN`) | Egress in the Wiki chart (`networkPolicy.hr`: namespace `conservices-hr`, HR's backend, port 8080). Ingress in the HR chart (`networkPolicy.allowFromNamespaces` includes `conservices-wiki`). HR serves the directory when `HR_DIRECTORY_TOKEN` is set; the contract is on [Wiki configuration](../modules/wiki/configuration.md#group-picker). |
 | HR | Tasks | `/api/internal/departments` (department hook) | Done in the HR and Tasks charts. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash in Kustomize and Learn's chart (`networkPolicy.den`: namespace `conservices-den`, pod `den-backend`, backend port 8080) are done; the other modules' manifests and charts must admit `den-backend` from `conservices-den`. |
+| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash (Kustomize) and the Learn and Desk charts admit `den-backend` from `conservices-den`; the other modules' charts must do the same. |
 | Den backend | Learn | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Ingress in the Learn chart (`networkPolicy.den`). Egress from `conservices-den` is Den's rule to every module backend on 8080 (Helm: `networkPolicy.allowToModules`). |
+| Den backend | Desk | `GET /api/role-catalog`, `GET /api/portal/todos` | Desk's chart admits `den-backend` from `conservices-den` on 8080. Den's egress is in Den's chart. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Already allowed on both sides, port 8080: HR chart egress `networkPolicy.den` (on by default) and Den ingress from every module backend (Helm `networkPolicy.allowFromModules`, Kustomize `den-backend`). |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 | Wiki | Keycloak admin API | listing realm groups for the group picker (standalone, `IDP_DIRECTORY_URL`) | Egress in the Wiki chart (`networkPolicy.keycloakAdmin.enabled`, off by default); the ingress rule on Keycloak is the platform's. |

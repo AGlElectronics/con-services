@@ -25,10 +25,24 @@ image:
     pullPolicy: IfNotPresent
 
 # Name of an existing Secret (created by your secret manager, for example an
-# ExternalSecret) with the keys DATABASE_URL and DESK_SECRET_KEY, plus
-# SMTP_PASSWORD if the fallback SMTP server needs one. This chart never
-# creates Secrets.
+# ExternalSecret) with the keys DATABASE_URL, DESK_SECRET_KEY,
+# S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY; optionally
+# DESK_SECRET_KEY_PREVIOUS (while rotating the key) and SMTP_PASSWORD (if
+# the module-wide SMTP server needs one). This chart never creates Secrets.
+# Docs: https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: desk-secrets
+
+# Google Workspace connector. Docs:
+# https://aglelectronics.github.io/con-services/modules/desk/google-workspace/
+# enabled: true mounts the service account key from existingSecret (key
+# secretKey) at mountPath and sets GOOGLE_WORKSPACE_CREDENTIALS_FILE. Also set
+# GOOGLE_WORKSPACE_DOMAIN, GOOGLE_WORKSPACE_ADMIN_EMAIL and (for group mailboxes)
+# GOOGLE_SHARED_MAILBOX in config, and networkPolicy.google.enabled.
+google:
+  enabled: false
+  existingSecret: desk-google
+  secretKey: service-account.json
+  mountPath: /etc/desk-google
 
 # Desk's access config (roles, permissions, OIDC group bindings).
 #   kubectl create configmap desk-access-config -n conservices-desk \
@@ -48,19 +62,38 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: desk-spa
-  OIDC_AUDIENCE: desk-spa
+  OIDC_AUDIENCE: desk-api
   CORS_ALLOWED_ORIGINS: https://desk.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
   TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
-  # How often every mailbox is polled over IMAP.
+  # How often every mailbox is polled (at least 5s).
   FETCH_INTERVAL: 60s
-  # Fallback outbound mail for mailboxes without their own SMTP server.
-  # Empty SMTP_HOST: such mailboxes cannot send.
+  # Mail hosts (names or CIDRs) on private addresses Desk may connect to,
+  # comma-separated. Empty: only public addresses.
+  DESK_ALLOWED_MAIL_HOSTS: ""
+  # Module-wide SMTP: for IMAP mailboxes without their own SMTP server and
+  # for Desk's own emails when there is no Google Workspace.
+  # Empty SMTP_HOST: such mailboxes cannot send. SMTP_SECURITY: tls or
+  # starttls (none is refused outside APP_ENV=development).
   SMTP_HOST: ""
   SMTP_PORT: "587"
   SMTP_SECURITY: starttls
   SMTP_USERNAME: ""
+  # From address of reminders and notifications, e.g. "Desk <desk@example.org>".
+  # Empty: Desk sends no emails of its own.
+  NOTIFY_FROM: ""
+  # Attachments and original messages (required). The bucket must exist;
+  # add it to Den's FILES_S3_BUCKETS so it is backed up.
+  S3_ENDPOINT: https://s3.conservices-data.svc.cluster.local:9000
+  S3_BUCKET: desk-data
+  S3_REGION: us-east-1
+  S3_USE_PATH_STYLE: "true"
+  # Google Workspace connector (see google above). Empty domain: off.
+  GOOGLE_WORKSPACE_DOMAIN: ""
+  GOOGLE_WORKSPACE_ADMIN_EMAIL: ""
+  GOOGLE_SHARED_MAILBOX: ""
+  GOOGLE_LABEL: Desk
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
 
 # Den pairing. Docs: https://aglelectronics.github.io/con-services/concepts/pairing/#required-or-standalone
@@ -103,12 +136,12 @@ internalTLS:
   ingressNginxAnnotations: false
 
 backend:
-  # MUST stay 1. The IMAP fetcher and the reply sender run inside the
-  # backend and assume no other pod polls the same mailboxes or sends the
-  # same queued replies. The chart refuses any other value.
+  # MUST stay 1. The mail fetcher, the reply sender and the daily jobs run
+  # inside the backend and assume no other pod polls the same mailboxes.
+  # The chart refuses any other value.
   replicas: 1
   singleReplica: true
-  singleReplicaReason: "the IMAP fetcher and reply sender assume one process (desk docs/plan.md)"
+  singleReplicaReason: "the mail fetcher, reply sender and daily jobs assume one process (desk docs/adr/0009)"
   port: 8080
   terminationGracePeriodSeconds: 30
   resources:
@@ -144,6 +177,16 @@ frontend:
   #   productName    "Desk" (shown until the brand loads)
   # Docs: https://aglelectronics.github.io/con-services/modules/desk/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may call besides the app (scheme + host, no path).
+  # The frontend container fills them into the CSP when it starts. Empty
+  # leaves that source out. extraFrameSrc is not an origin: it is the
+  # frame-src token for the sandboxed mail iframe. Leave about:srcdoc.
+  securityHeaders:
+    keycloakOrigin: ""
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
+    extraFrameSrc: "about:srcdoc"
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -225,8 +268,8 @@ networkPolicy:
   # conservices-pg and Garage (S3 API through its TLS sidecar). For the Kustomize
   # local-trial postgres/s3 use podSelector app.kubernetes.io/name:
   # postgres / s3 and s3.port 9000. For managed services set
-  # enabled: false and add ipBlock rules to extraEgress. Desk stores
-  # everything (including attachments) in PostgreSQL, so s3 is off.
+  # enabled: false and add ipBlock rules to extraEgress. Desk keeps
+  # attachments and original messages in S3 (bucket config.S3_BUCKET).
   data:
     enabled: true
     namespace: conservices-data
@@ -235,7 +278,7 @@ networkPolicy:
         cnpg.io/cluster: conservices-pg
       port: 5432
     s3:
-      enabled: false
+      enabled: true
       podSelector:
         app.kubernetes.io/name: garage
       port: 3900
@@ -252,6 +295,8 @@ networkPolicy:
   # HR reads GET /api/role-catalog.
   allowFromNamespaces:
     - conservices-hr
+    # Den's backend reads GET /api/role-catalog and GET /api/portal/todos.
+    - conservices-den
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false
@@ -259,9 +304,24 @@ networkPolicy:
     podSelector:
       app: keycloak
     port: 8443
-  # Desk must reach your mail servers: IMAP (993, or 143 with STARTTLS) for
-  # every mailbox and SMTP (465 or 587). Nothing works without these rules.
-  # Narrow the CIDR to your mail provider's addresses where you can.
+  # Google's APIs for the Google Workspace connector (HTTPS): Gmail API,
+  # Admin SDK, Groups Settings and the token endpoint. fqdns renders a
+  # CiliumNetworkPolicy (toFQDNs) when networkPolicy.gateway.cilium is true;
+  # on other CNIs list cidrs (Google publishes no small range; 0.0.0.0/0 on
+  # 443 is the usual fallback).
+  google:
+    enabled: false
+    fqdns:
+      - gmail.googleapis.com
+      - admin.googleapis.com
+      - oauth2.googleapis.com
+      - www.googleapis.com
+    cidrs: []
+    port: 443
+  # IMAP/SMTP mailboxes: Desk must reach their mail servers, IMAP (993, or
+  # 143 with STARTTLS) and SMTP (465 or 587), plus the module-wide SMTP
+  # server. Narrow the CIDR to your mail provider's addresses where you can;
+  # with only Google mailboxes and no SMTP_HOST, set extraEgress: [].
   extraEgress:
     - to: [{ ipBlock: { cidr: 0.0.0.0/0 } }]
       ports:
