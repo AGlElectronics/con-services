@@ -52,6 +52,26 @@ func TestFromEnv(t *testing.T) {
 	if (Config{AuthMode: AuthDev}).DevAuth() {
 		t.Error("dev mode without development must never be DevAuth")
 	}
+	if !(Config{AuthMode: AuthDev, AppEnv: " Development "}).DevAuth() {
+		t.Error("a hand-built Config must normalise APP_ENV too")
+	}
+}
+
+// The same cases are in denlink's TestNormalizeAppEnv; keep them identical.
+func TestNormalizeAppEnv(t *testing.T) {
+	for in, want := range map[string]string{
+		"":               "production",
+		"   ":            "production",
+		"development":    "development",
+		" Development\n": "development",
+		"DEVELOPMENT":    "development",
+		"Production":     "production",
+		" staging ":      "staging",
+	} {
+		if got := NormalizeAppEnv(in); got != want {
+			t.Errorf("NormalizeAppEnv(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 func TestAllowedHeaders(t *testing.T) {

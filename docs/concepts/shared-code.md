@@ -78,7 +78,7 @@ handlers and `RequirePaired`), plus:
 
 | Addition | Use |
 | --- | --- |
-| `denlink.FromEnv(slug, version, os.Getenv) (Config, error)` | Read every setting; fails without `DEN_LINK_ENCRYPTION_KEY` outside `APP_ENV=development`. |
+| `denlink.FromEnv(slug, version, os.Getenv) (Config, error)` | Read every setting; fails without `DEN_LINK_ENCRYPTION_KEY` outside `APP_ENV=development`. `Config.AppEnv` is normalised (`denlink.NormalizeAppEnv`): trimmed, lower-cased, `production` when unset. |
 | `denlink.Open(pool, cfg, log) (*Client, error)` | `New` that returns the configuration error, so the backend refuses to start. `New` still works; then `Restore` and `Pair` return the error. |
 | `client.Revoked() bool`, `Status.Revoked`, `State.Revoked` | Den rejected the credential; an admin must pair again. |
 | `denlink.ErrRevoked` | What `Sync` and the preferences calls return after a `401` from Den. |
@@ -92,6 +92,7 @@ What changes in the module's API is on [Pairing](pairing.md#the-den-connection-a
 | Function | Use |
 | --- | --- |
 | `authbase.FromEnv(os.Getenv) (Config, error)` | `AUTH_MODE` (default `oidc`) and `APP_ENV` (default `production`); fails for `AUTH_MODE=dev` unless `APP_ENV=development`. |
+| `authbase.NormalizeAppEnv(s)` | How `APP_ENV` is read: trimmed, lower-cased, empty is `production`. `denlink.NormalizeAppEnv` is an identical copy. |
 | `cfg.AllowedHeaders(extra...)`, `cfg.CORS(CORSOptions)` | CORS: `X-Dev-User` and `X-Dev-Groups` are allowed only in dev mode. |
 | `cfg.StripDevHeaders(next)` | Middleware that deletes the dev headers from every request outside dev mode. |
 | `authbase.DecodeJSON(w, r, &dst, DecodeOptions{MaxBytes, DisallowUnknownFields, RequireJSONContentType})` | Decode a request body with `http.MaxBytesReader` (default 1 MiB). Errors are `413 request_too_large`, `415 unsupported_media_type` or `400 bad_request`; write them with `authbase.WriteDecodeError`. |
@@ -134,7 +135,7 @@ lists the same rows on its own configuration page.
 
 | Variable | Default | Required | Package | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `production` | no | `authbase`, `denlink` | Only `development` relaxes the rules: allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to the development hosts. Anything else counts as production. |
+| `APP_ENV` | `production` | no | `authbase`, `denlink` | Only `development` relaxes the rules: allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to the development hosts. Anything else counts as production. Both packages trim spaces and ignore case the same way (`NormalizeAppEnv`), so ` Development ` is `development`. |
 | `AUTH_MODE` | `oidc` | no | `authbase` | `oidc` verifies Keycloak tokens. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. |
 | `OIDC_GROUPS_CLAIM` | `groups` | no | `groupmatch` | The token claim that holds the person's groups. `roles` is never read in addition. A dotted name such as `realm_access.roles` is followed into nested objects when no claim has that exact name. |
 | `OIDC_GROUP_MATCH` | `full` | no | `groupmatch` | `full`: the whole group path must match. `last`: only the last path segment is compared. |

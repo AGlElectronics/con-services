@@ -144,6 +144,14 @@ led by Den's MAJOR; see
   volunteers with self-service data entry, and an `.xlsx`/`.csv`
   importer.
 
+### Changed
+
+- Shared Go code: `authbase` and `denlink` read `APP_ENV` the same way
+  (trimmed, any case, `production` when unset), through the new
+  `NormalizeAppEnv` in each package. `APP_ENV=Development` now counts as
+  development in `denlink` too, and `denlink.FromEnv` reports an unset
+  `APP_ENV` as `production` instead of an empty value.
+
 ### Security
 
 - Default-deny NetworkPolicies in every namespace with an explicit allow
