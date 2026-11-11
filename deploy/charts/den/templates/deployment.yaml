@@ -27,8 +27,8 @@ automountServiceAccountToken: false
 ---
 # Den backend. Migrations run in the "migrate" initContainer (/den-migrate
 # from the same image), so every rollout applies them before the new API
-# process starts. One replica with Recreate: backup download links live in
-# the process's memory, and two migrate containers must never run at once.
+# process starts; concurrent migrate containers wait on a Postgres advisory
+# lock. Stateless, so it scales and rolls.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,7 +41,10 @@ spec:
   replicas: {{ .Values.backend.replicas }}
   revisionHistoryLimit: 5
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: den

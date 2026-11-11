@@ -6,7 +6,8 @@
 #   den-frontend                 -> den-backend
 #   module backends              -> den-backend   (pairing, bundle, preferences)
 #   den-backend                  -> den-operator, PostgreSQL, S3, Keycloak
-#                                   (OIDC and admin API)
+#                                   (OIDC and admin API), module backends
+#                                   (role catalog, portal to-dos)
 #   den-operator                 -> PostgreSQL, S3
 #   everything                   -> DNS
 apiVersion: networking.k8s.io/v1
@@ -117,6 +118,19 @@ spec:
     # Keycloak admin API: same pods and port as the OIDC rule above.
     {{- end }}
     {{- end }}
+    {{- end }}
+    {{- if ($np.allowToModules | default dict).enabled }}
+    # Module backends: role catalog and portal to-dos. Each module's
+    # namespace also needs an ingress rule admitting den-backend.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: {{ $np.allowToModules.port | default 8080 }} }
     {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
