@@ -26,6 +26,9 @@ configMapGenerator:
       - KC_DB=postgres
       - KC_DB_URL=jdbc:postgresql://postgres.conservices-data.svc.cluster.local:5432/keycloak?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
       - KC_DB_USERNAME=keycloak
+      # Den's public address: the conservices login theme fetches the brand
+      # from there in the browser (no cluster connection is needed).
+      - DEN_PUBLIC_URL=https://den.conservices.test
 
 # Secret "keycloak-secrets" (KC_DB_PASSWORD, KC_BOOTSTRAP_ADMIN_USERNAME,
 # KC_BOOTSTRAP_ADMIN_PASSWORD) comes from the overlay: plain Secrets in

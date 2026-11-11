@@ -2,6 +2,7 @@
 #   Cilium gateway     -> stash-frontend:8080  (CiliumNetworkPolicy at the end)
 #   stash-frontend     -> stash-backend:8080
 #   hr-backend         -> stash-backend:8080   (HR reads GET /api/role-catalog)
+#   den-backend        -> stash-backend:8080   (role catalog, portal to-dos)
 #   stash-backend      -> postgres:5432, s3:9000, den-backend:8080,
 #                         keycloak:8443 (OIDC: auth.<domain> resolves to
 #                         keycloak-public in conservices-identity)
@@ -84,6 +85,14 @@ spec:
               kubernetes.io/metadata.name: conservices-hr
           podSelector:
             matchLabels:
+              app.kubernetes.io/component: backend
+        # Den reads GET /api/role-catalog and GET /api/portal/todos.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: conservices-den
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: den
               app.kubernetes.io/component: backend
       ports:
         - protocol: TCP
