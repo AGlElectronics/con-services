@@ -58,8 +58,12 @@ Procedures for larger failures (lost server, lost cluster, lost key) are on
 
 The operator has no Ingress and no user interface. Only the Den backend
 calls it, inside the namespace `conservices-den`, with a shared token
-(`OPERATOR_TOKEN`, set on both). Admins use it through Den admin →
-**Modules** and **Backups**.
+(`OPERATOR_TOKEN`, set on both). People use it through Den admin →
+**Modules** and **Backups**. Running, scheduling and downloading backups and
+deleting a module's database need Den's **ops** role (Keycloak group
+`den-ops`, set with `DEN_OPS_GROUPS`); admins without it see the backup
+status and the database list only. Every backup started by hand, schedule
+change and download is written to Den's audit log.
 
 Because the operator holds the superuser login, treat it like the database
 itself:
@@ -117,6 +121,11 @@ operator's server.
 - `postgres`, `template0` and `template1`;
 - everything in `PROTECTED_DATABASES` (default `keycloak,den`).
 
+Den also only ever drops a database **it created** itself (with *Create a
+database for it*): a module whose database existed before, or was created
+by someone else, keeps it on removal, even if the database carries the
+module's name.
+
 ## Adding and removing modules
 
 **Adding.** In Den admin → Modules → New module, tick **Create a database for
@@ -128,8 +137,8 @@ connection URL (with the password) **once**: copy it into the module's
 **Removing.** Remove asks twice:
 
 1. **Choose what happens to the data.**
-   - **Delete its database too** (the default when Den manages a database for
-     the module):
+   - **Delete its database too** (offered, and preselected, only when Den
+     created the module's database and you have the ops role):
      1. The operator first takes a backup of that database, stored under
         `pre-drop/<database>/` in the backup bucket.
      2. If that backup fails, nothing is deleted.

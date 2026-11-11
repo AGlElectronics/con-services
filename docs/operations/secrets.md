@@ -106,8 +106,11 @@ gives you:
 | `KC_BOOTSTRAP_ADMIN_USERNAME`, `KC_BOOTSTRAP_ADMIN_PASSWORD` | `keycloak-secrets` | `conservices-identity` | Keycloak | Temporary admin of the master realm, used on first start. Replace it with a real admin account, then remove it. |
 | `DATABASE_URL` | `den-secrets` | `conservices-den` | Den backend and migrate | Contains Den's database password. |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `den-secrets` | `conservices-den` | Den backend | Keys for Den's bucket only. |
-| `KEYCLOAK_CLIENT_SECRET` | `den-secrets` | `conservices-den` | Den backend | Secret of the `den-keycloak` client in Keycloak (can change realm settings). |
+| `KEYCLOAK_CLIENT_SECRET` | `den-secrets` | `conservices-den` | Den backend | Optional. Secret of the `den-keycloak` client in Keycloak (`manage-realm`: can change every realm setting). Only needed for the realm display-name sync; the sign-in page is branded without it. Leave it out to give Den no access to the realm. |
 | `OPERATOR_TOKEN` | `den-secrets` **and** `den-operator-secrets` | `conservices-den` | Den backend, operator | Shared; must be equal in both. |
+| `DEN_CREDENTIAL_KEY` | `den-secrets` | `conservices-den` | Den backend | Optional; at least 32 characters (`openssl rand -hex 32`). Derives the modules' pairing credentials, so whoever has it **and** Den's database can compute every module credential. Needed for portal to-dos. Rotate: set a new value, restart Den, then pair every module again (credentials made with the old key stop working for to-dos; modules keep reaching Den until re-paired). Dev value in the example overlay: `dev-only-den-credential-key-change-me`. |
+| SMTP password (Module settings) | none: column `module_settings.secrets` in Den's database | `conservices-den` (database) | Den backend, paired modules (sent in the integration bundle) | Entered by an admin on Den → Module settings; never shown again and never written to the audit log. It is in Den's database backups (encrypted with age). Rotate: change it at your mail provider, type the new one on the Module settings page; modules pick it up within a minute. |
+| Module credentials | none: their SHA-256 hashes are in Den's `module_credentials` table; each module keeps its own in its database | module databases | paired modules | Created by pairing. Revoke in Den → Modules → Credentials; rotate by pairing again (older credentials are revoked at once). See [A pairing URL or module credential leaked](disaster-recovery.md#a-pairing-url-or-module-credential-leaked). |
 | `PG_ADMIN_URL` | `den-operator-secrets` | `conservices-den` | Den operator | **PostgreSQL superuser login.** The most powerful secret in the suite. |
 | `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | `den-operator-secrets` | `conservices-den` | Den operator | Write access to the backup bucket, ideally at another provider. |
 | `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY` | `den-operator-secrets` | `conservices-den` | Den operator | Read access to every module bucket in `FILES_S3_BUCKETS`. |
@@ -137,6 +140,7 @@ Entries marked *rotatable* can be rotated by deleting them
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | `BACKUP_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, backup bucket only |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | `FILES_S3_*` in `den-operator-secrets` | Den operator | your S3 provider, read-only on the module buckets |
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
+| `conservices/modules/den/credential-key` | `key` | `DEN_CREDENTIAL_KEY` in `den-secrets` | Den backend | generated (64 hex characters); rotating means pairing every module again |
 | `conservices/modules/<module>/service-token` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` (user `temp-admin`) | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
@@ -309,6 +313,7 @@ that come from a provider. Both only for what `cluster.yaml` enables.
 | `conservices/infra/postgres/superuser` | `password` | `conservices-pg-superuser` (`conservices-data`); `PG_ADMIN_URL` in `den-operator-secrets` (`conservices-den`) | generated | delete the entry ([how](../deploy/secrets-openbao.md#rotate-a-generated-value)); CloudNativePG changes the password, restart `den-operator` |
 | `conservices/infra/postgres/roles/<role>` (`den`, `keycloak`, `stash`, `hr`, `events`, `finance`, `learn`, `wiki`, `desk`, `tasks`) | `password` | `conservices-pg-role-<role>` (`conservices-data`); the `DATABASE_URL` of the module; `keycloak-db` (`conservices-identity`) | generated | delete the entry; then restart the module |
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | delete the entry; restart both Den deployments |
+| `conservices/modules/den/credential-key` | `key` | `DEN_CREDENTIAL_KEY` in `den-secrets` | generated | delete the entry; restart `den-backend`, then pair every module again |
 | `conservices/modules/learn/service-token`, `.../wiki/service-token`, `.../tasks/service-token` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | delete the entry; restart HR and the module |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
@@ -371,7 +376,8 @@ ordinary Kubernetes Secrets, which the pods use unchanged.
     vault kv put secret/conservices/den/backend \
       DATABASE_URL='postgres://den:change-me@db.example.org:5432/den?sslmode=require' \
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
-      KEYCLOAK_CLIENT_SECRET=change-me OPERATOR_TOKEN=change-me
+      KEYCLOAK_CLIENT_SECRET=change-me OPERATOR_TOKEN=change-me \
+      DEN_CREDENTIAL_KEY="$(openssl rand -hex 32)"
     ```
 
     The [GitOps reference deployment](../deploy/secrets-openbao.md) mounts
@@ -699,11 +705,13 @@ On PowerShell, replace `$(date +%s)` with
 | Database password of a module or Den | `ALTER ROLE <name> PASSWORD '<new>'` as superuser, update `DATABASE_URL`, restart the module. | A restart. Existing connections keep working until then. |
 | `PG_ADMIN_URL` (superuser) | `ALTER ROLE postgres PASSWORD '<new>'`, update the secret, restart `den-operator`. | Backups and module database changes pause during the restart. |
 | `OPERATOR_TOKEN` | Change it in **both** `den-secrets` and `den-operator-secrets`, restart both. | Backups page shows an error until both restarted. |
-| `KEYCLOAK_CLIENT_SECRET` | Regenerate in Keycloak (Clients → `den-keycloak` → Credentials), update, restart Den. | Login branding sync fails until restarted; sign-in is not affected. |
+| `KEYCLOAK_CLIENT_SECRET` | Regenerate in Keycloak (Clients → `den-keycloak` → Credentials), update, restart Den. | The realm name sync fails until restarted; the sign-in page and sign-in are not affected. |
+| `DEN_CREDENTIAL_KEY` | Set a new value (`openssl rand -hex 32`), restart Den, then pair every module again. | Portal to-dos are empty per module until it is paired again; modules keep reaching Den. |
+| SMTP password (Module settings) | Change it at the mail provider, then type the new one on Den → Module settings and save. | Modules send with the old one until their next bundle sync (a minute). |
 | S3 keys | Create a new key, update the secret, restart, then delete the old key. | A restart. |
 | Service tokens (`WIKI_SERVICE_TOKEN`, …) | Change on both sides at the same time, restart both. | Calls between the two fail until both restarted. |
 | Pairing token | Nothing to rotate: single use, expires after 15 minutes. | |
-| Module credential | Pair the module again (Den → Modules → Pair, paste in the module). This adds a new credential, but **Den cannot yet revoke the old one** on its own; only removing the module from Den revokes all of its credentials. | None. |
+| Module credential | Pair the module again (Den → Modules → Pair, paste in the module). The new credential replaces every older one at once. To cut a module off first, revoke in Den → Modules → Credentials. | None when pairing again; after revoking, the module is disconnected until it is paired. |
 | `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
 | `DEN_LINK_ENCRYPTION_KEY` | Old value into `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, new value into `DEN_LINK_ENCRYPTION_KEY`, restart; after a minute remove the previous key and restart again. [Details](#den-link-encryption-key). | Two restarts. |
 | Google Workspace service-account key | New key in the Google Cloud console, replace the file in the secret manager, restart, delete the old key. [Details](#google-workspace-service-account-key). | A restart. |

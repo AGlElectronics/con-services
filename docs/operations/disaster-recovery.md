@@ -215,9 +215,111 @@ most dangerous first:
 | `PG_ADMIN_URL` (superuser) | Immediately | New superuser password, restart the operator; check `pg_stat_activity` for unknown connections. |
 | Age secret key | Immediately | [New key](#the-encryption-key), then delete old backups. |
 | `KEYCLOAK_CLIENT_SECRET` of `den-keycloak`, `hr-provisioner`, `learn-provisioner` | Immediately | Regenerate in Keycloak; these clients can change realm settings or users. |
+| `DEN_CREDENTIAL_KEY` | Same day | New key, restart Den, pair every module again; together with Den's database it gives every module credential. |
 | A module's `DATABASE_URL` or S3 keys | Same day | New password or key, restart the module. |
-| A module credential | Same day | Remove the module in Den (keep its data), add and pair it again. Den cannot revoke a single credential yet. |
-| A pairing URL | Within 15 minutes | Nothing if it was already used by your module; otherwise remove and re-add the module. |
+| A module credential | Same day | Revoke it and pair the module again: [runbook below](#a-pairing-url-or-module-credential-leaked). |
+| A pairing URL | Within 15 minutes | [Runbook below](#a-pairing-url-or-module-credential-leaked). |
+
+## A pairing URL or module credential leaked
+
+A **pairing URL** works once and for 15 minutes; whoever redeems it first
+gets a credential for that module. A **module credential** is what a paired
+module uses for every call to Den: with it, someone can read Den's brand,
+the organisation and module settings (including the SMTP password), and the
+theme of the module's users. Neither gives access to Den's admin console or
+to any module's data.
+
+You need the **admin** role in Den. Pairing is always done by hand; nothing
+in Den re-pairs a module for you.
+
+1. **Find the module** in Den → **Modules** and click **Credentials**. Note
+   the active credential's *Last used* time.
+
+2. **Look at the audit log** (Den → **Audit log**, filter *Pairing* and the
+   module's id from the Credentials panel, or):
+
+    ```sh
+    curl -s -H "Authorization: Bearer $TOKEN" \
+      "$DEN/api/v1/audit-events?entity_id=<module id>&action=pairing.*"
+    ```
+
+    Each `pairing.token.create` shows who created a URL; each
+    `pairing.token.redeem` shows when one was used. A redeem you cannot
+    explain (another time, or a second one right after yours) means someone
+    else holds a credential.
+
+3. **Revoke every credential of the module** (**Revoke all credentials**, or):
+
+    ```sh
+    curl -s -X DELETE -H "Authorization: Bearer $TOKEN" "$DEN/api/v1/modules/<module id>/credentials"
+    ```
+
+    ```json
+    { "revoked": 1, "module_status": "unpaired" }
+    ```
+
+    From now on every call with those credentials gets `401`. The real
+    module shows *Den rejected the credential* on its Den connection page
+    and keeps its last brand and settings.
+
+4. **Pair the module again**: **Pair** in Den, copy the new URL, paste it into
+   the module's **Den connection** settings yourself, within 15 minutes and
+   without sending it through chat or e-mail.
+
+5. **Check**: Credentials shows exactly one active credential, created a
+   moment ago, and *Last used* moves forward as the module syncs (every
+   minute). The module shows Den's name and colours again.
+
+6. **If the SMTP password was in the module settings**, change it at your mail
+   provider and enter the new one on Den → **Module settings**: anyone with
+   the leaked credential could have read it.
+
+If only a **pairing URL** leaked and the audit log shows no unexpected
+`pairing.token.redeem`, waiting 15 minutes is enough; if it was used by
+someone else, follow the steps above.
+
+## The Keycloak name sync fails
+
+The Keycloak sign-in page fetches the brand from Den in the browser; the
+only thing Den writes into the realm is its display name (used in Keycloak's
+e-mails), and only when the name sync is set up. A failing sync never
+affects signing in.
+
+1. **Read the error** on Den → **Branding** → *Sign-in page (Keycloak)*, or:
+
+    ```sh
+    curl -s -H "Authorization: Bearer $TOKEN" $DEN/api/v1/keycloak-sync
+    ```
+
+    ```json
+    { "enabled": true, "mode": "pull", "realm": "conservices", "last_error": "keycloak token: status 401: {\"error\":\"unauthorized_client\"…" }
+    ```
+
+2. **Match it:**
+
+    | `last_error` contains | Cause | Fix |
+    | --- | --- | --- |
+    | `keycloak token: status 401` | Wrong `KEYCLOAK_CLIENT_SECRET`, or the `den-keycloak` client is disabled. | Copy the secret from Keycloak (Clients → `den-keycloak` → Credentials) into `den-secrets`, restart `den-backend`. |
+    | `keycloak update realm: status 403` | The service account lacks `realm-management` → `manage-realm`. | Keycloak → Clients → `den-keycloak` → Service account roles → assign `manage-realm`. |
+    | `keycloak update realm: status 404` | Wrong `KEYCLOAK_REALM` (or realm part of `OIDC_ISSUER_URL`). | Fix the setting, restart. |
+    | `connection refused`, `no such host`, `i/o timeout` | Den cannot reach `KEYCLOAK_ADMIN_URL`. | Check the address and the network policy from `den-backend` to Keycloak on 8443. |
+    | `x509: certificate signed by unknown authority` | Keycloak's certificate is not from the internal CA Den trusts. | Check `SSL_CERT_DIR` and the `conservices-internal-ca` ConfigMap ([Internal TLS](internal-tls.md)). |
+
+3. **Sync again** with **Sync name now** (or `POST /api/v1/keycloak-sync`)
+   and check that `last_error` is gone and `display_name` is right. Den also
+   retries by itself every 15 seconds after a failure.
+
+4. **If you do not need the realm name in Keycloak's e-mails**, switch the
+   sync off instead: remove `KEYCLOAK_ADMIN_URL` and `KEYCLOAK_CLIENT_SECRET`
+   from Den's configuration and delete the `den-keycloak` client. The card
+   then says *Realm name sync is off*.
+
+**The sign-in page shows Keycloak's neutral look** (this is not the name
+sync): check that Keycloak has `DEN_PUBLIC_URL` set to Den's public address,
+that the realm's login theme is `conservices`, and that
+`curl -s $DEN/api/v1/public/brand` answers. In the browser's developer tools,
+the request to `/api/v1/public/brand` must succeed; a `429` means too many
+sign-in page loads from one address.
 
 ## Rehearse it
 

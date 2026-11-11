@@ -102,7 +102,8 @@ belong to which.
 | `den-backend`, `den-operator`, module backend | CloudNativePG pods (`cnpg.io/cluster: conservices-pg`) in `conservices-data` | 5432 | Helm (`networkPolicy.data.postgres`) | Own database (Den's operator: admin login). |
 | `den-backend`, `den-operator`, module backend with a bucket | Garage pods (`app.kubernetes.io/name: garage`) in `conservices-data` | 3900 | Helm (`networkPolicy.data.s3`) | Buckets, through Garage's TLS sidecar. |
 | `den-backend`, `den-operator`, module backend | external S3 (for example `*.your-objectstorage.com`) | 443 | Helm, only when `networkPolicy.data.s3.external` is set | Buckets at a managed S3 provider. Cilium: the `CiliumNetworkPolicy` `<name>-external-s3` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `external.cidrs`. Checked against public CAs, not the internal CA. |
-| `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for [Keycloak sync](../modules/den/admin-guide.md#keycloak-sync). |
+| `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for the optional realm name sync ([Keycloak sync](../modules/den/admin-guide.md#keycloak-sync)). Not needed when the sync is off. |
+| `den-backend` | module backends (namespaces `conservices.io/tier: module`, pods `app.kubernetes.io/component: backend`) | 8080 | both (Helm: `networkPolicy.allowToModules`) | `GET /api/role-catalog` (who sees a module on the portal) and `GET /api/portal/todos` (with the module's credential), at the module's `internal_url`. Each module's own policy must admit `den-backend` too (Stash: done). |
 | `den-backend` | `den-operator` | 8080 | both | Backups and module databases (bearer `OPERATOR_TOKEN`). |
 | `den-backend` | `postgres` | 5432 | Kustomize | Den's own database (also the `migrate` initContainer). |
 | `den-backend` | `s3` | 9000 | Kustomize | Den's bucket (branding assets). |
@@ -113,6 +114,7 @@ belong to which.
 | module backend | `postgres` | 5432 | Kustomize | The module's own database. |
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
+| `den-backend` (`conservices-den`) | `stash-backend` | 8080 | Kustomize (`modules/stash`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos`. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
@@ -136,7 +138,7 @@ namespaces start from a default deny with only DNS allowed.
 | PostgreSQL pods | Kubernetes API (`toEntities: kube-apiserver`) | 6443 | CiliumNetworkPolicy `conservices-pg-kube-apiserver` | The instance manager watches its `Cluster` object. |
 | PostgreSQL pods | external S3 by host name | 443 | CiliumNetworkPolicy `conservices-pg-s3` | WAL archive and base backups ([Data](../deploy/data.md#network-policy-for-s3)). |
 | Cilium gateway (reserved identity `ingress`) | Keycloak pods | 8443 | CiliumNetworkPolicy in `conservices-identity` (`fromEntities: [ingress]`) | `auth.<domain>` (public) and `auth-admin.<domain>` (internal Gateway). |
-| `den-backend`, module backends | Keycloak pods | 8443 | NetworkPolicy in `conservices-identity` | OIDC, Den's Keycloak sync, HR and Learn provisioning. |
+| `den-backend`, module backends | Keycloak pods | 8443 | NetworkPolicy in `conservices-identity` | OIDC, Den's optional realm name sync, HR and Learn provisioning. |
 | Keycloak pods | Keycloak pods | 7800, 57800 | NetworkPolicy in `conservices-identity` | Shared session cache between the instances. |
 | Keycloak operator | Keycloak pods; Kubernetes API | 8443, 9000; 6443 | NetworkPolicy `keycloak-operator` and CiliumNetworkPolicy `keycloak-operator-apiserver` in `conservices-identity`, from `components/keycloak-operator/networkpolicies.yaml` (Application `keycloak-operator`, wave 2, so they exist before the operator starts) | Health checks and managing the StatefulSet and realm imports. Keycloak's ingress rule admits the operator on 8443 and 9000 (`charts/keycloak`). |
 | Keycloak pods | PostgreSQL pods | 5432 | NetworkPolicy in `conservices-identity` | Keycloak's database. |
@@ -170,14 +172,32 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
+| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080; ingress rule on Stash done, the other modules' manifests and charts must admit `den-backend` from `conservices-den`. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 
 Calls that come from the **browser**, not from a pod, go through the
-Gateway and need no policy of their own: Den's portal fetching
-`/api/portal/todos` from each module (until the server-to-server call
-above replaces it), and Den's web app calling Learn's API.
+Gateway and need no policy of their own, for example Den's web app calling
+Learn's API. The portal's to-do list is **not** such a call any more: Den's
+backend collects it (row above).
+
+Example: the ingress rule a module adds so Den can call it (goes into the
+module's namespace, next to its other rules for the backend):
+
+```yaml
+ingress:
+  - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: conservices-den
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: den
+            app.kubernetes.io/component: backend
+    ports:
+      - protocol: TCP
+        port: 8080
+```
 
 Example: HR's egress rule to call Stash (goes into `conservices-hr`):
 
