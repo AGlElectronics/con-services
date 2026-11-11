@@ -408,6 +408,16 @@ spec:
       backendRefs:
         - name: {{ $.service }}
           port: {{ $port }}
+      {{- with $r.responseHeaders }}
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              {{- range $name, $value := . }}
+              - name: {{ $name }}
+                value: {{ $value | quote }}
+              {{- end }}
+      {{- end }}
       {{- with $r.websocketTimeout }}
       timeouts:
         request: {{ . }}
@@ -420,6 +430,16 @@ spec:
       backendRefs:
         - name: {{ .service }}
           port: {{ $port }}
+      {{- with $r.responseHeaders }}
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              {{- range $name, $value := . }}
+              - name: {{ $name }}
+                value: {{ $value | quote }}
+              {{- end }}
+      {{- end }}
       {{- with $r.timeout }}
       timeouts:
         request: {{ . }}

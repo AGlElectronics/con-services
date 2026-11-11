@@ -182,3 +182,10 @@ led by Den's MAJOR; see
   Mailpit runs as a normal user and the proxy keeps only
   `NET_BIND_SERVICE`. The dev proxy sends `Strict-Transport-Security`
   on every host.
+- HSTS at the Gateway: every `HTTPRoute` of the Kustomize manifests
+  (Den, Keycloak, Stash) sets `Strict-Transport-Security:
+  max-age=31536000; includeSubDomains` with a `ResponseHeaderModifier`
+  filter; the app charts do the same through the new value
+  `route.responseHeaders` (`{}` turns it off). CSP and frame headers stay
+  in each web app's nginx
+  ([Security headers](docs/operations/production.md#security-headers)).

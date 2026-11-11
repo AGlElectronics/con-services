@@ -287,8 +287,43 @@ The most important points:
 
 - Your own age key, with the secret half stored **offline**, in two places.
 - Backups stored at a **different provider or account** from the live data.
+  The Argo CD template allows the same S3 service but warns about it (see
+  [Where backups go](databases-and-backups.md#where-backups-go)).
 - One test restore, before you need it.
 - Modules not on the operator's server are backed up by someone else.
+
+## Security headers
+
+Browsers apply extra protections when the server asks for them in response
+headers. Con Services sets them in two places:
+
+- **HSTS** (`Strict-Transport-Security: max-age=31536000; includeSubDomains`)
+  tells browsers to use only HTTPS for a host for the next year. It is set
+  where TLS ends: on every `HTTPRoute` at the Gateway (the charts' value
+  `route.responseHeaders`, the Kustomize routes and the Keycloak routes of
+  the Argo CD template), and in Caddy on Docker (dev stack and
+  [Docker production](docker-production.md)). To turn it off for one app,
+  set `route.responseHeaders: {}` in its chart values.
+- **Content Security Policy, frame protection, `nosniff`,
+  `Referrer-Policy` and `Permissions-Policy`** come from each web app's
+  nginx, from the shared snippet
+  [`shared/nginx/security-headers.conf`](../concepts/shared-code.md#nginx-security-headers).
+  They work the same on Docker and Kubernetes.
+
+Check a public host:
+
+```sh
+curl -sI https://den.example.org/ | grep -i -E 'strict-transport|content-security|x-frame'
+```
+
+```text
+strict-transport-security: max-age=31536000; includeSubDomains
+content-security-policy: default-src 'self'; script-src 'self'; …
+x-frame-options: DENY
+```
+
+HSTS cannot be undone quickly: browsers remember it for a year. Turn it on
+only once every host of the domain serves HTTPS.
 
 ## Client IP addresses
 
@@ -387,7 +422,11 @@ call it. Rate-limit in front of the Gateway.
   cluster; one bucket and one key set per module.
 - [ ] Managed PostgreSQL or CloudNativePG; `sslmode=verify-full`.
 - [ ] Keycloak in production mode (Keycloak Operator): no test accounts, no
-  password grant on app clients, no `localhost` redirect URIs, real SMTP.
+  password grant on app clients, no `localhost` redirect URIs, real SMTP,
+  brute-force protection and a password policy on, no realm roles
+  `admin`/`member`, `den-keycloak` with `manage-realm` only (or nothing).
+- [ ] `curl -sI` on a web app shows `strict-transport-security` and
+  `content-security-policy` ([Security headers](#security-headers)).
 - [ ] All secrets in a secret manager via External Secrets; no plain
   Secrets with test values; etcd encryption at rest turned on.
 - [ ] Own `den-frontend` build for your issuer; `AUTH_MODE=oidc`.
