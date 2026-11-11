@@ -170,10 +170,14 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
+| Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
+| HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
+| Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 
 Calls that come from the **browser**, not from a pod, go through the
 Gateway and need no policy of their own: Den's portal fetching
-`/api/portal/todos` from each module, and Den's web app calling Learn's API.
+`/api/portal/todos` from each module (until the server-to-server call
+above replaces it), and Den's web app calling Learn's API.
 
 Example: HR's egress rule to call Stash (goes into `conservices-hr`):
 
