@@ -111,7 +111,7 @@ are read-only here and show *Managed in Den*
 | Anonymise staff who have not signed in for | 0 (never) | See [People who left](#people-who-left). |
 | Telegram bot for Lost & Found | off | See [Telegram](#telegram-notifications-for-guests). |
 | Email overdue-return reminders, digest list | off, empty | See [Overdue returns](#overdue-returns). |
-| Email server (SMTP) | port 587, STARTTLS | Host, port, user, sender (`Stash <stash@example.org>`) and security. The password is the `SMTP_PASSWORD` secret. |
+| Email server (SMTP) | port 587, STARTTLS | Host, port, user, sender (`Stash <stash@example.org>`) and security. When Den sets the server, those fields are read-only. The password is Den's when Den sets `smtp.host` and holds one; otherwise it is `SMTP_PASSWORD`. It is empty when Den's server has no password. |
 
 A value Stash does not accept is refused with a message per field, for
 example *default_currency: must be a three-letter ISO 4217 code such as EUR*.
@@ -199,8 +199,10 @@ To email reminders:
 1. Fill in the **Email server** in Settings (or in Den). With the dev stack:
    host `mailpit`, port `1025`, security *None*; the mails appear at
    <http://localhost:8025>.
-2. Set `SMTP_PASSWORD` if the server needs a login, and allow egress to it
-   (Helm: `networkPolicy.smtp`).
+2. If Den does not set the mail server, set `SMTP_PASSWORD` when that
+   server needs a login, and allow egress to it (Helm:
+   `networkPolicy.smtp`). When Den sets `smtp.host` and `password_set`,
+   Stash fetches the password from Den and does not use `SMTP_PASSWORD`.
 3. Tick **Email overdue-return reminders** and, optionally, add addresses
    for the daily digest (for example `logistics@example.org`).
 

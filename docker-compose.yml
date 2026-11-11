@@ -292,6 +292,8 @@ services:
     container_name: conservices-stash-frontend
     environment:
       # Content Security Policy: the browser may talk to the dev Keycloak.
+      # EXTRA_FRAME_SRC stays empty (the image default). Silent sign-in
+      # frames /silent-callback.html from Stash itself.
       KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.

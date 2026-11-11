@@ -355,7 +355,7 @@ stored values before and after.
 | `telegram_enabled` | `false` | The Lost & Found Telegram bot (also needs `TELEGRAM_BOT_TOKEN`). |
 | `overdue_email_enabled` | `false` | Daily overdue-return emails. |
 | `overdue_notify_emails` | `""` | Comma-separated addresses for the daily digest, at most 20. |
-| `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_tls` | `""`, `587`, `""`, `""`, `starttls` | Email server; `smtp_tls` is `starttls`, `tls` or `none`. Den: `smtp.host`, `port`, `username`, `security`, `from` and `from_name`. The password is `SMTP_PASSWORD`. |
+| `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_tls` | `""`, `587`, `""`, `""`, `starttls` | Email server; `smtp_tls` is `starttls`, `tls` or `none`. Den: `smtp.host`, `port`, `username`, `security`, `from` and `from_name`. The password is not a setting. When Den sets `smtp.host` and `password_set`, Stash fetches it from Den. Otherwise it is `SMTP_PASSWORD`. |
 | `managed_by`, `managed_keys` | | Read-only: `"den"` and the keys Den controls, while paired. Ignored in `PATCH`. |
 
 ```sh

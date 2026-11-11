@@ -98,7 +98,7 @@ Stash needs one Kubernetes Secret, `stash-secrets`, with these keys:
 | `DATABASE_URL` | The URL Den showed in step 2. |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Storage keys that can reach only the `stash-data` bucket. |
 | `DEN_LINK_ENCRYPTION_KEY` | 32 random bytes, base64 (`openssl rand -base64 32`). The backend pod does not start without it. |
-| `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASSWORD` | Optional. The token lets HR read the role catalog (32 characters or more, the same value in HR). The other two turn on the Telegram bot and overdue-email login; leave them out to keep those off. |
+| `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASSWORD` | Optional. The token lets HR read the role catalog (32 characters or more, the same value in HR). `TELEGRAM_BOT_TOKEN` turns on the Telegram bot. `SMTP_PASSWORD` logs in to Stash's own mail server; leave it out when Den provides SMTP, or when the server needs no password. |
 
 Store them in your secret manager and let the External Secrets Operator
 create the Secret. With Vault (the full walkthrough, including the

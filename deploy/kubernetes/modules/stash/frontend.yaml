@@ -39,9 +39,10 @@ spec:
         - name: frontend
           image: ghcr.io/aglelectronics/stash-frontend:1.0.0-1
           # Origins the Content Security Policy allows besides the app,
-          # filled into /etc/nginx/snippets/security-headers.conf by the
-          # image's entrypoint at start-up. For your own domain, patch them
-          # from an overlay.
+          # filled into both header snippets by the image's entrypoint at
+          # start-up. For your own domain, patch them from an overlay.
+          # EXTRA_FRAME_SRC stays empty. /silent-callback.html is framed
+          # by Stash itself.
           env:
             - name: KEYCLOAK_ORIGIN
               value: https://auth.conservices.test
@@ -50,6 +51,8 @@ spec:
             - name: S3_ORIGIN
               value: ""
             - name: EXTRA_CONNECT_SRC
+              value: ""
+            - name: EXTRA_FRAME_SRC
               value: ""
           ports:
             - name: https

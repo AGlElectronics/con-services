@@ -215,6 +215,11 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Stash's web app may frame `/silent-callback.html` from Stash itself, so
+  a reload can finish silent sign-in. The Helm chart, the Kustomize nginx
+  config and the dev Compose service leave `EXTRA_FRAME_SRC` empty. Every
+  other page stays unframeable, and both header snippets keep
+  `camera=(self)`.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

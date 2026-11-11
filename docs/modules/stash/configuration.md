@@ -103,7 +103,7 @@ another replica takes over within 30 seconds. The jobs are:
 | `JOBS_ENABLED` | `true` | no | ConfigMap | `false` keeps this replica out of the leader election. Only for debugging; with every replica at `false` nothing is ever deleted or sent. |
 | `TELEGRAM_BOT_TOKEN` | none | no | **Secret** | Token of Stash's own Telegram bot, from [@BotFather](https://t.me/BotFather) (looks like `123456789:AA…`). Empty means no Telegram, whatever the setting says. The backend then needs egress to `api.telegram.org:443` ([network policies](../../operations/network-policies.md)). |
 | `TELEGRAM_API_URL` | `https://api.telegram.org` | no | ConfigMap | Bot API server. Change it only for a self-hosted Bot API server or tests. |
-| `SMTP_PASSWORD` | none | no | **Secret** | Password for the SMTP server set in Stash's settings (or Den's). Empty logs in without a password, which suits a local relay or the dev stack's mailpit. |
+| `SMTP_PASSWORD` | none | no | **Secret** | Password for Stash's own SMTP server, used when Den does not set `smtp.host`. When Den sets `smtp.host` and `smtp.password_set`, Stash fetches the password from Den when it sends mail and ignores this value. When Den sets the server and holds no password, mail goes out with no password. Empty suits a local relay or the dev stack's mailpit. |
 
 The SMTP server itself (host, port, user, sender, TLS mode) is not an
 environment variable but a setting, so an admin can change it without a
@@ -130,8 +130,12 @@ client (`ModuleSettings`), not from organisation settings.
 The last day of the convention (`con_end_date`) stays a Stash setting; Den
 does not have a key for it. A value Stash does not accept (for example a
 retention of 0 days, or `"smtp.port": "abc"`) is ignored and Stash keeps
-its own. The SMTP password never comes from Den (the bundle only says
-whether one is set); it is always `SMTP_PASSWORD`.
+its own. The SMTP password is not in the bundle. When Den sets `smtp.host`
+and `smtp.password_set`, Stash fetches it with the Den client's
+`SMTPPassword` at send time and keeps it in memory for at most a minute.
+`SMTP_PASSWORD` is used only when Den does not set a mail server. When
+Den sets the server and holds no password, the message is sent with no
+password.
 
 ## The access config file
 
@@ -324,6 +328,12 @@ cache-control: no-store
   server. The Helm chart sets it from `frontend.securityHeaders.keycloakOrigin`,
   or from the sign-in address when that is empty. Restart the web app after
   changing it. See [Nginx security headers](../../concepts/shared-code.md#nginx-security-headers).
+- **A reload asks for the password again**: `/silent-callback.html` must
+  be frameable by Stash itself (`frame-ancestors 'self'`,
+  `X-Frame-Options: SAMEORIGIN`). Every other page stays
+  `frame-ancestors 'none'`. `EXTRA_FRAME_SRC` stays empty. Both header
+  snippets keep `camera=(self)` so barcode scanning works. See
+  [Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
 - **An old value still shows**: something in front of nginx caches the file.
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
@@ -358,7 +368,7 @@ The chart in `deploy/charts/stash` maps its values onto the variables above:
 | `config.*` | One entry each in the ConfigMap `<release>-config`. |
 | `existingSecret` | Name of the Secret loaded with `envFrom`. Required keys: `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `DEN_LINK_ENCRYPTION_KEY` (the pod does not start without that key, unless `config.APP_ENV` is `development`). Optional keys: `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASSWORD`. |
 | `frontend.securityHeaders.keycloakOrigin` | Origin the Content Security Policy allows for the sign-in server (scheme and host, no path). Empty: scheme and host of `oidcAuthority`. |
-| `frontend.securityHeaders.denOrigin`, `s3Origin`, `extraConnectSrc` | Extra origins the browser may contact. Empty is usual: Stash's browser does not call Den or S3 itself. Several values in `extraConnectSrc` are separated by spaces. |
+| `frontend.securityHeaders.denOrigin`, `s3Origin`, `extraConnectSrc` | Extra origins the browser may contact. Empty is usual: Stash's browser does not call Den or S3 itself. Several values in `extraConnectSrc` are separated by spaces. `EXTRA_FRAME_SRC` is not a chart value: the chart sets it to empty. `/silent-callback.html` may be framed by Stash itself; every other page stays unframeable. Both header snippets keep `camera=(self)`. |
 | `networkPolicy.telegramEgress` (default `false`), `networkPolicy.smtpEgress` (default `false`, ports `[587, 465]`) | Let the backend reach `api.telegram.org` and your SMTP server on port 443 / the SMTP ports. Turn them on with the Telegram bot and overdue emails. |
 | `accessConfig.existingConfigMap`, `mountPath`, `fileName` | The mounted access config and `ACCESS_CONFIG_PATH`. |
 | `backend.extraEnv`, `extraVolumes`, `extraVolumeMounts` | Extra settings, for example another CA volume (then set `SSL_CERT_DIR` in `config:` to both folders, separated by `:`). |
