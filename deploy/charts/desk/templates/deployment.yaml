@@ -99,9 +99,15 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Values.existingSecret }}
-          {{- with .Values.backend.extraEnv }}
+          {{- if or .Values.google.enabled .Values.backend.extraEnv }}
           env:
+            {{- if .Values.google.enabled }}
+            - name: GOOGLE_SERVICE_ACCOUNT_FILE
+              value: {{ printf "%s/%s" .Values.google.mountPath .Values.google.secretKey | quote }}
+            {{- end }}
+            {{- with .Values.backend.extraEnv }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: {{ $scheme }}
@@ -137,6 +143,11 @@ spec:
               mountPath: {{ .mountPath }}
             {{- end }}
             {{- end }}
+            {{- if .Values.google.enabled }}
+            - name: google-service-account
+              mountPath: {{ .Values.google.mountPath }}
+              readOnly: true
+            {{- end }}
             {{- if $tls }}
             {{- include "desk.tlsVolumeMounts" . | nindent 12 }}
             {{- end }}
@@ -161,6 +172,16 @@ spec:
           emptyDir: {}
           {{- end }}
         {{- end }}
+        {{- end }}
+        {{- if .Values.google.enabled }}
+        # Service account key with domain-wide delegation (google.existingSecret).
+        - name: google-service-account
+          secret:
+            secretName: {{ required "google.existingSecret is required when google.enabled" .Values.google.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.google.secretKey }}
+                path: {{ .Values.google.secretKey }}
         {{- end }}
         {{- if $tls }}
         {{- include "desk.tlsVolumes" (dict "root" . "secret" "desk-backend-tls") | nindent 8 }}

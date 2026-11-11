@@ -123,8 +123,21 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- with ($np.google | default dict) }}
+    {{- if and .enabled .cidrs }}
+    # Google's APIs by address range (any CNI). With Cilium, prefer fqdns.
+    - to:
+        {{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ .port | default 443 }} }
+    {{- end }}
+    {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- include "desk.externalS3Policy" (dict "root" . "components" (list "backend")) }}
+{{- include "desk.googlePolicy" . }}
 {{- end }}

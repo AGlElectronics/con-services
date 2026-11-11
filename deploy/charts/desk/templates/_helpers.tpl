@@ -298,6 +298,46 @@ spec:
 {{- end }}
 {{- end -}}
 
+{{/* CiliumNetworkPolicy: the backend reaches Google's APIs by host name
+(networkPolicy.google.fqdns), with the DNS rule Cilium's DNS proxy needs. */}}
+{{- define "desk.googlePolicy" -}}
+{{- $g := .Values.networkPolicy.google | default dict -}}
+{{- if and $g.enabled $g.fqdns (.Values.networkPolicy.gateway | default dict).cilium }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: desk-backend-google
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "desk.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: desk
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        {{- range $g.fqdns }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - port: {{ $g.port | default 443 | quote }}
+              protocol: TCP
+{{- end }}
+{{- end -}}
+
 {{/* "namespace|selector|port" of the in-cluster OIDC target, "" when off. */}}
 {{- define "desk.oidcKey" -}}
 {{- $o := .Values.networkPolicy.oidc | default dict -}}
