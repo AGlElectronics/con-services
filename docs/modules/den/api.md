@@ -10,7 +10,7 @@ pushes a new brand revision before an event, or starts a backup. Every
 other module is configured relative to Den, so this is the API to read
 first.
 
-This page lists all **40 endpoints**, taken from
+This page lists all **48 endpoints**, taken from
 [`backend/internal/http/router.go`](https://github.com/AGlElectronics/den/blob/main/backend/internal/http/router.go)
 and its handlers. What all modules share (error shape, request IDs, probes,
 how tokens are checked) is on
@@ -39,8 +39,20 @@ Paths are grouped by caller: `/api/v1/…` for people, `/api/v1/integrations/…
 for paired modules, `/api/v1/public/…` and `/api/v1/backup-downloads/…`
 for anyone, plus `/api/health`, `/api/role-catalog` and the root probes.
 
-**Rate limits.** Den does not rate limit any endpoint and never answers
-`429`. The public endpoints are cached (`Cache-Control`) instead.
+**Rate limits.** The endpoints that need no sign-in are limited per client
+address: `POST /api/v1/integrations/pairing/redeem` 10 a minute,
+`/api/v1/public/*` 120 a minute, `GET /api/v1/backup-downloads/{token}` 10 a
+minute. Over the limit Den answers `429 rate_limited` with a `Retry-After`
+header (seconds). The client address is worked out as described under
+[Client IP addresses](../../operations/production.md#client-ip-addresses).
+With several backend replicas each counts on its own.
+
+```text
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+
+{"error":{"code":"rate_limited","message":"too many requests, try again later"}}
+```
 
 **Request bodies** are JSON (`Content-Type: application/json`), except the
 asset upload. Unknown fields are rejected with `400 bad_request`.
@@ -78,6 +90,7 @@ Every error has the same shape:
 | `not_found` | 404 | The thing does not exist. The message names it, for example `module not found`. |
 | `conflict` | 409 | Not possible in the current state, for example the operator is not set up. |
 | `validation_failed` | 422 | The values are not acceptable. |
+| `rate_limited` | 429 | Too many requests from your address; wait `Retry-After` seconds. |
 | `internal` | 500 | Something broke inside Den; the details are in Den's log. |
 | `unavailable` | 502 | A service Den depends on (the operator) failed; the message says why. |
 
@@ -100,7 +113,13 @@ organisation:
 
 - **signed in**: any authenticated person;
 - **member**: `member`, `admin` or `owner`;
-- **admin**: `admin` or `owner`.
+- **admin**: `admin` or `owner`;
+- **ops**: the `ops` role (`DEN_OPS_GROUPS`, default `den-ops`). It is
+  separate from admin: an admin without it cannot run, schedule or download
+  backups or delete a module's database. In dev mode every user has it.
+
+A disabled account (`users.is_disabled`) gets `403 this account is disabled`
+on every endpoint.
 
 Authentication errors:
 
@@ -110,6 +129,7 @@ Authentication errors:
 | 401 | `invalid token` | The token is expired, or not from the configured issuer and client. |
 | 401 | `invalid or revoked credential` | A module credential Den does not know. |
 | 403 | `insufficient role` | Your role is too low for this endpoint. |
+| 403 | `this account is disabled` | The account is disabled in Den. |
 
 #### Getting a token for testing
 
@@ -146,7 +166,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 
 | You are | Use | Get it from |
 | --- | --- | --- |
-| A person or a script acting as one | Keycloak **ID token** for `den-spa`, with the `admin` role for anything under `/modules`, `/brand`, `/org-settings`, `/keycloak-sync`, `/operations` | The token endpoint above (dev), or your web app sign-in. Roles come from `DEN_ADMIN_GROUPS` (default `den-admin`) and `DEN_MEMBER_GROUPS`. |
+| A person or a script acting as one | Keycloak **ID token** for `den-spa`, with the `admin` role for anything under `/modules`, `/brand`, `/org-settings`, `/module-settings`, `/keycloak-sync`, `/audit-events`, and the `ops` role for `/operations` (except `/operations/status`) | The token endpoint above (dev), or your web app sign-in. Roles come from `DEN_ADMIN_GROUPS` (default `den-admin`), `DEN_MEMBER_GROUPS` and `DEN_OPS_GROUPS` (default `den-ops`). |
 | A module's backend | **Module credential** | [Pairing](#pairing-end-to-end): an admin creates a pairing URL, the module redeems it once. |
 | A website or sign-in page | Nothing | `/api/v1/public/brand`. |
 
@@ -161,22 +181,27 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | GET | `/api/v1/me` | signed in | [You](#you) |
 | GET, PUT | `/api/v1/me/preferences` | signed in | [You](#you) |
 | GET | `/api/v1/dashboard` | member | [You](#get-apiv1dashboard) |
+| GET | `/api/v1/portal/todos` | member | [You](#get-apiv1portaltodos) |
 | GET, POST | `/api/v1/modules` | admin | [Modules](#modules) |
-| GET, PATCH, DELETE | `/api/v1/modules/{id}` | admin | [Modules](#modules) |
+| GET, PATCH, DELETE | `/api/v1/modules/{id}` | admin (`?database=drop`: also ops) | [Modules](#modules) |
 | POST | `/api/v1/modules/{id}/pairing-tokens` | admin | [Modules](#post-apiv1modulesidpairing-tokens) |
+| GET, DELETE | `/api/v1/modules/{id}/credentials` | admin | [Modules](#get-apiv1modulesidcredentials) |
+| DELETE | `/api/v1/modules/{id}/credentials/{credentialID}` | admin | [Modules](#delete-apiv1modulesidcredentialscredentialid) |
 | GET, PUT | `/api/v1/brand/profile` | admin | [Branding](#branding) |
 | GET, POST | `/api/v1/brand/assets` | admin | [Branding](#branding) |
 | GET, DELETE | `/api/v1/brand/assets/{id}` | admin | [Branding](#branding) |
-| GET | `/api/v1/public/brand`, `/api/v1/public/brand/assets/{role}` | anyone | [Branding](#get-apiv1publicbrand) |
+| GET | `/api/v1/public/brand`, `/api/v1/public/brand/assets/{role}` | anyone (rate-limited) | [Branding](#get-apiv1publicbrand) |
 | GET, PUT | `/api/v1/org-settings` | admin | [Organisation settings](#organisation-settings) |
+| GET, PUT | `/api/v1/module-settings` | admin | [Module settings](#module-settings) |
 | GET, POST | `/api/v1/keycloak-sync` | admin | [Keycloak sync](#keycloak-sync) |
-| GET | `/api/v1/operations/status` | admin | [Operations](#operations-backups-and-databases) |
-| PUT | `/api/v1/operations/settings` | admin | [Operations](#operations-backups-and-databases) |
-| GET, POST | `/api/v1/operations/backups` | admin | [Operations](#operations-backups-and-databases) |
-| POST | `/api/v1/operations/backups/download-link` | admin | [Operations](#operations-backups-and-databases) |
-| GET | `/api/v1/backup-downloads/{token}` | anyone with the link | [Operations](#get-apiv1backup-downloadstoken) |
-| POST | `/api/v1/integrations/pairing/redeem` | pairing token | [Integration](#integration-api-for-paired-modules) |
-| GET | `/api/v1/integrations/bundle`, `/settings` | module credential | [Integration](#integration-api-for-paired-modules) |
+| GET | `/api/v1/audit-events` | admin | [Audit log](#audit-log) |
+| GET | `/api/v1/operations/status` | admin or ops | [Operations](#operations-backups-and-databases) |
+| PUT | `/api/v1/operations/settings` | ops | [Operations](#operations-backups-and-databases) |
+| GET, POST | `/api/v1/operations/backups` | ops | [Operations](#operations-backups-and-databases) |
+| POST | `/api/v1/operations/backups/download-link` | ops | [Operations](#operations-backups-and-databases) |
+| GET | `/api/v1/backup-downloads/{token}` | anyone with the link (rate-limited) | [Operations](#get-apiv1backup-downloadstoken) |
+| POST | `/api/v1/integrations/pairing/redeem` | pairing token (rate-limited) | [Integration](#integration-api-for-paired-modules) |
+| GET | `/api/v1/integrations/bundle`, `/settings`, `/module-settings` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/branding/profile`, `/assets`, `/assets/{id}` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET, PUT | `/api/v1/integrations/user-preferences` | module credential | [Integration](#integration-api-for-paired-modules) |
 
@@ -260,16 +285,25 @@ curl $DEN/api/role-catalog
     {
       "key": "admin",
       "label": "Convention admin",
-      "description": "Manage modules, pairing, branding and portal settings.",
+      "description": "Manage modules, pairing, branding, settings and the audit log.",
       "group": "den-admin",
       "assignable": true,
       "scope": "organization",
-      "permissions": ["modules.manage", "branding.manage", "settings.manage"]
+      "permissions": ["modules.manage", "branding.manage", "settings.manage", "audit.view"]
+    },
+    {
+      "key": "ops",
+      "label": "Operations",
+      "description": "Runs and downloads backups, changes the backup schedule and deletes module databases.",
+      "group": "den-ops",
+      "assignable": true,
+      "scope": "organization",
+      "permissions": ["backups.manage", "databases.drop"]
     },
     {
       "key": "member",
       "label": "Member",
-      "description": "Sees the portal home and every usable service.",
+      "description": "Sees the portal home and the services they have a role in.",
       "group": "den-member",
       "assignable": true,
       "default": true,
@@ -280,9 +314,11 @@ curl $DEN/api/role-catalog
 }
 ```
 
-`group` is the first group in `DEN_ADMIN_GROUPS` / `DEN_MEMBER_GROUPS`. With
-no member group, the member role has `"group": ""`, `"assignable": false`
-and a `note` saying it is automatic for every signed-in user.
+`group` is the first group in `DEN_ADMIN_GROUPS` / `DEN_OPS_GROUPS` /
+`DEN_MEMBER_GROUPS`. With no member group, the member role has
+`"group": ""`, `"assignable": false` and a `note` saying it is automatic for
+every signed-in user; with no ops group the ops role is not assignable and
+its `note` says nobody can run backups.
 
 ---
 
@@ -305,11 +341,14 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/me
   "subject": "0b6e2c4d-8f1a-4b3c-9d7e-5a6b7c8d9e0f",
   "memberships": [
     { "organization_id": "00000000-0000-0000-0000-00000000d001", "role": "admin" }
-  ]
+  ],
+  "roles": ["admin", "ops"]
 }
 ```
 
-`memberships` is empty for someone who signed in but has no role.
+`memberships` is empty for someone who signed in but has no role. `roles`
+lists every role: the membership role plus roles granted from groups for
+this request only (`ops`).
 
 ### `GET /api/v1/me/preferences`
 
@@ -373,7 +412,11 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/dashboard
       "enabled": true
     }
   ],
-  "organizations": 1,
+  "identity_links": {
+    "account_console_url": "https://auth.conservices.test/realms/conservices/account",
+    "sso_name": "Con Services account",
+    "idp_admin_console_url": "https://auth.conservices.test/admin/master/console/#/conservices"
+  },
   "users": 2,
   "modules": 3,
   "paired_modules": 1,
@@ -382,11 +425,78 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/dashboard
 ```
 
 - `usable_modules` lists modules that are enabled, paired and have a
-  `base_url`.
+  `base_url`, **and that this person may use**: modules with
+  `portal_visibility` `everyone`, or `role_holders` modules whose role
+  catalog (`GET <module>/api/role-catalog`, fetched by Den and cached for 5
+  minutes) names one of the person's groups. Admins see every usable
+  module. A module whose catalog Den cannot read is hidden from members
+  until it can.
+- `identity_links` comes from [Module settings](#module-settings) →
+  `identity`; `idp_admin_console_url` is only sent to admins. Empty `{}`
+  when nothing is set.
 - `brand` is the latest branding revision as stored; it is missing if there
   is none.
 - `copy.convention_name` falls back to a `copy.event_name` key, if present.
-- The counts are for the whole installation.
+- `users`, `modules`, `paired_modules` and `unpaired_modules` are only sent
+  to admins. `users` counts people with a role in the organisation.
+
+### `GET /api/v1/portal/todos`
+
+The signed-in person's to-dos from every module they may use (the same
+modules as `usable_modules`). **Auth:** member.
+
+Den's backend calls each module itself; the browser only talks to Den, and
+no user token leaves Den. For each module Den sends
+`GET <internal_url or base_url>/api/portal/todos` with:
+
+| Header | Value |
+| --- | --- |
+| `Authorization` | `Bearer <the module's pairing credential>` |
+| `X-Den-User-Issuer` | the person's token issuer, e.g. `https://auth.conservices.test/realms/conservices` |
+| `X-Den-User-Subject` | the person's subject (`sub`) |
+
+Den can only present a credential it derived itself, so this needs
+`DEN_CREDENTIAL_KEY` (see [Configuration](configuration.md)); modules
+paired before the key was set report `not_paired_for_todos` until they are
+paired again. The module contract is described in
+[API conventions](../../concepts/api-conventions.md#portal-to-dos).
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/portal/todos
+```
+
+```json
+{
+  "enabled": true,
+  "items": [
+    {
+      "id": "shift-42",
+      "title": "Confirm your Saturday shift",
+      "detail": "Info desk, 10:00–14:00",
+      "due_at": "2026-11-14T10:00:00Z",
+      "url": "https://hr.conservices.test/shifts/42",
+      "severity": "warning",
+      "module_slug": "hr",
+      "module_name": "HR"
+    }
+  ],
+  "modules": [
+    { "slug": "hr", "display_name": "HR", "status": "ok", "count": 1 },
+    { "slug": "stash", "display_name": "Stash", "status": "unsupported", "count": 0 }
+  ],
+  "responded": 1
+}
+```
+
+- Items are sorted by `due_at` (missing dates last), then severity
+  (`danger`, `warning`, `info`). Items without `id`, `title` or an
+  `http(s)` `url` are dropped, an unknown `severity` becomes `info`, an
+  unreadable `due_at` becomes `null`; at most 50 items per module.
+- `modules[].status`: `ok`, `unsupported` (the module answered 404 or 501),
+  `not_paired_for_todos` (pair the module again) or `error` (no answer
+  within 5 seconds, another error, or an address that is not https outside
+  development).
+- Without `DEN_CREDENTIAL_KEY`: `{"enabled": false, "items": [], "modules": []}`.
 
 ---
 
@@ -403,27 +513,33 @@ All module endpoints need the **admin** role.
   "slug": "hr",
   "display_name": "HR",
   "base_url": "https://hr.conservices.test",
+  "internal_url": "https://hr-backend.conservices-hr.svc.cluster.local:8080",
   "environment": "production",
   "enabled": true,
   "status": "paired",
+  "portal_visibility": "role_holders",
   "manifest": {},
   "last_seen_at": "2026-11-06T09:00:03Z",
   "created_at": "2026-11-03T18:20:11Z",
   "updated_at": "2026-11-06T09:00:03Z",
-  "database": "hr"
+  "database": "hr",
+  "database_created_by_den": true
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `slug` | Short name. Unique together with `environment`. |
-| `base_url` | Public address; the portal links here. May be empty. |
+| `slug` | Short name: lowercase letters, digits and single hyphens, at most 40 characters. Unique together with `environment`. |
+| `base_url` | Public address; the portal links here. May be empty. Must be `https://` (`http://` only with `APP_ENV=development`), without user name, query or fragment; a trailing `/` is removed. |
+| `internal_url` | Where Den itself calls the module (role catalog, portal to-dos), for example its in-cluster address. Empty: `base_url`. Same rules as `base_url`. |
 | `environment` | Free label, `production` by default. |
 | `enabled` | Whether the module may appear on the portal. |
-| `status` | `unpaired` until a pairing URL is redeemed, then `paired`. |
+| `status` | `unpaired` until a pairing URL is redeemed, then `paired`; `unpaired` again when every credential is revoked. |
+| `portal_visibility` | Who sees the module on the portal: `role_holders` (default; people with a group from the module's role catalog) or `everyone` (every member, for modules without a basic user role such as Learn). Also decides whose preferences the module may read. |
 | `manifest` | Reserved; currently always `{}`. |
 | `last_seen_at` | When the module last paired. Omitted if it never did. |
 | `database` | The module's database on the shared server: the one Den created, else the slug with `-` turned into `_`. |
+| `database_created_by_den` | `true` only when Den created the database. Only then can Den delete it. |
 
 ### `GET /api/v1/modules`
 
@@ -451,10 +567,12 @@ Register a module.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `slug` | string | yes | Trimmed. |
+| `slug` | string | yes | Trimmed; see the module object for the rules. |
 | `display_name` | string | yes | Trimmed. |
-| `base_url` | string | no | Public address. |
+| `base_url` | string | no | Public address, `https://`. |
+| `internal_url` | string | no | Where Den calls the module, `https://`. |
 | `environment` | string | no | Default `production`. |
+| `portal_visibility` | string | no | `role_holders` (default) or `everyone`. |
 | `create_database` | bool | no | Ask the operator for a database and login, named after the slug. |
 
 ```sh
@@ -484,14 +602,15 @@ Errors:
 
 | Status | Message |
 | --- | --- |
-| 422 | `slug and display_name are required` |
+| 422 | `validation failed`, with `details` per field, for example `{"slug": "must be lowercase letters, digits and single hyphens (at most 40), for example \"rally\"", "base_url": "must use https (http is only allowed with APP_ENV=development), got \"http://hr.example.org\""}` |
+| 409 | `a module with this slug and environment already exists` |
 | 409 | `Den doesn't manage databases in this installation` (asked for a database, but no operator) |
 | 409 | `a database with this name already exists` |
 | 400 | `database names use lowercase letters, digits and _ and must not be a protected database` |
 | 502 | `Can't reach the operator: …` |
-| 500 | Registering the same slug and environment twice (not yet reported more clearly). |
 
 If the database cannot be created, the module is not registered either.
+The registration is written to the [audit log](#audit-log) (`module.create`).
 
 ### `PATCH /api/v1/modules/{id}`
 
@@ -499,21 +618,26 @@ Change a module. Send only the fields to change.
 
 | Field | Type |
 | --- | --- |
-| `display_name` | string |
-| `base_url` | string |
-| `environment` | string |
+| `display_name` | string, not empty |
+| `base_url` | string, `https://` or `""` |
+| `internal_url` | string, `https://` or `""` |
+| `environment` | string, not empty |
 | `enabled` | bool |
+| `portal_visibility` | `role_holders` or `everyone` |
 
 ```sh
 curl -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"enabled":false}' $DEN/api/v1/modules/3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a
+  -d '{"enabled":false,"portal_visibility":"everyone"}' $DEN/api/v1/modules/3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a
 ```
 
 ```json
 { "id": "3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a" }
 ```
 
-Errors: `400 invalid id id`, `404 module not found`.
+Errors: `400 invalid id id`, `404 module not found` (also for a module of
+another organisation), `422 validation failed` with `details`, `409` for a
+duplicate environment. The change is audited (`module.update`) with the old
+and new values.
 
 !!! note
     Disabling a module hides it from the portal. It does not stop a paired
@@ -525,7 +649,7 @@ Remove a module and its pairing credentials. By default its data is kept.
 
 | Query parameter | Meaning |
 | --- | --- |
-| `database=drop` | Also delete the module's database and login. The operator backs it up first; if the backup fails, nothing is deleted. |
+| `database=drop` | Also delete the module's database and login. Needs the **ops** role, and only works for a database Den created (`database_created_by_den`). The operator backs it up first; if the backup fails, nothing is deleted. |
 | `confirm=<slug>` | Required with `database=drop`: the module's slug. |
 
 ```sh
@@ -548,6 +672,8 @@ Errors:
 | Status | Message |
 | --- | --- |
 | 404 | `module not found` |
+| 403 | `deleting a module's database needs the ops role` |
+| 409 | `Den did not create this module's database, so it will not delete it` |
 | 422 | `type the module's slug to confirm deleting its data` |
 | 409 | `Den doesn't manage databases in this installation` |
 | 409 | `this database is protected` |
@@ -578,7 +704,81 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 ```
 
 The URL starts with `APP_BASE_URL` and is valid for 15 minutes, once.
-Errors: `400 invalid id id`, `404 module not found`.
+Errors: `400 invalid id id`, `404 module not found`. Minting is audited
+(`pairing.token.create`, with you as the actor); the token itself is never
+logged.
+
+### `GET /api/v1/modules/{id}/credentials`
+
+The module's pairing credentials, newest first, including revoked ones. The
+credential values are never shown again after pairing. **Auth:** admin.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/modules/3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a/credentials
+```
+
+```json
+[
+  {
+    "id": "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+    "label": "pairing-20261111-101500 v1.0.0",
+    "created_at": "2026-11-11T10:15:00Z",
+    "last_used_at": "2026-11-11T10:16:02Z",
+    "revoked_at": null
+  },
+  {
+    "id": "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+    "label": "pairing-20261105-090000",
+    "created_at": "2026-11-05T09:00:00Z",
+    "last_used_at": "2026-11-11T10:14:58Z",
+    "revoked_at": "2026-11-11T10:15:00Z"
+  }
+]
+```
+
+Pairing again revokes every older credential in the same step, so normally
+only the newest is active. Errors: `404 module not found`.
+
+### `DELETE /api/v1/modules/{id}/credentials`
+
+Revoke **every** active credential of the module, for example when one may
+have leaked. The module is disconnected at once (its calls get `401`) and
+its status becomes `unpaired`. Den never pairs it again by itself: an admin
+creates a new pairing URL and pastes it into the module. **Auth:** admin.
+
+```sh
+curl -X DELETE -H "Authorization: Bearer $TOKEN" $DEN/api/v1/modules/3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a/credentials
+```
+
+```json
+{ "revoked": 1, "module_status": "unpaired" }
+```
+
+`revoked` is `0` when nothing was active. Audited as
+`module.credentials.revoke_all`. Errors: `404 module not found`.
+
+### `DELETE /api/v1/modules/{id}/credentials/{credentialID}`
+
+Revoke one credential. When it was the last active one, the module becomes
+`unpaired`. **Auth:** admin.
+
+```sh
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $DEN/api/v1/modules/3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a/credentials/8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+```
+
+```json
+{ "revoked": 1, "module_status": "unpaired" }
+```
+
+Revoking an already revoked credential answers `{"revoked": 0, …}`.
+Audited as `module.credential.revoke`. Errors: `400 invalid credentialID
+id`, `404 module not found`, `404 credential not found`.
+
+**Rotating** a credential means pairing again: create a pairing URL and
+paste it into the module; the new credential replaces the old one
+atomically. See the
+[runbook for a leaked pairing URL or credential](../../operations/disaster-recovery.md#a-pairing-url-or-module-credential-leaked).
 
 ---
 
@@ -662,8 +862,8 @@ Upload an asset, as `multipart/form-data`.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `role` | yes | `logo`, `favicon` or `login-background` are the roles Den uses. Den does not check the value. |
-| `file` | yes | Up to 10 MB. Its content type is stored as sent. |
+| `role` | yes | `logo`, `favicon` or `login-background`; anything else is refused. |
+| `file` | yes | Up to 10 MB. PNG, JPEG, WebP, ICO or SVG. Den recognises the type from the file's content, not from its name or the `Content-Type` the client sends, and stores the detected type. |
 
 ```sh
 curl -X POST -H "Authorization: Bearer $TOKEN" \
@@ -671,15 +871,23 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 ```
 
 `201 Created`: `{"id": "9e8d7c6b-5a4f-4e3d-2c1b-0a9f8e7d6c5b"}`. The newest
-asset of a role is the one in use.
+asset of a role is the one in use. Audited as `branding.asset.create`.
 
-Errors: `400 invalid multipart form: …`, `422 role is required`,
-`422 file is required`.
+Errors: `400 invalid multipart form: …`, `422 file is required`, and `422
+validation failed` with `details.role = "must be logo, favicon or
+login-background"`, `details.file = "must be a PNG, JPEG, WebP, ICO or SVG
+image"` or `details.file = "must be at most 10 MB"`.
 
 ### `GET /api/v1/brand/assets/{id}`
 
-The file itself, with its content type and
-`Cache-Control: public, max-age=86400`.
+The file itself, with its content type,
+`X-Content-Type-Options: nosniff` and
+`Cache-Control: public, max-age=86400`. SVG files are served with
+`Content-Disposition: attachment` and
+`Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`:
+`<img>` tags show them, but opening one directly runs nothing. A file
+stored with any other type (from before the type check) is served as
+`application/octet-stream` and as an attachment.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" -o logo.svg \
@@ -698,11 +906,17 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 ```
 
 `204 No Content`. Errors: `400 invalid id id`, `404 asset not found`.
+Audited as `branding.asset.delete`.
 
 ### `GET /api/v1/public/brand`
 
-The **brand bundle** for screens shown before sign-in. **Auth:** none.
-Cached for 60 seconds (`Cache-Control: public, max-age=60`).
+The **brand bundle** for screens shown before sign-in, including the
+Keycloak sign-in page, whose `conservices` theme fetches it in the browser.
+**Auth:** none. Cached for 60 seconds (`Cache-Control: public, max-age=60`).
+Any web page may read it: the answer carries
+`Access-Control-Allow-Origin: *` (without credentials; origins in
+`CORS_ALLOWED_ORIGINS` get their usual credentialed answer).
+Rate-limited to 120 requests a minute per address.
 
 ```sh
 curl $DEN/api/v1/public/brand
@@ -721,25 +935,28 @@ curl $DEN/api/v1/public/brand
     "login-background": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
   },
   "logo_url": "/api/v1/public/brand/assets/logo",
+  "favicon_url": "/api/v1/public/brand/assets/favicon?v=5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a",
   "login_background_url": "/api/v1/public/brand/assets/login-background?v=1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
 }
 ```
 
 - `assets` maps each role to its newest asset.
-- `logo_url` and `login_background_url` are relative to Den, and only
-  present when that asset exists.
+- `logo_url`, `favicon_url` and `login_background_url` are relative to Den,
+  and only present when that asset exists.
 - `organization_name` is the `organization_name` setting, else
   `copy.convention_name`, else the organisation's name in Den.
 
 ### `GET /api/v1/public/brand/assets/{role}`
 
-The newest asset of a role, for example `logo`. **Auth:** none.
+The newest asset of a role, for example `logo`. **Auth:** none. Same
+headers as [`GET /api/v1/brand/assets/{id}`](#get-apiv1brandassetsid).
 
 ```sh
 curl -o logo.svg $DEN/api/v1/public/brand/assets/logo
 ```
 
-Errors: `404 asset not found`.
+Errors: `404 asset not found` (also for a role other than `logo`,
+`favicon` and `login-background`), `429 rate_limited`.
 
 ---
 
@@ -754,7 +971,7 @@ a Den release.
 
 | Key | Type | Rules | Read by |
 | --- | --- | --- | --- |
-| `organization_name` | string | Trimmed. | Every module (emails, sign-in pages); also the Keycloak realm display name. |
+| `organization_name` | string | Trimmed. | Every module (emails, sign-in pages); also the Keycloak realm display name when the name sync is on. |
 | `org_email_domain` | string | A domain like `example.org`; lower-cased, a leading `@` is removed. | HR (organisation emails). |
 | `username_template` | string | Letters, digits, `.`, `-`, `_`, and at least one of `{first}`, `{last}`, `{nickname}`. | HR (login names). |
 | `org_email_template` | string | Same as `username_template`. | HR (organisation email suggestions). |
@@ -801,7 +1018,8 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json
 ```
 
 Returns the saved document, as `GET` (here with `org_email_domain` stored as
-`example.org`), and triggers a Keycloak sync.
+`example.org`), and triggers a Keycloak name sync. The change is audited
+(`org_settings.update`) with the old and new document.
 
 Validation errors are `422` with one message per key:
 
@@ -820,32 +1038,130 @@ Validation errors are `422` with one message per key:
 
 ---
 
+## Module settings
+
+**Module settings** are what Den hands to paired modules besides the brand
+and the organisation settings: retention periods, the e-mail server,
+Finance's seller details, Stash's Lost & Found retention, Rally's
+submission site and the identity links. Every section and every field is
+optional; a missing value means "the module decides". Unknown fields are
+refused (`400`).
+
+| Section | Fields | Rules | Given to |
+| --- | --- | --- | --- |
+| `retention` | `offboarded_volunteers_days`, `inactive_users_days`, `module_data_days` (1–3650), `backup_note` (text, at most 2000) | `pending_legal_review` is always `true` in answers: the periods have not been checked by a lawyer yet. | every module |
+| `smtp` | `host` (host name), `port` (1–65535), `from` (e-mail address, `Name <a@b>` allowed), `username`, `password` | `password` is **write-only**: a string sets it, `null` clears it, leaving it out keeps it. Answers show `password_set` instead. Removing the section clears the password too. | every module (with the password) |
+| `finance` | `seller_name`, `seller_address`, `vat_number` | `vat_number`: spaces, `.` and `-` are removed, upper-cased, must start with a two-letter country code (`NL123456789B01`). | the module with slug `finance` |
+| `stash` | `lost_and_found`: `{"mode": "days_after_con", "days": N}` (kept N days after the con, 0–3650) or `{"mode": "hours_after_closing", "hours": N}` (deleted N hours after closing, 0–8760) | | slug `stash` |
+| `rally` | `submission_site_host` | A host name without `https://`, e.g. `submit.example.org`. | slug `rally` or `events` |
+| `identity` | `account_console_url`, `sso_name` (at most 100), `idp_admin_console_url` | URLs `https://` (http only in development). The admin console link in Den's menu and the account link on the portal come from here. | every module; the portal (`identity_links`) |
+
+### `GET /api/v1/module-settings`
+
+**Auth:** admin.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/module-settings
+```
+
+```json
+{
+  "data": {
+    "retention": { "pending_legal_review": true, "offboarded_volunteers_days": 365, "backup_note": "Backups keep deleted data for 6 months." },
+    "smtp": { "host": "smtp.example.org", "port": 587, "from": "Example Con <noreply@example.org>", "username": "noreply", "password_set": true },
+    "finance": { "seller_name": "Example Con e.V.", "seller_address": "Main Street 1, 3511 Utrecht", "vat_number": "NL123456789B01" },
+    "stash": { "lost_and_found": { "mode": "hours_after_closing", "hours": 48 } },
+    "rally": { "submission_site_host": "submit.example.org" },
+    "identity": {
+      "account_console_url": "https://auth.example.org/realms/conservices/account",
+      "sso_name": "Example Con account",
+      "idp_admin_console_url": "https://auth.example.org/admin/master/console/#/conservices"
+    }
+  },
+  "updated_at": "2026-11-11T12:00:00Z"
+}
+```
+
+Never saved: `{"data":{},"updated_at":null}`.
+
+### `PUT /api/v1/module-settings`
+
+Replace the whole document (the `data` object, not wrapped). **Auth:**
+admin. Returns the saved document as `GET`. Audited as
+`module_settings.update`; the password never appears in the audit log, only
+the note `SMTP password set` or `SMTP password cleared`.
+
+```sh
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"smtp":{"host":"smtp.example.org","port":587,"from":"Example Con <noreply@example.org>","username":"noreply","password":"change-me"},"rally":{"submission_site_host":"submit.example.org"}}' \
+  $DEN/api/v1/module-settings
+```
+
+Validation errors are `422` with one message per field, keyed
+`section.field`:
+
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "validation failed",
+    "details": {
+      "smtp.port": "must be between 1 and 65535",
+      "rally.submission_site_host": "must be a host name without https://, for example submit.example.org"
+    }
+  }
+}
+```
+
+---
+
 ## Keycloak sync
+
+The Keycloak sign-in page **pulls** the brand from
+[`GET /api/v1/public/brand`](#get-apiv1publicbrand) by itself (see
+[ADR 0008](https://github.com/AGlElectronics/den/blob/main/docs/adr/0008-keycloak-branding-pull.md)).
+What Den can still push is the realm's **display name**, which Keycloak uses
+in its own e-mails and page titles. That sync is on when `KEYCLOAK_ADMIN_URL`,
+`KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID` and `KEYCLOAK_CLIENT_SECRET` are set,
+and always off with `IDENTITY_STAFF_MODE=existing`.
 
 ### `GET /api/v1/keycloak-sync`
 
-The state of the brand push into Keycloak. **Auth:** admin.
+The state of the display-name sync. **Auth:** admin.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/keycloak-sync
 ```
 
 ```json
-{ "enabled": true, "realm": "conservices", "revision": 10, "synced_at": "2026-11-06T09:41:28.512Z" }
+{ "enabled": true, "mode": "pull", "realm": "conservices", "revision": 10, "display_name": "Example Con e.V.", "synced_at": "2026-11-06T09:41:28.512Z" }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `enabled` | Whether the sync is configured. `false` is the only field when it is not. |
+| `enabled` | Whether the display-name sync runs. |
+| `mode` | Always `pull`: the sign-in page fetches the brand itself. |
+| `message` | Why the sync is off, when it is (not configured, or identity mode `existing`). |
 | `realm` | The realm being updated. |
-| `revision` | The branding revision last pushed. |
-| `synced_at` | When the last successful push finished. |
+| `revision` | The branding revision of the last sync. |
+| `display_name` | The name last written. |
+| `synced_at` | When the last successful sync finished. |
 | `last_error` | The error of the last attempt, if it failed. |
+
+Off in identity mode `existing`:
+
+```json
+{ "enabled": false, "mode": "pull", "message": "Off because IDENTITY_STAFF_MODE is existing: the realm belongs to your convention and Den never changes it. Its sign-in page shows Den's brand only if the conservices login theme is installed there." }
+```
 
 ### `POST /api/v1/keycloak-sync`
 
-Push now and return the result, in the same shape. **Auth:** admin. It
-answers `200` even if the push fails; check `last_error`.
+Sync the display name now and return the result, in the same shape.
+**Auth:** admin. It answers `200` even if the sync fails; check
+`last_error` and the
+[Keycloak sync runbook](../../operations/disaster-recovery.md#the-keycloak-name-sync-fails).
+Audited as `keycloak.sync` (background syncs only when the name or the
+outcome changes).
 
 ```sh
 curl -X POST -H "Authorization: Bearer $TOKEN" $DEN/api/v1/keycloak-sync
@@ -853,11 +1169,88 @@ curl -X POST -H "Authorization: Bearer $TOKEN" $DEN/api/v1/keycloak-sync
 
 ---
 
+## Audit log
+
+Every change made in Den, newest first. Den writes the row in the same
+database transaction as the change (operator actions right after the
+operator answered). Credentials, tokens and the SMTP password are never
+written to it.
+
+### `GET /api/v1/audit-events`
+
+**Auth:** admin.
+
+| Query parameter | Meaning |
+| --- | --- |
+| `action` | An exact action, or a prefix ending in `*` (`module.*`). |
+| `entity_type` | `module`, `branding_profile`, `branding_asset`, `organization`, `backup`. |
+| `entity_id` | A UUID, e.g. a module id. |
+| `actor_user_id` | A UUID of a user. |
+| `since`, `until` | RFC 3339 times; `since` is inclusive, `until` exclusive. |
+| `limit` | 1–200, default 50. |
+| `cursor` | `next_cursor` of the previous page. |
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" "$DEN/api/v1/audit-events?action=module.*&limit=2"
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a",
+      "created_at": "2026-11-11T10:20:00Z",
+      "action": "module.update",
+      "entity_type": "module",
+      "entity_id": "3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a",
+      "actor": { "id": "6f1c2b9e-3a7d-4f0e-9b8a-1d2c3e4f5a6b", "display_name": "Dev Admin", "email": "admin@conservices.local" },
+      "note": "",
+      "before": { "enabled": true, "portal_visibility": "role_holders", "display_name": "HR", "base_url": "https://hr.conservices.test", "internal_url": "", "environment": "production" },
+      "after": { "enabled": false, "portal_visibility": "role_holders", "display_name": "HR", "base_url": "https://hr.conservices.test", "internal_url": "", "environment": "production" }
+    },
+    {
+      "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+      "created_at": "2026-11-11T10:15:00Z",
+      "action": "module.credentials.revoke_all",
+      "entity_type": "module",
+      "entity_id": "3d2c1b0a-9f8e-4d7c-b6a5-0f1e2d3c4b5a",
+      "actor": { "id": "6f1c2b9e-3a7d-4f0e-9b8a-1d2c3e4f5a6b", "display_name": "Dev Admin" },
+      "note": "every credential of hr revoked",
+      "after": { "revoked": 1, "status": "unpaired" }
+    }
+  ],
+  "next_cursor": "MjAyNi0xMS0xMVQxMDoxNTowMFosNWU2ZjdhOGItOWMwZC00ZTFmLThhMmItM2M0ZDVlNmY3YThi"
+}
+```
+
+`actor` is `null` for events Den caused by itself (pre-registration,
+background Keycloak syncs). For `pairing.token.redeem` it is the admin who
+created the pairing URL. `before` and `after` are left out when empty.
+`next_cursor` is missing on the last page.
+
+| Action | When |
+| --- | --- |
+| `module.create`, `module.update`, `module.delete` | Modules page, API, pre-registration |
+| `pairing.token.create`, `pairing.token.redeem` | A pairing URL is created / used (`after.revoked_credentials` counts older credentials revoked) |
+| `module.credential.revoke`, `module.credentials.revoke_all` | Modules → Credentials |
+| `branding.profile.update`, `branding.asset.create`, `branding.asset.delete` | Branding page |
+| `org_settings.update`, `module_settings.update` | Organisation and Module settings pages |
+| `keycloak.sync` | "Sync name now", or the background sync when the name or outcome changed |
+| `operations.backup.start`, `operations.schedule.update`, `operations.download_link.create`, `operations.backup.download` | Backups page (`note` is the backup key) |
+
+Errors: `400` for a bad `limit`, id, time or cursor (`since must be an RFC
+3339 time, e.g. 2026-11-11T00:00:00Z`).
+
+---
+
 ## Operations (backups and databases)
 
-These endpoints front Den's operator. They need the **admin** role. When Den
-has no operator configured, they answer as described per endpoint (mostly
-`409 the operator is not set up`).
+These endpoints front Den's operator. They need the **ops** role, except
+`GET /operations/status`, which admins may read too (for the backup warning
+and the database list). An admin without `ops` gets `403 insufficient role`.
+When Den has no operator configured, they answer as described per endpoint
+(mostly `409 the operator is not set up`). Backups, schedule changes, link
+creation and downloads are written to the [audit log](#audit-log).
 
 ### `GET /api/v1/operations/status`
 
@@ -976,21 +1369,27 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 { "url": "/api/v1/backup-downloads/5f0c…9a1e" }
 ```
 
-The key is checked only when the link is used. Links are kept in the
-backend's memory, so they stop working when it restarts.
+The link works once, for 5 minutes. It is stored (as a hash) in Den's
+database, so any backend replica can serve it and it survives a restart.
+The key is checked only when the link is used. Errors: `422` with
+`details.key = "is required"`, `409 the operator is not set up`.
 
 ### `GET /api/v1/backup-downloads/{token}`
 
 Download the backup. **Auth:** none; the link is the permission, and it
-works once.
+works once. Rate-limited to 10 a minute per address.
 
 ```sh
 curl -OJ $DEN/api/v1/backup-downloads/5f0c…9a1e
 ```
 
 Streams the encrypted file as `application/octet-stream` with a
-`Content-Disposition` file name. Errors: `404 download link not found`
-(unknown, used or expired), `404 backup not found`.
+`Content-Disposition` file name, `X-Content-Type-Options: nosniff` and
+`Cache-Control: no-store`. The link is used up before streaming starts, so
+an interrupted download needs a new link. The download is audited
+(`operations.backup.download`) with the person who created the link.
+Errors: `404 download link not found` (unknown, used or expired), `404
+backup not found`, `429 rate_limited`.
 
 ---
 
@@ -1038,9 +1437,11 @@ side makes:
    [`/api/v1/integrations/branding/assets/{id}`](#get-apiv1integrationsbrandingassetsid).
 
 To **unpair**, unpair in the module (it forgets the credential) and
-[delete the module](#delete-apiv1modulesid) in Den, which removes its
-credentials. Pairing again with a new URL replaces the module's old
-credential on its side.
+[revoke its credentials](#delete-apiv1modulesidcredentials) or
+[delete the module](#delete-apiv1modulesid) in Den. Pairing again with a
+new URL revokes the module's older credentials in Den and replaces the
+credential on the module's side. Pairing is always started by an admin;
+Den never re-pairs a module by itself.
 
 Network policy: the module's namespace needs egress to `den-backend` on
 port 8080, and Den's namespace an ingress rule for it; see
@@ -1051,6 +1452,7 @@ port 8080, and Den's namespace an ingress rule for it; see
 Trade a pairing token for a long-lived credential. **Auth:** the token in the
 URL. This is the pairing URL from
 [`pairing-tokens`](#post-apiv1modulesidpairing-tokens), called with `POST`.
+Rate-limited to 10 a minute per address.
 
 | Query parameter | Required |
 | --- | --- |
@@ -1060,12 +1462,13 @@ Optional body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
+| `module_id` | string | If sent, must be the id of the module the URL was made for. |
+| `module_slug` | string | If sent, must be that module's slug. |
 | `module_version` | string | Added to the credential's label. |
-| `module_slug` | string | Accepted but currently unused. |
 
 ```sh
 curl -X POST -H "Content-Type: application/json" \
-  -d '{"module_version":"1.4.0"}' \
+  -d '{"module_slug":"hr","module_version":"1.4.0"}' \
   "$DEN/api/v1/integrations/pairing/redeem?token=<token>"
 ```
 
@@ -1079,16 +1482,26 @@ curl -X POST -H "Content-Type: application/json" \
 }
 ```
 
-**200 OK.** The module is marked `paired`. Den stores only a hash of the
-credential, so it cannot be shown again. A body that is not valid JSON is
-ignored rather than rejected.
+**200 OK.** The module is marked `paired` and every older credential of the
+module is revoked, all in one transaction: if the same URL is redeemed
+twice at the same moment, exactly one call gets a credential and the other
+gets `401 pairing token already consumed`. Den stores only a hash of the
+credential, so it cannot be shown again. The redeem is audited
+(`pairing.token.redeem`) with the admin who created the URL as the actor.
 
 | Status | Message |
 | --- | --- |
 | 400 | `missing token` |
+| 400 | `invalid JSON: …` (the body is not valid JSON, or has an unknown field; an empty body is fine) |
 | 401 | `invalid pairing token` |
 | 401 | `pairing token already consumed` |
 | 401 | `pairing token expired` |
+| 409 | `this pairing URL was made for another module (module_id does not match)` |
+| 409 | `this pairing URL was made for the module hr, not stash` |
+| 429 | `too many requests, try again later` |
+
+A `400` or `409` does not use up the token; paste the URL into the right
+module.
 
 In the examples below, `$CRED` is the credential.
 
@@ -1114,13 +1527,25 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/bundle
   "settings": {
     "data": { "organization_name": "Example Con e.V.", "org_email_domain": "example.org" },
     "updated_at": "2026-11-06T09:44:02Z"
+  },
+  "module_settings": {
+    "retention": { "pending_legal_review": true, "offboarded_volunteers_days": 365 },
+    "smtp": { "host": "smtp.example.org", "port": 587, "from": "Example Con <noreply@example.org>", "username": "noreply", "password": "change-me" },
+    "identity": { "account_console_url": "https://auth.example.org/realms/conservices/account", "sso_name": "Example Con account" },
+    "stash": { "lost_and_found": { "mode": "hours_after_closing", "hours": 48 } },
+    "updated_at": "2026-11-11T12:00:00Z"
   }
 }
 ```
 
 `brand` is the [public brand bundle](#get-apiv1publicbrand) without
-`logo_url` and `login_background_url`; fetch the files with the asset
-endpoint below.
+`logo_url`, `favicon_url` and `login_background_url`; fetch the files with
+the asset endpoint below. `module_settings` holds the
+[Module settings](#module-settings) for the calling module: `retention`,
+`smtp` (with the password) and `identity` for every module, plus only its
+own section (`finance` for slug `finance`, `stash` for `stash`, `rally` for
+`rally` or `events`). It is `{}` when nothing is set. A module shows these
+values as "Managed in Den" and keeps its own value for anything missing.
 
 ### `GET /api/v1/integrations/settings`
 
@@ -1128,6 +1553,18 @@ Only the organisation settings, as in `bundle.settings`.
 
 ```sh
 curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/settings
+```
+
+### `GET /api/v1/integrations/module-settings`
+
+Only the module settings, as in `bundle.module_settings`.
+
+```sh
+curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings
+```
+
+```json
+{ "rally": { "submission_site_host": "submit.example.org" }, "updated_at": "2026-11-11T12:00:00Z" }
 ```
 
 ### `GET /api/v1/integrations/branding/profile`
@@ -1162,6 +1599,13 @@ another organisation).
 A person's preferences, so a module can apply the theme they chose in any
 app. The person is identified by the `iss` and `sub` of their token.
 
+A module may only ask about **its own users**: people who signed in to Den
+at least once, are not disabled, and may use the module (its
+`portal_visibility` is `everyone`, or one of their groups from their last
+Den sign-in is in the module's role catalog). Anyone else gives
+`404 person for this module not found`; the module keeps the theme locally.
+In dev mode (`AUTH_MODE=dev`) the check is off.
+
 | Query parameter | Required |
 | --- | --- |
 | `issuer` | yes |
@@ -1176,7 +1620,8 @@ curl -H "Authorization: Bearer $CRED" \
 { "theme": "dark", "updated_at": "2026-11-06T09:12:44Z" }
 ```
 
-Errors: `422` with `details.subject = "issuer and subject are required"`.
+Errors: `422` with `details.subject = "issuer and subject are required"`,
+`404 person for this module not found`.
 
 ### `PUT /api/v1/integrations/user-preferences`
 
@@ -1216,18 +1661,30 @@ Pairing URLs work once and for 15 minutes. Create a new one with
 [`POST /api/v1/modules/{id}/pairing-tokens`](#post-apiv1modulesidpairing-tokens).
 
 **A paired module gets `401 invalid or revoked credential`.**
-The module was deleted in Den (which removes its credentials). Register it
-again and pair it with a new URL.
+Its credential was revoked (Modules → Credentials, or by pairing it again
+elsewhere), or the module was deleted in Den. Check
+[`GET /api/v1/modules/{id}/credentials`](#get-apiv1modulesidcredentials),
+then pair it again with a new URL (register it first if it was deleted).
 
-**`500` when registering a module.**
-Registering the same `slug` and `environment` twice is not yet reported
-more clearly; check [`GET /api/v1/modules`](#get-apiv1modules) for an
-existing entry.
+**`403 insufficient role` on `/operations/backups`, although you are an admin.**
+Backups need the `ops` role: add yourself to a group from `DEN_OPS_GROUPS`
+(default `den-ops`) and sign in again. `GET /api/v1/me` shows `"ops"` in
+`roles` once it works.
+
+**`429 rate_limited`.**
+Wait the seconds in `Retry-After`. If every user behind one proxy shares the
+limit, the proxy is not in `TRUSTED_PROXY_CIDRS`, so Den sees the proxy's
+address as the client.
+
+**A module is missing from a member's portal.**
+The member has none of the groups in the module's role catalog, or Den cannot
+read the catalog at the module's `internal_url` (or `base_url`). Check
+`curl <address>/api/role-catalog` from the Den backend, or set the module's
+`portal_visibility` to `everyone`.
 
 **`409 the operator is not set up`.**
 `OPERATOR_URL` is not set, so Den cannot manage databases or backups; see
 [Configuration](configuration.md).
 
 **A backup download link answers `404 download link not found`.**
-Links work once, for 5 minutes, and are forgotten when `den-backend`
-restarts. Create a new one.
+Links work once, for 5 minutes. Create a new one.
