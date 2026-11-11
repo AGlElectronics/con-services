@@ -187,6 +187,13 @@ tag `1.12.1-1` for every HR image and the chart revision `hr/v1.12.1`.
 `modules.<app>.chartRevision` (or `den.chartRevision`) overrides the chart
 revision in the rare case you need another one; leave it empty otherwise.
 
+Every change to a released chart raises its version; the *Chart versions*
+check on pull requests enforces it. Until an app's chart has its first
+release tag `<app>/v*`, nobody can install it from a tag, so the chart may
+change while staying at its first version (for example `1.0.0`) and the
+check skips it. See
+[CI and releases](../contributing/ci.md#the-deploy-validation-workflow).
+
 ### The main repository's own tags
 
 `con-services` also has plain tags `vX.Y.Z`, starting at `v1.0.0`. They

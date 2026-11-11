@@ -175,6 +175,9 @@ led by Den's MAJOR; see
   mappers to existing development realms. A running production realm
   needs them added by hand before a module that checks its audience is
   upgraded ([Audiences per API](docs/concepts/authentication.md#audiences-per-api)).
+- CI *Chart versions*: a changed chart needs a higher version only once
+  its app has a chart release tag `<app>/v*`; before the first release a
+  chart may change while staying at its first version.
 
 ### Security
 
