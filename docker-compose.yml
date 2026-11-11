@@ -884,7 +884,7 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: desk-spa
-      OIDC_AUDIENCE: desk-spa
+      OIDC_AUDIENCE: desk-api
       ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3008,https://desk.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"

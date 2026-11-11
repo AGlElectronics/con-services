@@ -37,9 +37,11 @@ export TOKEN=eyJhbGciOi...   # access token from Keycloak for client desk-spa
 
 | Caller | How | Accepted on |
 | --- | --- | --- |
-| Staff (production) | `Authorization: Bearer <token>` from Keycloak, verified against `OIDC_ISSUER_URL` | everything under `/api/v1` except the brand and `den/state` |
-| Local development (`AUTH_MODE=dev` only) | `X-Dev-User: <name>` and optionally `X-Dev-Groups: desk-support-manager,…` (default `DEV_DEFAULT_USER`, `DEV_DEFAULT_GROUPS`) | the same routes |
-| Anyone | nothing | probes, `/api/role-catalog`, `/api/den/state`, `/api/v1/brand…` |
+| Staff (production) | `Authorization: Bearer <access token>` from Keycloak, audience `desk-api` (`OIDC_AUDIENCE`). ID tokens are refused. | everything under `/api/v1` except the brand and `den/state` |
+| Local development (`AUTH_MODE=dev` and `APP_ENV=development`) | `X-Dev-User: <name>` and optionally `X-Dev-Groups: desk-info-manager,…` (default `DEV_DEFAULT_USER`, `DEV_DEFAULT_GROUPS`). The headers are removed in every other mode. | the same routes |
+| HR's backend | `Authorization: Bearer <HR_SERVICE_TOKEN>` | only `GET /api/role-catalog` |
+| Den's backend | `Authorization: Bearer <the module credential>` plus `X-Den-User-Issuer` and `X-Den-User-Subject` | only `GET /api/portal/todos` |
+| Anyone | nothing | probes, `/api/den/state`, `/api/v1/brand…` |
 
 !!! danger "Dev mode trusts a header"
     In `AUTH_MODE=dev` anyone who can reach the backend can claim any user
@@ -80,7 +82,9 @@ Every Desk error has this shape (see
 | Status | `code` | Typical cause in Desk |
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, unknown field, empty body, bad id, unknown `folder`, bad `cursor`, `kind` not `reply`/`note`, heartbeat `mode` wrong, merging something into itself. |
-| 401 | `unauthorized` | `missing bearer token` or `invalid token` (expired, wrong issuer or audience). |
+| 401 | `unauthorized` | `missing bearer token` or `invalid token` (expired, wrong issuer or audience, or an ID token). Also a wrong credential on `GET /api/portal/todos`. |
+| 413 | `request_too_large` | JSON body over 1 MiB, or over 20 MiB on a message (new conversation, reply, forward, mailbox signature, saved reply). |
+| 429 | `rate_limited` | Too many calls to `GET /api/portal/todos` from one client. `Retry-After` says how long to wait. |
 | 403 | `forbidden` | You see the mailbox but lack the role for this action. |
 | 404 | `not_found` | Does not exist, or you have no role for its mailbox. |
 | 409 | `conflict` | Duplicate mailbox address; already in or not in the trash; undo too late; retry of a reply that has not failed; Google refused. |
@@ -98,7 +102,8 @@ when not paired, 502 when Den cannot be reached).
 | 1 | GET | `/livez` | anyone |
 | 2 | GET | `/readyz` | anyone |
 | 3 | GET | `/api/health` | anyone |
-| 4 | GET | `/api/role-catalog` | anyone (HR) |
+| 4 | GET | `/api/role-catalog` | HR's service token, or any signed-in staff member |
+| 4b | GET | `/api/portal/todos` | Den, with the module credential |
 | 5 | GET | `/api/den/state` (also `/api/v1/den/state`) | anyone |
 | 6 | GET | `/api/v1/brand` | anyone |
 | 7 | GET | `/api/v1/brand/{role}` | anyone |
@@ -198,14 +203,23 @@ curl -s $DESK/api/health
 
 ### `GET /api/role-catalog`
 
-Anyone (HR calls it in-cluster to fill its access picker). Sent with
-`Cache-Control: no-cache`. One entry per module-wide role and Keycloak group
-binding from the access configuration, then **three entries per mailbox**
-not in the trash. Mailbox entries have `scope` `mailbox:<slug>`, no
-permissions, and the mailbox address in `note`.
+HR's backend calls this with `Authorization: Bearer $HR_SERVICE_TOKEN`
+(compared in constant time; the token allows nothing else). Anyone signed
+in to Desk may also read it. With no token and no sign-in the answer is
+`401 unauthorized`. Without `HR_SERVICE_TOKEN` configured, only a sign-in works.
+
+One entry per module-wide role and Keycloak group binding, then **three
+dynamic entries per mailbox** not in the trash (`dynamic: true`). `group`
+is the normalised group name and `group_display` is the name as written.
+`privileged` is true for Desk admin and for each mailbox's delete role.
+`scope` is `organization` or `mailbox`. Mailbox entries have no permissions
+and put the address in `note`. The body includes `revision`, also sent as
+the `ETag` header. Send that value back as `If-None-Match` to get `304`.
 
 ```sh
-curl -s --cacert /etc/conservices-internal-ca/ca.crt https://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog
+curl -s --cacert /etc/conservices-internal-ca/ca.crt \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN" \
+  https://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog
 ```
 
 ```json
@@ -237,6 +251,40 @@ curl -s --cacert /etc/conservices-internal-ca/ca.crt https://desk-backend.conser
 Slugs with dashes become underscores in the role key
 (`lost-found` → `desk_lost_found_viewer`); the group keeps the dash
 (`desk-lost-found-viewer`).
+
+### `GET /api/portal/todos`
+
+Den's backend calls this, server to server, to list what the signed-in
+person should do in Desk. The browser never calls it. See
+[Portal to-dos](../den/admin-guide.md#portal-to-dos).
+
+**Who:** Den, with `Authorization: Bearer <the credential Desk received when it paired>`.
+Not paired: `404 not_found`. A wrong credential, a revoked credential, or one
+Desk cannot decrypt: `401 unauthorized` with `invalid or revoked credential`
+(the answer does not say which). Missing `X-Den-User-Issuer` or
+`X-Den-User-Subject`: `400 bad_request`.
+
+**Headers:** `X-Den-User-Issuer` and `X-Den-User-Subject` name the person.
+An unknown person gets `{"items": []}`, not an error.
+
+**Response:** `200` with at most 50 open conversations (`active` or
+`pending`) assigned to that person. `url` is `APP_BASE_URL` plus
+`/conversations/<id>` (set `APP_BASE_URL` or Den drops the item). `severity`
+is `warning` when the conversation is pending and `info` otherwise.
+
+```sh
+curl -s --cacert /etc/conservices-internal-ca/ca.crt \
+  -H "Authorization: Bearer $DESK_MODULE_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.conservices.test/realms/conservices" \
+  -H "X-Den-User-Subject: 0b6e2c4d-8f1a-4b3c-9d7e-5a6b7c8d9e0f" \
+  https://desk-backend.conservices-desk.svc.cluster.local:8080/api/portal/todos
+```
+
+```json
+{"items":[{"id":"6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60","title":"Badge not printed","detail":"Registration","url":"https://desk.example.org/conversations/6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60","severity":"info"}]}
+```
+
+The chart's network policy admits `den-backend` from `conservices-den` on the backend port.
 
 ### `GET /api/den/state`
 

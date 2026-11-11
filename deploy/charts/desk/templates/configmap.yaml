@@ -106,6 +106,7 @@ data:
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
@@ -116,6 +117,7 @@ data:
         }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
         }
     }

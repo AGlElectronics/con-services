@@ -272,7 +272,7 @@ in `not_after`.
 | `ha.podDisruptionBudget`, `ha.topologySpread`, `priorityClassName` | `true`, `true`, `""` | PodDisruptionBudget and spreading over nodes for the web app (two replicas); see [High availability](../../operations/helm.md#high-availability). |
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
 | `imagePullSecrets` | `[]` | Pull Secrets for private images on every pod, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
-| `google.enabled`, `google.existingSecret`, `google.secretKey`, `google.mountPath` | `false`, `desk-google`, `service-account.json`, `/etc/desk-google` | Mounts the Google service account key and sets `GOOGLE_SERVICE_ACCOUNT_FILE`; see [Google Workspace](google-workspace.md). |
+| `google.enabled`, `google.existingSecret`, `google.secretKey`, `google.mountPath` | `false`, `desk-google`, `service-account.json`, `/etc/desk-google` | Mounts the Google service account key and sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE`; see [Google Workspace](google-workspace.md). |
 | `networkPolicy.google.enabled` / `.fqdns` / `.cidrs` / `.port` | `false` / Gmail, Admin SDK, OAuth2 and `www.googleapis.com` / `[]` / `443` | Egress from the backend to Google's APIs: a `CiliumNetworkPolicy` `desk-backend-google` by host name with Cilium, `ipBlock` rules from `cidrs` otherwise. |
 | `networkPolicy.data.s3.enabled` | `true` | Egress to the platform's S3 (Garage) for the bucket in `config.S3_BUCKET`. |
 | `networkPolicy.extraEgress` | IMAP and SMTP ports to `0.0.0.0/0` | Mail servers of IMAP mailboxes and `SMTP_HOST`. Narrow it, or `[]` with only Google mailboxes. |
@@ -350,7 +350,7 @@ then add:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
       OIDC_CLIENT_ID: desk-spa
-      OIDC_AUDIENCE: desk-spa
+      OIDC_AUDIENCE: desk-api
       ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
       CORS_ALLOWED_ORIGINS: https://desk.con.example.org
       SMTP_HOST: smtp.example.org
@@ -364,9 +364,9 @@ then add:
       DEN_INTERNAL_URL: http://den-backend:8080
       # Google Workspace (optional; see the Google Workspace page):
       # GOOGLE_WORKSPACE_DOMAIN: example.org
-      # GOOGLE_ADMIN_USER: desk-admin@example.org
+      # GOOGLE_WORKSPACE_ADMIN_EMAIL: desk-admin@example.org
       # GOOGLE_SHARED_MAILBOX: desk@example.org
-      # GOOGLE_SERVICE_ACCOUNT_FILE: /etc/desk-google/service-account.json
+      # GOOGLE_WORKSPACE_CREDENTIALS_FILE: /etc/desk-google/service-account.json
     volumes:
       - ./desk/access-config.toml:/etc/desk/access-config.toml:ro
       # - /etc/conservices/desk-google.json:/etc/desk-google/service-account.json:ro

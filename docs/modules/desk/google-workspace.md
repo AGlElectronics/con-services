@@ -126,7 +126,7 @@ the message again (duplicates are skipped by `Message-ID`).
     hours, to apply.
 
 5. **Pick the admin Desk acts as.** The Admin SDK calls run as a Workspace
-   admin (`GOOGLE_ADMIN_USER`). Use a dedicated user, for example
+   admin (`GOOGLE_WORKSPACE_ADMIN_EMAIL`). Use a dedicated user, for example
    `desk-admin@example.org`, with an admin role that can manage users and
    groups (**Account → Admin roles → Create new role**: Users → Create,
    Update, Suspend, Delete; Groups → all). A super admin works too but
@@ -168,7 +168,7 @@ the message again (duplicates are skipped by `Message-ID`).
       existingSecret: desk-google
     config:
       GOOGLE_WORKSPACE_DOMAIN: example.org
-      GOOGLE_ADMIN_USER: desk-admin@example.org
+      GOOGLE_WORKSPACE_ADMIN_EMAIL: desk-admin@example.org
       GOOGLE_SHARED_MAILBOX: desk@example.org   # only for group mailboxes
       GOOGLE_LABEL: Desk
       NOTIFY_FROM: "Desk <desk@example.org>"    # reminders and notifications
@@ -177,7 +177,7 @@ the message again (duplicates are skipped by `Message-ID`).
         enabled: true            # egress to Google's APIs on 443
     ```
 
-    The chart sets `GOOGLE_SERVICE_ACCOUNT_FILE` to
+    The chart sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE` to
     `/etc/desk-google/service-account.json`. With Cilium it adds the
     `CiliumNetworkPolicy` `desk-backend-google`, which allows HTTPS to
     `gmail.googleapis.com`, `admin.googleapis.com`,
@@ -192,7 +192,7 @@ the message again (duplicates are skipped by `Message-ID`).
     ```
 
     With Docker Compose, mount the key read-only and set the same variables
-    plus `GOOGLE_SERVICE_ACCOUNT_FILE` ([Configuration](configuration.md#backend)).
+    plus `GOOGLE_WORKSPACE_CREDENTIALS_FILE` ([Configuration](configuration.md#backend)).
 
 8. **Check the connection.** As `desk-admin`: **Settings → Mail
    connectors** shows the domain, the shared account, the label, when the
@@ -236,9 +236,9 @@ create the mailbox as `google_user` if the address is a user.
 
 ## Troubleshooting
 
-**The backend does not start: `GOOGLE_SERVICE_ACCOUNT_FILE is required
-when GOOGLE_WORKSPACE_DOMAIN is set`** (or `GOOGLE_ADMIN_USER`). Set
-`google.enabled: true` (it sets the file path) and `GOOGLE_ADMIN_USER`.
+**The backend does not start: `GOOGLE_WORKSPACE_CREDENTIALS_FILE is required
+when GOOGLE_WORKSPACE_DOMAIN is set`** (or `GOOGLE_WORKSPACE_ADMIN_EMAIL`). Set
+`google.enabled: true` (it sets the file path) and `GOOGLE_WORKSPACE_ADMIN_EMAIL`.
 
 **The backend does not start: `this build of Desk has no Google Workspace
 client yet`.** Your Desk image has no Google client; see the warning at the
@@ -257,7 +257,7 @@ scope: check step 4 (client ID and the exact scope list), wait a few
 minutes, then **Create in Google again**.
 
 **`… Not Authorized to access this resource/api` when creating.**
-`GOOGLE_ADMIN_USER` is not an admin, or its admin role cannot create users
+`GOOGLE_WORKSPACE_ADMIN_EMAIL` is not an admin, or its admin role cannot create users
 or groups (step 5).
 
 **Mail to a group mailbox never arrives in Desk; the shared account's Gmail

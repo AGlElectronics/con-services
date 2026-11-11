@@ -115,6 +115,7 @@ belong to which.
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 | `desk-backend` | Google APIs: `gmail.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `www.googleapis.com` | 443 | Helm, only with `networkPolicy.google.enabled` | [Google Workspace mailboxes](../modules/desk/google-workspace.md): reading and labelling mail, sending replies, creating users and groups. Cilium: the `CiliumNetworkPolicy` `desk-backend-google` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.google.cidrs`. Checked against public CAs. |
+| `den-backend` (`conservices-den`) | `desk-backend` | 8080 | Helm (`networkPolicy.allowFromNamespaces` includes `conservices-den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with Desk's pairing credential. |
 | `desk-backend` | mail servers on the internet | 993, 143 (IMAP), 465, 587 (SMTP) | Helm (`networkPolicy.extraEgress`, on by default) | [IMAP and SMTP mailboxes](../modules/desk/imap.md) and the notification mail server (`SMTP_HOST`). Narrow the `ipBlock` to your provider where you can; with only Google mailboxes and no `SMTP_HOST`, set `extraEgress: []`. Desk itself refuses private and internal addresses unless they are listed in `DESK_ALLOWED_MAIL_HOSTS`. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
@@ -173,7 +174,7 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
+| Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Den's egress is in Den's chart. Desk's chart admits `den-backend` from `conservices-den` on 8080. The other modules' charts still need the same ingress rule. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 

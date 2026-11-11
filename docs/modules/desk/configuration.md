@@ -23,22 +23,25 @@ of every problem.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. |
+| `APP_ENV` | `production` | no | no | Unset is production. Only `development` allows `AUTH_MODE=dev`, `GOOGLE_FAKE` and the built-in `DESK_SECRET_KEY`. Set `development` explicitly in Docker Compose and tests. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address, for example `https://desk.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | no | Listen address inside the container. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3008` | no | no | Comma-separated browser origins. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
-| `AUTH_MODE` | `dev` | no | no | `oidc` for real sign-in; `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers (local only). |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` verifies a Bearer **access** token. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. Those headers are stripped, and not listed in CORS, outside that mode. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer URL. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `desk-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Normally `desk-spa`. |
+| `OIDC_AUDIENCE` | `desk-api` | no | no | Audience the access token must carry. ID tokens (`typ` `ID`) are refused. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the [access config file](#access-config-file). |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `desk-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); empty without Den. |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **yes** | 32 bytes, base64 (`openssl rand -base64 32`). Encrypts the Den credential Desk stores. One key per module. See [Secrets](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The previous key, only while rotating. Remove it after the second restart. |
+| `HR_SERVICE_TOKEN` | none | no | **yes** | Bearer HR sends to `GET /api/role-catalog`. At least 32 characters. Empty: only a signed-in staff member may read the catalog. Same value as on HR. |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 | `DESK_SECRET_KEY` | a fixed development key, **only** when `APP_ENV=development` is set explicitly | **yes** outside development | **yes** | Encrypts the IMAP and SMTP passwords stored per mailbox (AES-256-GCM, each value bound to its mailbox). Outside development at least 32 characters and not the development key. Generate with `openssl rand -base64 32`. Rotatable: see [Rotate DESK_SECRET_KEY](operations.md#rotate-desk_secret_key). |
 | `DESK_SECRET_KEY_PREVIOUS` | none | no | **yes** | Comma-separated old keys that still open stored passwords, during a key rotation until `/server reencrypt` has run. Must not contain the current key. |
@@ -57,8 +60,8 @@ of every problem.
 | `S3_REGION` | `us-east-1` | no | no | S3 region. |
 | `S3_USE_PATH_STYLE` | `true` | no | no | `true` for Garage, MinIO and SeaweedFS (`endpoint/bucket/key`); `false` for virtual-host style. |
 | `GOOGLE_WORKSPACE_DOMAIN` | none | no | no | Your Workspace domain, for example `example.org`. Set: Google mailboxes can be created. Empty: only IMAP/SMTP mailboxes. See [Google Workspace](google-workspace.md). |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` | none | with the domain | file is **secret** | Path of the service account key (JSON) with domain-wide delegation. The chart sets it with `google.enabled`. |
-| `GOOGLE_ADMIN_USER` | none | with the domain | no | Workspace admin Desk acts as for creating, suspending and deleting users and groups. |
+| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | with the domain, unless `GOOGLE_FAKE` | file is **secret** | Path of the service account key (JSON) with domain-wide delegation. The chart sets it with `google.enabled`. The old name `GOOGLE_SERVICE_ACCOUNT_FILE` is refused. |
+| `GOOGLE_WORKSPACE_ADMIN_EMAIL` | none | with the domain, unless `GOOGLE_FAKE` | no | Workspace admin Desk impersonates for Directory calls. Must be in the domain. The old name `GOOGLE_ADMIN_USER` is refused. |
 | `GOOGLE_SHARED_MAILBOX` | none | for group mailboxes | no | Licensed account group mailboxes deliver into, for example `desk@example.org`. Must be in the domain. |
 | `GOOGLE_LABEL` | `Desk` | no | no | Gmail label for handled mail; `<label>/Unrouted` for shared-account mail no mailbox claims. |
 | `GOOGLE_FAKE` | `false` | no | no | **Development only**: an in-memory Google Workspace, to try the Google flow without Google. Refused outside `APP_ENV=development`. |

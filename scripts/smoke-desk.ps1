@@ -30,7 +30,7 @@ $api = "$Base/api/v1"
 function Get-Token($username, $secret) {
   (Invoke-RestMethod -Method Post -Uri "$Keycloak/realms/conservices/protocol/openid-connect/token" -Body @{
     grant_type = 'password'; client_id = 'desk-spa'; username = $username; password = $secret; scope = 'openid'
-  }).id_token
+  }).access_token
 }
 $h = @{ Authorization = "Bearer $(Get-Token $User $Password)" }
 $outsiderHeaders = @{ Authorization = "Bearer $(Get-Token $Outsider $OutsiderPassword)" }

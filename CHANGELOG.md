@@ -18,6 +18,8 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Desk's development stack expects access tokens with audience `desk-api` (`OIDC_AUDIENCE` in Compose and the Desk chart). The Desk chart admits `den-backend` from `conservices-den` (portal to-dos and the role catalog), fills the shared nginx security-header snippet on the web app only, and names the Google settings `GOOGLE_WORKSPACE_CREDENTIALS_FILE` and `GOOGLE_WORKSPACE_ADMIN_EMAIL`.
+
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
