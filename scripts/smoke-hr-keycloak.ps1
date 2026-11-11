@@ -56,7 +56,19 @@ $view = Post-Json "$hr/api/onboardings" @{ department_id = $dept.id; person = $p
 Write-Host "Onboarding started: draft=$($view.draft.id) prefilled roles=$(($view.draft.roles | ForEach-Object role_name) -join ',')"
 Post-Json "$hr/api/drafts/$($view.draft.id)/roles" @{ roles = @($roleRef) } 'Put' | Out-Null
 
-$res = Invoke-RestMethod -Method Post -Uri "$hr/api/onboardings/$($view.draft.id)/complete" -Headers $h
+$queued = Invoke-RestMethod -Method Post -Uri "$hr/api/onboardings/$($view.draft.id)/complete" -Headers $h
+$res = $queued
+if ($queued.queued) {
+  # Completion runs as a background job (JOB_INTERVAL); wait for it.
+  $deadline = (Get-Date).AddSeconds(90)
+  do {
+    Start-Sleep -Seconds 2
+    $job = Invoke-RestMethod -Uri "$hr/api/jobs/$($queued.job_id)" -Headers $h
+  } while ($job.status -notin 'succeeded', 'failed' -and (Get-Date) -lt $deadline)
+  if ($job.status -ne 'succeeded') { throw "complete job $($job.status): $($job.last_error)" }
+  $res = $job.result
+  if (-not $res.draft) { $res | Add-Member -NotePropertyName draft -NotePropertyValue $queued.draft }
+}
 if (-not $res.ok) { throw "complete failed: $($res.error)" }
 Write-Host "Complete: draft=$($res.draft.state) created=$($res.account_created) groups=$($res.groups_applied -join ',') email_sent=$($res.password_setup_email_sent) $($res.password_setup_error)"
 if (-not $res.password_setup_email_sent) { throw 'set-password email was not sent' }
@@ -76,11 +88,12 @@ if ($settings.username_template -eq '{nickname}' -and $kcUser.username -ne "smok
   throw "username $($kcUser.username) does not follow {nickname}"
 }
 $kcFull = Invoke-RestMethod -Uri "$kcBase/admin/realms/conservices/users/$($kcUser.id)" -Headers $ah
-foreach ($a in 'nickname', 'phone', 'privateEmail', 'hrPersonId') {
+# KEYCLOAK_USER_ATTRIBUTES default: hrPersonId,nickname,orgEmail (orgEmail only when set).
+foreach ($a in 'nickname', 'hrPersonId') {
   if (-not $kcFull.attributes.$a) { throw "Keycloak attribute $a missing" }
 }
-if ($kcFull.attributes.nickname[0] -ne $person.nickname -or $kcFull.attributes.privateEmail[0] -ne $email) { throw 'Keycloak attributes do not match HR' }
-Write-Host "Keycloak login name $($kcUser.username), attributes nickname/phone/privateEmail/hrPersonId: OK"
+if ($kcFull.attributes.nickname[0] -ne $person.nickname) { throw 'Keycloak attributes do not match HR' }
+Write-Host "Keycloak login name $($kcUser.username), attributes nickname/hrPersonId: OK"
 
 # Mailpit: onboarding email with a set-password link.
 Start-Sleep -Seconds 2
@@ -109,11 +122,11 @@ $edited = Post-Json "$hr/api/people/$pid_" $edit 'Put'
 if ($edited.idp_sync_error) { throw "profile sync failed: $($edited.idp_sync_error)" }
 $kcEdited = Invoke-RestMethod -Uri "$kcBase/admin/realms/conservices/users/$($kcUser.id)" -Headers $ah
 if ($kcEdited.lastName -ne $edit.last_name) { throw "Keycloak lastName not synced: $($kcEdited.lastName)" }
-if ($kcEdited.attributes.nickname[0] -ne $edit.nickname -or $kcEdited.attributes.phone[0] -ne $edit.phone) { throw 'Keycloak attributes not synced' }
+if ($kcEdited.attributes.nickname[0] -ne $edit.nickname) { throw 'Keycloak attributes not synced' }
 if ($kcEdited.username -ne $kcUser.username) { throw 'username changed on profile edit' }
-Write-Host "Profile edit synced to Keycloak (lastName, nickname, phone; username unchanged): OK"
+Write-Host "Profile edit synced to Keycloak (lastName, nickname; username unchanged): OK"
 
-# Offboard: Keycloak account deleted, notice emailed, HR record kept.
+# Offboard: Keycloak account deleted, notice emailed, HR record deleted.
 $off = Post-Json "$hr/api/people/$pid_/offboard" @{ reason = 'smoke test'; share_reason = $true }
 if ($off.warnings) { throw "offboard warnings: $($off.warnings -join '; ')" }
 try {
@@ -125,6 +138,8 @@ $notice = (Invoke-RestMethod -Uri "$mailpit/api/v1/search?query=to:$email subjec
 if (-not $notice) { throw "no account-deleted email for $email" }
 $noticeText = (Invoke-RestMethod -Uri "$mailpit/api/v1/message/$($notice.ID)").Text
 if ($noticeText -notmatch 'Reason: smoke test') { throw 'deleted notice is missing the shared reason' }
-$access = Invoke-RestMethod -Uri "$hr/api/people/$pid_/access" -Headers $h
-if ($access.person.status -ne 'offboarded' -or $access.account.state -ne 'deleted') { throw "unexpected HR state $($access.person.status)/$($access.account.state)" }
-Write-Host "Offboard: Keycloak user deleted, '$($notice.Subject)' emailed, HR shows offboarded/deleted: OK"
+$gone = $false
+try { Invoke-RestMethod -Uri "$hr/api/people/$pid_" -Headers $h | Out-Null }
+catch { $gone = $_.Exception.Response.StatusCode.value__ -eq 404 }
+if (-not $gone) { throw 'HR still has the person after offboard (want 404)' }
+Write-Host "Offboard: Keycloak user deleted, '$($notice.Subject)' emailed, HR record deleted (404): OK"
