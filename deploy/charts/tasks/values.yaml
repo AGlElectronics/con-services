@@ -26,8 +26,9 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and TASKS_SERVICE_TOKEN. This chart never creates
-# Secrets.
+# S3_SECRET_ACCESS_KEY and TASKS_SERVICE_TOKEN, plus SMTP_USERNAME and
+# SMTP_PASSWORD when Tasks sends email with its own SMTP server (optional).
+# This chart never creates Secrets.
 existingSecret: tasks-secrets
 
 # Tasks' access config (roles, permissions, OIDC group bindings).
@@ -59,6 +60,18 @@ config:
   S3_REGION: us-east-1
   S3_USE_PATH_STYLE: "true"
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
+  # Links in notification emails point here.
+  TASKS_PUBLIC_URL: https://tasks.conservices.test
+  # Tasks' own SMTP server for email notifications, used when Den sends no
+  # SMTP settings. Empty SMTP_HOST: no email unless Den provides it. The
+  # username and password go in existingSecret. SMTP_SECURITY: starttls
+  # (default), tls (implicit TLS, port 465) or none. Allow the connection in
+  # networkPolicy.smtp. Docs: https://aglelectronics.github.io/con-services/modules/tasks/configuration/#email
+  SMTP_HOST: ""
+  SMTP_PORT: ""
+  SMTP_FROM: ""
+  SMTP_FROM_NAME: Tasks
+  SMTP_SECURITY: starttls
 
 # Den pairing. Docs: https://aglelectronics.github.io/con-services/concepts/pairing/#required-or-standalone
 #   required:   until an admin pairs the module from Den's Modules page, its
@@ -100,12 +113,14 @@ internalTLS:
   ingressNginxAnnotations: false
 
 backend:
-  # MUST stay 1. The per-user rate limiter lives in the process, and the
-  # due-date automation sweep runs on a one-minute timer in every process;
-  # two replicas would race. The chart refuses any other value.
+  # MUST stay 1. The per-user rate limiter and the live-update connection
+  # limit live in the process, and the background jobs (due-date
+  # automations, reminders, email, retention) run on timers in every
+  # process; two replicas would race. The chart refuses any other value.
+  # Why, and what scaling out needs: tasks docs/adr/0001-single-backend-replica.md
   replicas: 1
   singleReplica: true
-  singleReplicaReason: "in-process rate limiter and due-date sweep (tasks README, Operations notes)"
+  singleReplicaReason: "in-process rate limiter and background jobs (tasks ADR 0001)"
   port: 8080
   terminationGracePeriodSeconds: 30
   resources:
@@ -123,7 +138,11 @@ frontend:
   port: 8080
   # Attachments are up to 25 MB.
   clientMaxBodySize: 27m
-  websocketPathRegex: ""
+  # Long-lived requests: the live-update stream (Server-Sent Events). This
+  # path gets nginx read timeouts of 1 h, no buffering, and no Gateway
+  # request timeout (route.websocketTimeout). Do not empty it, or the
+  # gateway's route.timeout cuts every stream after two minutes.
+  websocketPathRegex: "^/api/v1/stream$"
   terminationGracePeriodSeconds: 30
   # nginx keeps serving this long after it is told to stop, while the
   # gateway removes the pod from its endpoints. 0 turns it off.
@@ -247,6 +266,12 @@ networkPolicy:
   # a matching egress rule.
   allowFromNamespaces:
     - conservices-hr
+  # Email: the backend connects to the SMTP server (Tasks' own SMTP_HOST or
+  # the one Den sends). List the server's addresses; empty renders no rule
+  # and email fails with a connection timeout.
+  smtp:
+    cidrs: []  # e.g. ["203.0.113.25/32"]
+    port: 587
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false

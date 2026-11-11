@@ -123,6 +123,18 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- with ($np.smtp | default dict) }}
+    {{- if .cidrs }}
+    # SMTP for email notifications.
+    - to:
+        {{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ .port | default 587 }} }
+    {{- end }}
+    {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
