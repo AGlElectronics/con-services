@@ -183,7 +183,7 @@ Hetzner Object Storage. For development the Compose stack runs
 - **Buckets:** created when the container starts, from the `-bucket=` list
   in `docker-compose.yml`: `stash-data-dev`, `den-data-dev`,
   `events-data-dev`, `hr-data-dev`, `finance-data-dev`, `learn-data-dev`,
-  `wiki-data-dev`, `tasks-data-dev` and `conservices-backups`. The service
+  `wiki-data-dev`, `tasks-data-dev`, `desk-data-dev` and `conservices-backups`. The service
   only reports `healthy` once they exist, and backends wait for that.
 - **Addresses:** backends use `http://s3:9000` with path-style requests.
   Browsers get presigned links on `https://s3.conservices.test` (set by

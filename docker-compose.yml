@@ -55,7 +55,7 @@ services:
       - mini
       - -dir=/data
       - -s3.port=9000
-      - -bucket=stash-data-dev,den-data-dev,events-data-dev,hr-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev,conservices-backups
+      - -bucket=stash-data-dev,den-data-dev,events-data-dev,hr-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev,desk-data-dev,conservices-backups
       - -master.telemetry=false
       - -admin.ui=false
       - -webdav=false
@@ -581,7 +581,7 @@ services:
       FILES_S3_ENDPOINT: http://s3:9000
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
-      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
+      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev,desk-data-dev
 
   den-frontend:
     profiles: ["den"]
@@ -862,6 +862,8 @@ services:
         condition: service_started
       greenmail:
         condition: service_started
+      s3:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
       proxy-ca:
@@ -889,10 +891,22 @@ services:
       # Encrypts stored mailbox passwords. Prod: a long random secret.
       DESK_SECRET_KEY: desk-dev-secret-change-me
       FETCH_INTERVAL: 20s
-      # Fallback outbound mail for mailboxes without their own SMTP server.
+      # Attachments and original messages (.eml).
+      S3_ENDPOINT: http://s3:9000
+      S3_BUCKET: desk-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      # GreenMail and Mailpit sit on the private Docker network, which Desk
+      # refuses unless listed here.
+      DESK_ALLOWED_MAIL_HOSTS: greenmail,mailpit
+      # Fallback outbound mail for mailboxes without their own SMTP server,
+      # and the sender of Desk's own emails (purge reminders).
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_SECURITY: none
+      NOTIFY_FROM: "Desk <desk@conservices.test>"
     volumes:
       - ./desk/infra/access-config.toml:/etc/desk/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
