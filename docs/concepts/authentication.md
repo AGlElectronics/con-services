@@ -177,17 +177,28 @@ changelog says so.
 
 - **Production:** the realm imports in the GitOps repository
   (`charts/keycloak/templates/realm-*.yaml`) are generated from those
-  development files by `bootstrap/scripts/keycloak-realm.py`, which copies
-  protocol mappers unchanged. Maintainers of the GitOps template
-  regenerate them so new installations get the mappers
-  ([Identity: the realms](../deploy/identity.md#the-realms)). Keycloak
-  imports a realm only once, so a **running** installation adds each mapper
-  by hand before the module that needs it is upgraded: in the admin
-  console, **conservices → Clients → hr-spa → Client scopes →
-  hr-spa-dedicated → Configure a new mapper → Audience**, name
-  `audience hr-api`, *Included Custom Audience* `hr-api`, *Add to ID token*
-  **off**, *Add to access token* **on**. Do the same for `rally-submit` in
-  the `attendees` realm with `events-public-api`.
+  development files by `bootstrap/scripts/keycloak-realm.py`. The
+  generator writes, on every public client, exactly one audience mapper
+  named `audience <api>`: **Included Custom Audience** is the API name,
+  **Add to access token** is on, and **Add to ID token** is off. It also
+  sets **Full group path** on every `groups` mapper (`full.path` `true`),
+  so a top-level group arrives as `/den-admin`. The development realm's
+  `groups` mapper sends the plain name `den-admin`. Both match a grant of
+  `den-admin`
+  ([How groups are matched](#how-groups-are-matched)).
+  Confidential clients have no audience mapper. `rally-submit` has no
+  `groups` mapper. Maintainers regenerate the templates after the
+  development realms change, so a new installation gets the mappers
+  ([Identity: the realms](../deploy/identity.md#the-realms)).
+  `--format json` writes the same mappers into the realm files the
+  [Docker production path](../operations/docker-production.md#the-realm)
+  generates at install time. `deploy/docker/` does not commit a realm.
+  Keycloak imports a realm only once, so a **running** installation keeps
+  the mappers it was imported with. Add the audience mapper and the full
+  group path before you upgrade Den, or a module that checks its
+  audience. The admin-console and `kcadm.sh` steps are in the GitOps
+  repository:
+  [Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists).
 
 Check an access token (the password grant works on the development realm
 only):
@@ -272,8 +283,10 @@ updates their name, email and last sign-in time.
 
 In the local realm, every web app's client has a **group membership mapper**
 that puts the person's groups into the `groups` claim of the ID token, the
-access token and the userinfo response, as plain names (`den-admin`, not
-`/den-admin`).
+access token and the userinfo response, as plain names (`den-admin`).
+A production realm from `keycloak-realm.py` puts the full path in that
+same claim (`/den-admin`). Matching treats the two as the same group
+([How groups are matched](#how-groups-are-matched)).
 
 ## From groups to roles
 

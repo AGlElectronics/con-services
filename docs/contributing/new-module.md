@@ -169,9 +169,12 @@ with `shop/`.
       including `DEN_LINK_ENCRYPTION_KEY`) and
       `charts/module-extras/files/access-config/shop.toml` if it reads an
       access configuration;
-    - `shop` in `APP_HOSTS` of `bootstrap/scripts/keycloak-realm.py` and
-      under `appHosts` in `charts/keycloak/values.yaml`, then regenerate
-      the realm templates ([The realms](../deploy/identity.md#the-realms));
+    - `shop` in `APP_HOSTS` and `shop-spa` mapped to `shop-api` in
+      `CLIENT_AUDIENCES` of `bootstrap/scripts/keycloak-realm.py` (the
+      generator writes that audience mapper and stops when a public
+      client is missing), and `shop` under `appHosts` in
+      `charts/keycloak/values.yaml`, then regenerate the realm templates
+      ([The realms](../deploy/identity.md#the-realms));
     - HR's `ROLE_CATALOG_SOURCES` and `moduleEgressNamespaces` in
       `charts/root/templates/_apps.tpl`, if HR calls it.
 

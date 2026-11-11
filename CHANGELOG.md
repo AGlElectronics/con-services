@@ -228,8 +228,17 @@ led by Den's MAJOR; see
   the `attendees` realm). ID tokens are unchanged, so modules that still
   send ID tokens keep working. `infra/keycloak/apply-mvp.sh` adds the
   mappers to existing development realms. A running production realm
-  needs them added by hand before a module that checks its audience is
-  upgraded ([Audiences per API](docs/concepts/authentication.md#audiences-per-api)).
+  needs the audience mappers and the full group paths added by hand
+  before a module that checks its audience is upgraded
+  ([Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists)).
+- Production realms written by the GitOps `keycloak-realm.py` include
+  one access-token audience mapper per public client and `groups`
+  mappers with full paths (`/den-admin`). Docker production generates
+  those JSON files at install time (`--format json`); `deploy/docker/`
+  does not commit a realm. A realm Keycloak has already imported keeps
+  its previous mappers until you add them with the same steps
+  ([The realms](docs/deploy/identity.md#the-realms),
+  [Docker production](docs/operations/docker-production.md#the-realm)).
 - CI *Chart versions*: a changed chart needs a higher version only once
   its app has a chart release tag `<app>/v*`; before the first release a
   chart may change while staying at its first version.

@@ -463,7 +463,10 @@ from a chart `deploy/charts/shop` in `con-services`:
    addresses as `https://shop.conservices.test` in the dev realm; the
    generator script turns them into `{{.Values.appHosts.shop}}.{{.Values.domain}}`
    once `shop` is in `APP_HOSTS` of `bootstrap/scripts/keycloak-realm.py`
-   and under `appHosts` in `charts/keycloak/values.yaml`.
+   and under `appHosts` in `charts/keycloak/values.yaml`. Map
+   `shop-spa` to `shop-api` in that script's `CLIENT_AUDIENCES`: the
+   generator writes the client's audience mapper from the table and stops
+   when a public client is missing.
 4. Check the render, commit, push, and [pair](#pair-the-modules) it:
 
     ```sh

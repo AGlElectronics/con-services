@@ -77,17 +77,29 @@ Two realms are imported when Keycloak first starts:
 | `attendees` | attendees submitting to Rally | `rally-submit` (public) |
 
 Every public client has an **audience mapper** that puts its API's name
-(`den-api`, `hr-api`, `events-api`, `events-public-api`, …) into its access
-tokens; the full list is on
+(`den-api`, `hr-api`, `events-api`, `events-public-api`, …) into the
+access token only. The ID token keeps the client id as its audience. The
+full list is on
 [Audiences per API](../concepts/authentication.md#audiences-per-api).
-Realm imports generated before these mappers existed lack them: add them
-to a running realm as described there.
+Each staff client's `groups` mapper sends the **full group path**, so the
+top-level group `den-admin` arrives as `/den-admin`. The modules strip one
+leading `/` and ignore case, so `/den-admin` and `den-admin` are the same
+grant
+([How groups are matched](../concepts/authentication.md#how-groups-are-matched)).
+`rally-submit` has no `groups` mapper. The confidential clients
+(`den-keycloak`, `hr-provisioner`, `learn-provisioner`) have no audience
+mapper.
+
+`bootstrap/scripts/keycloak-realm.py` writes both into every realm it
+generates. A realm Keycloak has already imported keeps the mappers it
+had. Add the missing ones before you upgrade Den, or a module that
+checks its audience, using the steps in the GitOps repository:
+[Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists).
 
 The realm imports (`charts/keycloak/templates/realm-*.yaml`) are
 **generated** from the development realms of the main repository by
-`bootstrap/scripts/keycloak-realm.py` and ship with the template; they
-take your domain from `cluster.yaml`. The generator makes them fit for
-production:
+that script and ship with the template; they take your domain from
+`cluster.yaml`. The generator makes them fit for production:
 
 - no users, except the service-account users of the confidential clients;
 - redirect URIs only on `https://<host>.example.org` (no `localhost`),
@@ -102,6 +114,13 @@ production:
   minute, growing by a minute per further failure up to 15 minutes;
 - a **password policy** in both realms: at least 12 characters, not the
   username, not the e-mail address;
+- one **audience mapper** on every public client, named `audience <api>`,
+  written onto the access token only. The generator takes the name from
+  `CLIENT_AUDIENCES` in the script and writes the mapper when the
+  development realm has none;
+- **full group paths** on every `groups` mapper (`full.path` set to
+  `true`), so a top-level group arrives as `/den-admin`. The development
+  realm sends the plain name `den-admin`;
 - no realm roles: the development realm's `admin` and `member` are dropped
   (nothing reads them; access comes from groups);
 - `den-keycloak` with the single `realm-management` role `manage-realm`, or
@@ -342,6 +361,12 @@ in `attendees`:
    `view-realm` and **Unassign**. Keep `manage-realm`, or unassign it too
    if you set `denDisplayNameSync: false`.
 
+For the audience mappers and the full group paths, follow
+[Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists)
+in the GitOps repository. Do that before you upgrade Den or a module
+that checks its audience. A sync of this template leaves a realm that
+already exists as it is.
+
 Check it: a wrong password eleven times in a row for a test account shows
 *Account is temporarily disabled* on that account's page under **Users**, and **Realm settings → Security defenses** shows your values.
 
@@ -354,7 +379,12 @@ For a new module `shop` with the browser client `shop-spa`:
    `groups` mapper and an audience mapper for `shop-api`
    ([Audiences per API](../concepts/authentication.md#audiences-per-api)),
    and add an `audience_mapper` line to `infra/keycloak/apply-mvp.sh`.
-2. Regenerate the realm templates in `charts/keycloak/templates/` (see
+2. In `bootstrap/scripts/keycloak-realm.py`, map the client to its API in
+   `CLIENT_AUDIENCES` (`"shop-spa": "shop-api"` in the `conservices`
+   realm) and, for a new host label, add `shop` to `APP_HOSTS`. The
+   generator writes that audience mapper from the table and stops when a
+   public client is missing. Add `shop` under `appHosts` in
+   `charts/keycloak/values.yaml`, regenerate the realm templates (see
    [The realms](#the-realms)) and commit them.
 3. On a **running** cluster the import does not run again, so add the
    client there by hand: in the admin console, **conservices → Clients →
@@ -476,6 +506,14 @@ Keep the development realm of the main repository unchanged: it uses the
 : The name does not resolve to the internal Gateway, or your computer is
   not on the internal network. `nslookup auth-admin.example.org` must
   return the internal Gateway IP.
+
+**A module answers `401` with `invalid token` after you upgrade it**
+: The access token is missing that API's audience, or the `groups` claim
+  still has the previous path. A realm imported earlier keeps its old
+  mappers; a later sync leaves them as they are. Add the audience mapper
+  and the full group path with
+  [Upgrade a realm that already exists](https://github.com/AGlElectronics/con-services-gitops/blob/main/docs/realm-mappers.md#upgrade-a-realm-that-already-exists),
+  then sign out and sign in again.
 
 **Modules fail at start-up with `failed to discover OIDC issuer`**
 : The backend cannot reach Keycloak in the cluster. Check that CoreDNS
