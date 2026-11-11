@@ -33,7 +33,7 @@ modules:
 | Tax rates | Basis points: 21% = `2100`, 9% = `900`, 0% = `0`; `0` to `10000`. |
 | Dates | Calendar dates are `YYYY-MM-DD`. Issue, payment, expense, credit note and refund dates cannot be in the future or more than `FINANCE_MAX_BACKDATE_DAYS` (default 366) in the past, nor in a [closed month](#closed-months). Timestamps are RFC 3339 UTC. |
 | Lists | Invoices, expenses, the ledger, approvals and the audit log are paginated: `?limit=` (default 50, at most 200) and `?offset=`; the answer carries `total`, `limit` and `offset`. |
-| Request id | Every response carries an `X-Request-ID` header; quote it when reporting a problem. |
+| Request id | Every response carries an `X-Request-ID` header; quote it when reporting a problem. A web app on another origin (listed in `CORS_ALLOWED_ORIGINS`) may read it, and also `Idempotent-Replayed` and `Content-Disposition` (`Access-Control-Expose-Headers`). |
 | Audit | Every change is written to the audit log **in the same database transaction**, with who did it and the values before and after. Read it with [`GET /api/audit`](#get-apiaudit). |
 
 In the examples ([how to get a token](../../concepts/api-conventions.md#get-a-token-for-curl)):
@@ -100,7 +100,9 @@ get in.
 ## Limits
 
 - **Request bodies** are at most 1 MiB; a larger one is refused with
-  `413 request_too_large` before it is read.
+  `413 request_too_large` before it is read. Pairing with Den
+  (`POST /api/den/pair`) and saving preferences (`PUT /api/me/preferences`)
+  take at most 64 KiB.
 - **Rate limit:** each signed-in person (signed out: each address, IPv6 per
   `/64`) may make `API_RATE_LIMIT` requests (default `300/m`, bursts of
   `API_RATE_BURST`, default `60`). Over it:
@@ -179,7 +181,7 @@ before it is stored, and again when it is approved.
 | 409 | `period_closed` | A date in a closed month: `2026-10 is closed; an admin must reopen it first`. |
 | 422 | `validation_failed` | Field problems; `details` maps field to problem. |
 | 422 | `idempotency_key_reused` | The key was used before for a different request. |
-| 413 | `request_too_large` | A request body over 1 MiB. |
+| 413 | `request_too_large` | A request body over 1 MiB (64 KiB for `POST /api/den/pair` and `PUT /api/me/preferences`). |
 | 429 | `rate_limited` | Over `API_RATE_LIMIT`; wait for `Retry-After` seconds. |
 | 503 | `storage_unavailable` | Issuing while S3 is not configured or not reachable; nothing was issued. Downloading a PDF while S3 is down. |
 | 500 | `internal` | Unexpected failure, including a stored PDF that no longer matches its SHA-256; see the backend log with the request id. |
@@ -187,6 +189,11 @@ before it is stored, and again when it is approved.
 The Den pairing routes add `pairing_failed` (422), `sync_failed` (409 when
 not paired, 502 when Den cannot be reached) and `den_credential_revoked`
 (409 when Den rejected Finance's credential; pair again).
+
+`bad_request`, `request_too_large` and `rate_limited` are the suite-wide
+codes of the shared `authbase` package
+([Shared code](../../concepts/shared-code.md#error-codes)); every module
+returns them the same way, so a client can handle them once.
 
 ## Endpoint overview
 
@@ -405,8 +412,10 @@ unreachable.
 
 ### `PUT /api/me/preferences`
 
-Signed in. Body `{"theme":"system"|"light"|"dark"}`. `200` with the same
-shape as `GET`; `422` `theme must be system, light or dark`.
+Signed in. Body `{"theme":"system"|"light"|"dark"}`, at most 64 KiB. `200`
+with the same shape as `GET`; `422` `theme must be system, light or dark`;
+`413 request_too_large` for a larger body; `400 bad_request` when the body
+is not exactly one JSON value.
 
 ```sh
 curl -s -X PUT $FIN/api/me/preferences \
@@ -1087,7 +1096,10 @@ curl -s -H "Authorization: Bearer $TOKEN" $FIN/api/settings
 ```
 
 `sources` is `finance` (Finance's override), `den` (Den → Module settings)
-or `unset`.
+or `unset`. `den` shows what Den sends, from the bundle Finance keeps with
+the pairing: the contract keys `finance.seller.legal_name`, `.address` and
+`.vat_id`, or Den's older `finance.seller_name`, `seller_address` and
+`vat_number` (see [Seller details](configuration.md#seller-details)).
 
 ### `PUT /api/settings`
 
@@ -1177,13 +1189,21 @@ Body `{"pairing_url":"…"}` with the one-time link from Den's **Modules**
 page. `200` with the status; `422` `pairing_failed` with Den's reason, or
 `pairing with Den at … is not allowed here` when the URL's host is neither
 `DEN_INTERNAL_URL` (which replaces it) nor in `DEN_ALLOWED_HOSTS`. Also the
-way to pair again after a revoked credential.
+way to pair again after a revoked credential. The body is at most 64 KiB:
+a larger one answers `413 request_too_large` before Finance contacts Den,
+and a body that is not exactly one JSON value `400 bad_request`.
 
 ```sh
 curl -s -X POST $FIN/api/den/pair \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"pairing_url":"https://den.example.org/pair/abc123…"}'
 ```
+
+```json
+{"error":{"code":"request_too_large","message":"request body is larger than 65536 bytes"}}
+```
+
+(the answer to a body over 64 KiB, with status `413`).
 
 ### `POST /api/den/sync`
 

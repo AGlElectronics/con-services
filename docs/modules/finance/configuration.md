@@ -29,7 +29,7 @@ Finance has no access config file.
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3006` | no | no | Comma-separated browser origins. |
-| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
+| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses and is read right to left; `X-Real-IP` and `True-Client-IP` are never read. The resulting client IP is what rate limits count and what the request log shows. Add a proxy that sits outside the private ranges; `none` trusts no proxy. An invalid entry stops the backend at start-up. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `AUTH_MODE` | `oidc` | no | no | `oidc` verifies Keycloak access tokens. `dev` trusts the `X-Dev-User` and `X-Dev-Groups` headers, so anyone can claim any role; the backend refuses to start with it unless `APP_ENV=development`. Outside `dev` the backend deletes those headers from every request, and CORS allows them only in `dev`. |
 | `DEV_DEFAULT_USER` | `dev-finance-admin` | no | no | `dev` mode only: user when no `X-Dev-User` header is sent. |
 | `DEV_DEFAULT_GROUPS` | `finance_admin` | no | no | `dev` mode only: comma-separated groups when no `X-Dev-Groups` header is sent. They map to roles like real groups. |
@@ -108,11 +108,39 @@ takes each field from, in this order:
 
 1. Finance's own settings (Settings page, `PUT /api/settings`, admins);
 2. Den, when paired: **Den → Module settings → Finance** (seller name,
-   address, VAT number). Den sends them in the integration bundle as
-   `module_settings.finance` (`seller_name`, `seller_address`,
-   `vat_number`), and Finance reads them from the bundle it stores on every
-   sync (within a minute of a change);
+   address, VAT number). Den sends them in the integration bundle, and
+   Finance reads them from the bundle it stores with the pairing on every
+   sync (within a minute of a change, and straight away after a restart);
 3. nothing: issuing then answers `422` until a name and address are set.
+
+Finance understands two forms of Den's seller details. The
+[module settings contract](../../concepts/module-settings.md#finance-seller-details)
+for 1.0 puts them under `finance.seller`:
+
+```json
+{
+  "module_settings": {
+    "updated_at": "2026-11-11T09:30:00Z",
+    "data": {
+      "finance": {
+        "seller": {
+          "legal_name": "Fur Con e.V.",
+          "address": "Main Street 1\n1010 Vienna",
+          "vat_id": "ATU12345678"
+        }
+      }
+    }
+  }
+}
+```
+
+Den releases that do not send this form yet send
+`module_settings.finance.seller_name`, `seller_address` and `vat_number`;
+Finance reads those too. When both forms are present, the contract key
+wins for each field (`legal_name` over `seller_name`, `address` over
+`seller_address`, `vat_id` over `vat_number`). The other contract fields
+(`country`, `tax_number`, `registration`, `email`, `website`) are not
+printed on Finance's documents yet.
 
 A standalone Finance (no Den) uses only its own settings. The Settings
 page shows each value and where it comes from (`set in Finance`, `from
