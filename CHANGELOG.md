@@ -204,6 +204,10 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Wiki's chart lets the web app frame `/silent-callback.html` only
+  (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`), using the same
+  `frontend.securityHeaders` origins as the rest of the page. Every other
+  response stays unframeable, so a reload can sign in again.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

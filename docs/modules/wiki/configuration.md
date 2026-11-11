@@ -394,11 +394,19 @@ itself and connections to the sign-in server (and Den, if set),
 `Permissions-Policy`. The API's own responses carry the backend's stricter
 headers instead, and file downloads keep `Content-Security-Policy: sandbox`.
 
+`/silent-callback.html` is the one exception. A reload signs in again by
+loading that page in a hidden frame of Wiki itself, which `frame-ancestors
+'none'` would block. That exact location uses
+`security-headers-frame-self.conf`: the same policy with `frame-ancestors
+'self'` and `X-Frame-Options: SAMEORIGIN`. Every other page stays
+unframeable. See
+[Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
+
 | Where | How the origins are set |
 | --- | --- |
-| Helm chart | `frontend.securityHeaders.keycloakOrigin` (default: scheme and host of `config.OIDC_ISSUER_URL`) and `frontend.securityHeaders.denOrigin` (default empty). The chart renders the snippet into `<release>-frontend-nginx` and mounts it at `/etc/nginx/snippets/security-headers.conf`. |
-| Image (Docker Compose) | The image ships `infra/security-headers.conf` with the development origins (`https://auth.conservices.test`, `http://localhost:8085`, `https://den.conservices.test`). |
-| Production on Docker | Mount your own copy with your origins over `/etc/nginx/snippets/security-headers.conf`; see [Setup, option 3](setup.md#option-3-production-on-docker). |
+| Helm chart | `frontend.securityHeaders.keycloakOrigin` (default: scheme and host of `config.OIDC_ISSUER_URL`) and `frontend.securityHeaders.denOrigin` (default empty). The chart renders both snippets into `<release>-frontend-nginx` and mounts them at `/etc/nginx/snippets/security-headers.conf` and `security-headers-frame-self.conf`. |
+| Image (Docker Compose) | The image ships `infra/security-headers.conf` and `infra/security-headers-frame-self.conf` with the development origins (`https://auth.conservices.test`, `http://localhost:8085`, `https://den.conservices.test`). |
+| Production on Docker | Mount your own copies, with the same origins, over `/etc/nginx/snippets/security-headers.conf` and `/etc/nginx/snippets/security-headers-frame-self.conf`; see [Setup, option 3](setup.md#option-3-production-on-docker). |
 
 Check them:
 
@@ -416,7 +424,22 @@ permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
 
 If sign-in hangs after a reload, the browser console shows a CSP error for
 the sign-in server's address: `keycloakOrigin` does not match the
-issuer's host.
+issuer's host. If it says framing `/silent-callback.html` violated
+`frame-ancestors 'none'`, that location is still using
+`security-headers.conf`. It must include `security-headers-frame-self.conf`.
+
+Check the silent sign-in page on its own. `frame-ancestors` is `'self'`
+and `X-Frame-Options` is `SAMEORIGIN`. The home page still says `'none'`
+and `DENY`.
+
+```sh
+curl -sI https://wiki.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: … frame-ancestors 'self'; …
+x-frame-options: SAMEORIGIN
+```
 
 ## Frontend build settings
 

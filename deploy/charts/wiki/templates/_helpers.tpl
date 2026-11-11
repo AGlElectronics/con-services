@@ -394,20 +394,21 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- $mode -}}
 {{- end -}}
 
-{{/* The web app's security headers: files/security-headers.conf (a copy of
-con-services shared/nginx/security-headers.conf) with KEYCLOAK_ORIGIN from
-frontend.securityHeaders.keycloakOrigin (default: scheme and host of
-config.OIDC_ISSUER_URL) and DEN_ORIGIN from frontend.securityHeaders.denOrigin
-(empty: removed). */}}
+{{/* The web app's security headers. Args: root, file (files/security-headers.conf
+or files/security-headers-frame-self.conf). Both are copies of the shared
+nginx snippets. KEYCLOAK_ORIGIN comes from frontend.securityHeaders.keycloakOrigin
+(default: scheme and host of config.OIDC_ISSUER_URL) and DEN_ORIGIN from
+frontend.securityHeaders.denOrigin (empty: removed). */}}
 {{- define "wiki.securityHeaders" -}}
-{{- $sh := .Values.frontend.securityHeaders | default dict -}}
+{{- $root := .root -}}
+{{- $sh := $root.Values.frontend.securityHeaders | default dict -}}
 {{- $kc := $sh.keycloakOrigin | default "" -}}
-{{- if and (not $kc) .Values.config.OIDC_ISSUER_URL -}}
-{{- $u := urlParse .Values.config.OIDC_ISSUER_URL -}}
+{{- if and (not $kc) $root.Values.config.OIDC_ISSUER_URL -}}
+{{- $u := urlParse $root.Values.config.OIDC_ISSUER_URL -}}
 {{- $kc = printf "%s://%s" $u.scheme $u.host -}}
 {{- end -}}
 {{- $den := $sh.denOrigin | default "" -}}
-{{- $out := .Files.Get "files/security-headers.conf" -}}
+{{- $out := $root.Files.Get .file -}}
 {{- $out = $out | replace "'self' KEYCLOAK_ORIGIN" (trim (printf "'self' %s" $kc)) -}}
 {{- $out = $out | replace " DEN_ORIGIN;" (printf "%s;" (ternary (printf " %s" $den) "" (ne $den ""))) -}}
 {{- $out -}}

@@ -474,8 +474,11 @@ add Wiki next to Den:
       - ./wiki/nginx.stack.conf:/etc/nginx/conf.d/default.conf:ro
       # The web app's sign-in settings, served as /config.json.
       - ./wiki/config.json:/etc/conservices/config.json:ro
-      # Security headers with your Keycloak (and Den) origins.
+      # Security headers with your Keycloak (and Den) origins. The second
+      # file is the same policy for /silent-callback.html only
+      # (frame-ancestors 'self'), so a reload can sign in again.
       - ./wiki/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./wiki/security-headers-frame-self.conf:/etc/nginx/snippets/security-headers-frame-self.conf:ro
 
 # volumes:
   wiki-buffer: {}
@@ -497,9 +500,12 @@ image names no domain. Keys: [Web app settings](configuration.md#web-app-setting
 - `security-headers.conf` is `shared/nginx/security-headers.conf` from
   `con-services` with `KEYCLOAK_ORIGIN` replaced by
   `https://auth.con.example.org` and `DEN_ORIGIN` by
-  `https://den.con.example.org` (or removed). The image's own copy only
-  knows the development addresses, so without your copy sign-in after a
-  reload fails with a CSP error. See
+  `https://den.con.example.org` (or removed).
+  `security-headers-frame-self.conf` is
+  `shared/nginx/security-headers-frame-self.conf` with the same
+  replacements. The image's own copies only know the development
+  addresses, so without yours sign-in after a reload fails with a CSP
+  error. See
   [Web app security headers](configuration.md#web-app-security-headers).
 - The Keycloak client needs the `wiki-api`
   [audience mapper](#keycloak-audience-for-wikis-api).
@@ -647,9 +653,12 @@ tokens lack the `wiki-api` audience: add the
 **Signed in, but a reload goes back to the sign-in page.** Tokens live only
 in memory; after a reload the web app signs in again silently through a
 hidden frame. That fails when the security headers do not allow the
-sign-in server (`frontend.securityHeaders.keycloakOrigin`) or when the
-browser blocks Keycloak's cookies in frames (the sign-in server must share
-the site with Wiki, for example `auth.example.org` and `wiki.example.org`).
+sign-in server (`frontend.securityHeaders.keycloakOrigin`), when
+`/silent-callback.html` is still sent with `frame-ancestors 'none'`
+(mount `security-headers-frame-self.conf` and include it from that exact
+location), or when the browser blocks Keycloak's cookies in frames (the
+sign-in server must share the site with Wiki, for example
+`auth.example.org` and `wiki.example.org`).
 
 **HR's access picker lists no Wiki roles.** Wiki's role catalog needs HR's
 `HR_SERVICE_TOKEN`: set the same value on Wiki (`wiki-secrets`) and HR.

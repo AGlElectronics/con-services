@@ -30,10 +30,13 @@ metadata:
   labels:
     {{- include "wiki.labels" . | nindent 4 }}
 data:
-  # files/security-headers.conf is con-services shared/nginx/security-headers.conf;
-  # its placeholders are filled from frontend.securityHeaders.
+  # files/security-headers.conf and files/security-headers-frame-self.conf are
+  # the shared nginx snippets; placeholders are filled from frontend.securityHeaders.
+  # The frame-self file is only for /silent-callback.html.
   security-headers.conf: |
-    {{- include "wiki.securityHeaders" . | nindent 4 }}
+    {{- include "wiki.securityHeaders" (dict "root" . "file" "files/security-headers.conf") | nindent 4 }}
+  security-headers-frame-self.conf: |
+    {{- include "wiki.securityHeaders" (dict "root" . "file" "files/security-headers-frame-self.conf") | nindent 4 }}
   default.conf: |
     upstream wiki_backend {
         server wiki-backend.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.backend.port }};
@@ -114,6 +117,12 @@ data:
             alias /etc/conservices/config.json;
             include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
+        }
+
+        # Hidden iframe target for silent sign-in. Same-origin framing only.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
+            add_header Cache-Control "no-cache" always;
         }
 
         location /static/ {

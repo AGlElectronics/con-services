@@ -190,10 +190,11 @@ frontend:
   resources:
     requests: { cpu: 10m, memory: 16Mi }
     limits: { cpu: 200m, memory: 64Mi }
-  # Security headers of the web app (con-services shared/nginx snippet):
+  # Security headers of the web app (con-services shared/nginx snippets):
   # Content Security Policy, X-Frame-Options, Referrer-Policy,
   # Permissions-Policy. The CSP lets the browser talk to the sign-in server
   # and, when set, Den. Origins are scheme + host (+ port), no path.
+  # /silent-callback.html uses the same origins with frame-ancestors 'self'.
   securityHeaders:
     # Empty: the scheme and host of config.OIDC_ISSUER_URL.
     keycloakOrigin: ""
