@@ -76,6 +76,13 @@ Two realms are imported when Keycloak first starts:
 | `conservices` | staff and volunteers | `den-spa`, `stash-spa`, `hr-spa`, `events-spa` (Rally), `finance-spa`, `learn-spa`, `wiki-spa`, `desk-spa`, `tasks-spa` (public, sign-in from the browser); `den-keycloak`, `hr-provisioner`, `learn-provisioner` (confidential, service accounts) |
 | `attendees` | attendees submitting to Rally | `rally-submit` (public) |
 
+Every public client has an **audience mapper** that puts its API's name
+(`den-api`, `hr-api`, `events-api`, `events-public-api`, …) into its access
+tokens; the full list is on
+[Audiences per API](../concepts/authentication.md#audiences-per-api).
+Realm imports generated before these mappers existed lack them: add them
+to a running realm as described there.
+
 The realm imports (`charts/keycloak/templates/realm-*.yaml`) are
 **generated** from the development realms of the main repository by
 `bootstrap/scripts/keycloak-realm.py` and ship with the template; they
@@ -245,7 +252,10 @@ login page through the `den-keycloak` client (Den admin → Branding).
 For a new module `shop` with the browser client `shop-spa`:
 
 1. Add the client to `infra/keycloak/realm-conservices.json` in the main
-   repository, so new installations and development get it.
+   repository, so new installations and development get it, with the
+   `groups` mapper and an audience mapper for `shop-api`
+   ([Audiences per API](../concepts/authentication.md#audiences-per-api)),
+   and add an `audience_mapper` line to `infra/keycloak/apply-mvp.sh`.
 2. Regenerate the realm templates in `charts/keycloak/templates/` (see
    [The realms](#the-realms)) and commit them.
 3. On a **running** cluster the import does not run again, so add the

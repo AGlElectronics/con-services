@@ -166,6 +166,15 @@ led by Den's MAJOR; see
   level or into `/api/` (two Content Security Policies), moving inline
   scripts into files, and Stash's `camera=(self)`
   ([Shared code](docs/concepts/shared-code.md#nginx-security-headers)).
+- Keycloak development realms: every web app client has an audience mapper
+  that adds its API to its access tokens (`den-api`, `hr-api`,
+  `stash-api`, `events-api`, `learn-api`, `finance-api`, `desk-api`,
+  `tasks-api`, `wiki-api`, and `events-public-api` on `rally-submit` in
+  the `attendees` realm). ID tokens are unchanged, so modules that still
+  send ID tokens keep working. `infra/keycloak/apply-mvp.sh` adds the
+  mappers to existing development realms. A running production realm
+  needs them added by hand before a module that checks its audience is
+  upgraded ([Audiences per API](docs/concepts/authentication.md#audiences-per-api)).
 
 ### Security
 
