@@ -143,6 +143,14 @@ led by Den's MAJOR; see
   source of access with an offboarding warning, a review queue for
   volunteers with self-service data entry, and an `.xlsx`/`.csv`
   importer.
+- Docker Compose dev stack: healthchecks for Mailpit, GreenMail, Adminer,
+  the proxy, Den's backend and operator (`healthcheck` subcommand) and
+  every web app; services wait for `healthy` dependencies, and Den's web
+  app for a healthy Den backend. Den's backups now include every dev
+  bucket (`FILES_S3_BUCKETS` adds `finance-data-dev`, `learn-data-dev`
+  and `tasks-data-dev`). `.env.example` documents `COMPOSE_PROFILES`,
+  `DEN_MODE` and `TELEGRAM_BOT_TOKEN`
+  ([Local development](docs/contributing/local-development.md#how-the-stack-protects-your-computer)).
 
 ### Security
 
@@ -168,3 +176,9 @@ led by Den's MAJOR; see
   using it refuses to start outside `APP_ENV=development` without
   `DEN_LINK_ENCRYPTION_KEY`, and never re-pairs by itself after Den
   revoked its credential.
+- Docker Compose dev stack: every published port is bound to `127.0.0.1`,
+  so the public dev passwords are not reachable from your network;
+  Adminer, Mailpit, GreenMail and Caddy are pinned to exact versions;
+  Mailpit runs as a normal user and the proxy keeps only
+  `NET_BIND_SERVICE`. The dev proxy sends `Strict-Transport-Security`
+  on every host.

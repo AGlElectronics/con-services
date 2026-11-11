@@ -23,63 +23,83 @@
 	}
 }
 
+# HSTS for every host: browsers use HTTPS only for the next year. CSP and the
+# frame headers come from each web app's nginx (shared/nginx/security-headers.conf).
+(hsts) {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
 auth.conservices.test {
+	import hsts
 	reverse_proxy keycloak:8080
 }
 
 den.conservices.test {
+	import hsts
 	reverse_proxy den-frontend:8080
 }
 
 hr.conservices.test {
+	import hsts
 	reverse_proxy hr-frontend:8080
 }
 
 stash.conservices.test {
+	import hsts
 	reverse_proxy stash-frontend:8080
 }
 
 events.conservices.test {
+	import hsts
 	reverse_proxy events-frontend:8080
 }
 
 learn.conservices.test {
+	import hsts
 	reverse_proxy learn-frontend:8080
 }
 
 finance.conservices.test {
+	import hsts
 	reverse_proxy finance-frontend:8080
 }
 
 desk.conservices.test {
+	import hsts
 	reverse_proxy desk-frontend:8080
 }
 
 tasks.conservices.test {
+	import hsts
 	reverse_proxy tasks-frontend:8080
 }
 
 wiki.conservices.test {
+	import hsts
 	reverse_proxy wiki-frontend:8080
 }
 
 # Public event submission site (attendees). Production host is configuration,
 # e.g. events.<convention-domain>.
 submit.conservices.test {
+	import hsts
 	reverse_proxy events-submit:8080
 }
 
 mail.conservices.test {
+	import hsts
 	reverse_proxy mailpit:8025
 }
 
 db.conservices.test {
+	import hsts
 	reverse_proxy adminer:8080
 }
 
 # DEV S3 server (compose service "s3"). Presigned URLs are signed for
 # s3:9000; keep that Host so signatures match.
 s3.conservices.test {
+	import hsts
 	reverse_proxy s3:9000 {
 		header_up Host {upstream_hostport}
 	}
