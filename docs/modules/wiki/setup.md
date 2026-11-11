@@ -167,19 +167,19 @@ You need Den up and checked first: see
 
 8. **Connect HR** (only if you run HR). HR reads Wiki's role catalog (so
    the Wiki roles appear in HR's access picker) and calls Wiki when an
-   account is deleted. HR's chart only lists Stash by default, so add Wiki
-   to your HR values and upgrade HR:
+   account is deleted. HR's chart already allows that call
+   (`networkPolicy.moduleEgressNamespaces` includes `conservices-wiki`).
+   Point HR at Wiki's catalog and upgrade HR:
 
     ```yaml
     # my-hr.yaml (HR chart deploy/charts/hr)
     config:
       ROLE_CATALOG_SOURCES: >-
         stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,wiki=https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/role-catalog
-    networkPolicy:
-      moduleEgressNamespaces:
-        - conservices-stash
-        - conservices-wiki
     ```
+
+    Setting `ROLE_CATALOG_SOURCES` replaces the whole list, so name every
+    module whose roles should appear in HR.
 
     And in HR's secret (`hr-secrets`), the hook with Wiki's service token:
 
@@ -196,11 +196,12 @@ You need Den up and checked first: see
     in HR, **Access** for any person now lists the Wiki roles.
     See [Network policies](../../operations/network-policies.md#calls-between-modules).
 
-    **Group picker from HR (later).** Once HR serves
-    `GET /api/internal/directory/groups` (contract on
-    [Group picker](configuration.md#group-picker); HR does not have it yet),
-    let Wiki read HR's departments and access groups: put
-    `HR_DIRECTORY_TOKEN` in `wiki-secrets` (the same token HR accepts), then
+    **Group picker from HR.** HR serves
+    `GET /api/internal/directory/groups` when `HR_DIRECTORY_TOKEN` is set
+    (contract on [Group picker](configuration.md#group-picker)). HR's chart
+    already admits Wiki (`networkPolicy.allowFromNamespaces` includes
+    `conservices-wiki`). Put the same token in `wiki-secrets`, then open
+    Wiki's egress to HR's backend in `conservices-hr` on port 8080:
 
     ```yaml
     # my-wiki.yaml
@@ -209,8 +210,6 @@ You need Den up and checked first: see
     networkPolicy:
       hr: { enabled: true }
     ```
-
-    and add `conservices-wiki` to HR's `networkPolicy.allowFromNamespaces`.
 
 9. **Verify.**
 

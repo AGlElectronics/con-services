@@ -121,8 +121,9 @@ Answers from HR or Keycloak are cached for 5 minutes. If the source fails,
 the picker falls back to your own groups and shows a short warning; the
 backend logs `group directory unavailable`.
 
-**What HR must expose.** HR does not serve this endpoint yet. When it does,
-it must answer exactly this, with the bearer token from `HR_DIRECTORY_TOKEN`:
+**What HR exposes.** When `HR_DIRECTORY_TOKEN` is set, HR answers exactly
+this. Wiki sends that same token. While the token is unset, HR answers
+`404` and the picker cannot use HR:
 
 ```text
 GET /api/internal/directory/groups
@@ -141,8 +142,12 @@ Authorization: Bearer <HR_DIRECTORY_TOKEN>
 - `name` is the identity provider group exactly as it appears in tokens.
 - `display_name` is what people read (the department's name).
 - `kind` is `department` or `access`; anything else is treated as `access`.
-- A wrong token answers `401`. Until HR serves the endpoint, leave
-  `HR_DIRECTORY_URL` empty.
+- A wrong token answers `401`. Leave `HR_DIRECTORY_URL` empty to keep using
+  the identity provider, or the person's own groups.
+- On Kubernetes, set `networkPolicy.hr.enabled: true`. That is Wiki's
+  egress to HR's backend in `conservices-hr` on port 8080. HR's chart
+  already admits Wiki (`networkPolicy.allowFromNamespaces` includes
+  `conservices-wiki`).
 
 **Keycloak client for the identity provider source.** Create it once in the
 Keycloak admin console:
@@ -227,10 +232,10 @@ curl -s $WIKI/api/v1/pages/$PAGE/revisions -H "Authorization: Bearer $TOKEN"
   `GET /api/v1/groups` then has a `warning` and the backend log shows
   `group directory unavailable` with the reason. `401` from HR: the tokens
   differ. `401` from Keycloak: wrong client secret. `403` from Keycloak: the
-  client lacks `query-groups`. A timeout on Kubernetes: the network policy
-  egress is missing (`networkPolicy.hr.enabled` or
-  `networkPolicy.keycloakAdmin.enabled`, plus the ingress rule on the other
-  side).
+  client lacks `query-groups`. A timeout on Kubernetes: Wiki's egress is
+  off (`networkPolicy.hr.enabled` for HR,
+  `networkPolicy.keycloakAdmin.enabled` for Keycloak). HR's chart already
+  admits Wiki; Keycloak's ingress rule is the platform's.
 - **The backend does not start: `HR_DIRECTORY_TOKEN is required when
   HR_DIRECTORY_URL is set`** (or the same for `IDP_DIRECTORY_*`). Add the
   secret, or empty the URL.

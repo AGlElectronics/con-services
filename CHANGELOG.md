@@ -213,6 +213,13 @@ led by Den's MAJOR; see
   sees is unchanged: the API `message` field and `last_error` on the Den
   connection page still say "Den rejected…", "Den refused the pairing URL"
   and "Den returned …" (`denlink.UserMessage`).
+- Network policies: Wiki's egress to HR for the group directory is the
+  chart value `networkPolicy.hr` (namespace `conservices-hr`, HR's backend,
+  port 8080). It stays off until `networkPolicy.hr.enabled` is set, which
+  is what you do together with `HR_DIRECTORY_URL`. HR's chart already
+  admits `conservices-wiki`, and HR serves
+  `GET /api/internal/directory/groups` when `HR_DIRECTORY_TOKEN` is set.
+  The flow table records both sides.
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,
