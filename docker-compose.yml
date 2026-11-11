@@ -968,14 +968,17 @@ services:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
-      OIDC_CLIENT_ID: tasks-spa
-      OIDC_AUDIENCE: tasks-spa
+      # Access tokens of tasks-spa carry this audience (Keycloak audience mapper).
+      OIDC_AUDIENCE: tasks-api
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3009,https://tasks.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       # HR department hook (TASK-25). Applied when the container is
       # recreated at cutover; HR gets the matching DEPARTMENT_HOOKS then.
       TASKS_SERVICE_TOKEN: tasks-service-dev-token
+      # DEV ONLY: HR reads GET /api/role-catalog with this token (role
+      # catalog contract); signed-in people can read it without.
+      HR_SERVICE_TOKEN: hr-service-dev-token
       # Attachments (TASK-7)
       S3_ENDPOINT: http://s3:9000
       S3_BUCKET: tasks-data-dev
@@ -1007,6 +1010,9 @@ services:
         NGINX_CONF: nginx.stack.conf
         TASKS_VERSION: dev
     container_name: conservices-tasks-frontend
+    environment:
+      # Sign-in server for the Content-Security-Policy (shared nginx headers).
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/tasks.json:/etc/conservices/config.json:ro
@@ -1067,8 +1073,8 @@ services:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
-      OIDC_CLIENT_ID: tasks-spa
-      OIDC_AUDIENCE: tasks-spa
+      # Access tokens of tasks-spa carry this audience (Keycloak audience mapper).
+      OIDC_AUDIENCE: tasks-api
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3010
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -1107,6 +1113,9 @@ services:
         TASKS_VERSION: dev
     image: conservices-tasks-dev-frontend
     container_name: conservices-tasks-dev-frontend
+    environment:
+      # Sign-in server for the Content-Security-Policy (shared nginx headers).
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/tasks-dev.json:/etc/conservices/config.json:ro
