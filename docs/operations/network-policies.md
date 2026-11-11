@@ -113,6 +113,9 @@ belong to which.
 | module backend | `postgres` | 5432 | Kustomize | The module's own database. |
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
+| HR backend (`conservices-hr`) | every other module backend (Learn, Wiki, Tasks, Desk, Finance, Rally) | 8080 | Helm (`networkPolicy.moduleEgressNamespaces`) | Role catalogs, Learn holdings, offboarding and department hooks (see below). |
+| Wiki backend (`conservices-wiki`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.allowFromNamespaces`; Wiki: `networkPolicy.extraEgress` for now) | The Wiki's share dialog lists HR's groups (`GET /api/internal/directory/groups`). |
+| HR backend | Google's APIs (`admin.googleapis.com`, `oauth2.googleapis.com`) | 443 | Helm, only with `googleWorkspace.enabled` (`networkPolicy.googleApis`) | Google Workspace connector. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
@@ -145,8 +148,9 @@ namespaces start from a default deny with only DNS allowed.
 
 Not listed, so blocked: one module calling another (except the documented
 integrations below), the operator being reached by anything but
-`den-backend`, any pod reaching the internet (except external S3 when you
-allow it), and the gateway reaching backends directly.
+`den-backend`, any pod reaching the internet (except external S3 and HR's
+Google Workspace connector when you allow them), and the gateway reaching
+backends directly.
 
 Every flow in this table except DNS is encrypted with TLS and checked against
 the internal certificate authority (external S3: against public CAs); see
@@ -165,10 +169,11 @@ namespace and an *ingress* rule in the target's namespace.
 
 | Caller | Target | Path | Status in the manifests |
 | --- | --- | --- | --- |
-| HR | every module | `GET /api/role-catalog` (roles HR can grant) | Ingress rule on Stash done; HR's manifests (egress) not written yet. |
-| HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Planned with HR and Learn manifests. |
-| HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
-| HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
+| HR | every module | `GET /api/role-catalog` (roles HR can grant) | Done in the Helm charts: HR's egress (`networkPolicy.moduleEgressNamespaces`, every module namespace) and each module's ingress (`allowFromNamespaces` includes `conservices-hr`); Stash also in Kustomize. |
+| HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Done in the HR and Learn charts. |
+| HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Done in the HR and Wiki charts. |
+| HR | Tasks | `/api/internal/departments` (department hook) | Done in the HR and Tasks charts. |
+| Wiki | HR | `GET /api/internal/directory/groups` (with `HR_DIRECTORY_TOKEN`) | HR's ingress in its chart (`allowFromNamespaces: [conservices-wiki]`); the Wiki's egress through its `networkPolicy.extraEgress` until the Wiki chart has its own value ([Set up HR, step 5](../modules/hr/setup.md#5-open-the-network-paths-hr-needs)). |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
 | Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
