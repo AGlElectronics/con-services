@@ -144,6 +144,7 @@ nav:
           - modules/finance/index.md
           - Setup: modules/finance/setup.md
           - Configuration: modules/finance/configuration.md
+          - Bookkeeping: modules/finance/bookkeeping.md
           - API reference: modules/finance/api.md
       - Learn:
           - modules/learn/index.md
