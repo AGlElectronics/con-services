@@ -128,6 +128,11 @@ spec:
             {{- if $tls }}
             {{- include "hr.tlsVolumeMounts" . | nindent 12 }}
             {{- end }}
+            {{- if .Values.googleWorkspace.enabled }}
+            - name: google-workspace
+              mountPath: /etc/conservices-google
+              readOnly: true
+            {{- end }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -136,6 +141,15 @@ spec:
           emptyDir: {}
         {{- if $tls }}
         {{- include "hr.tlsVolumes" (dict "root" . "secret" "hr-backend-tls") | nindent 8 }}
+        {{- end }}
+        {{- if .Values.googleWorkspace.enabled }}
+        - name: google-workspace
+          secret:
+            secretName: {{ required "googleWorkspace.existingSecret is required" .Values.googleWorkspace.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: credentials.json
+                path: credentials.json
         {{- end }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}

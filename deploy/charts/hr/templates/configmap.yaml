@@ -12,6 +12,9 @@ data:
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   DEN_MODE: {{ include "hr.denMode" . | quote }}
+  {{- if .Values.googleWorkspace.enabled }}
+  GOOGLE_WORKSPACE_CREDENTIALS_FILE: /etc/conservices-google/credentials.json
+  {{- end }}
   {{- if $tls }}
   TLS_CERT_FILE: /etc/conservices-tls/tls.crt
   TLS_KEY_FILE: /etc/conservices-tls/tls.key
