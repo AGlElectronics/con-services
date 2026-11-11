@@ -19,9 +19,12 @@ Source: [AGlElectronics/hr](https://github.com/AGlElectronics/hr)
 
 | Person | Uses HR to |
 | --- | --- |
-| HR team (members of `hr-admin`) | Onboard people, edit profiles, pause or reactivate them, offboard them, manage departments and the access each department gets by default. |
-| Administrators | Settings (username and email templates), the [Den connection](../../concepts/pairing.md), training requirements for roles. |
-| Everyone else | Nobody else signs in to HR. People receive the password-setup email HR triggers and then sign in to Den and the other modules. |
+| HR admins (`hr-admin`) | Onboard people, edit profiles, pause, ban or offboard them, manage departments, access groups, the review queue, imports, settings, the [Den connection](../../concepts/pairing.md) and training requirements for roles. |
+| HR viewers (`hr-viewer`) | Look things up, read-only. |
+| Department leads (`hr-lead`) | Onboard and manage the people of the departments they lead. |
+| Everyone else | Receives the password-setup email HR triggers and signs in to Den and the other modules. Someone signed in to HR without a role can only send their details to a coordinator (**Register**). |
+
+Roles and pages: [Admin guide](admin-guide.md#roles).
 
 ## How HR fits into the platform
 
@@ -48,7 +51,9 @@ flowchart LR
     be -.->|qualifications, optional| learn[Learn]
     be -.->|offboarding hook, optional| wiki[Wiki]
     be -.->|department hook, optional| tasks[Tasks]
+    wiki -.->|group directory, optional| be
     be -.->|notices, optional| smtp[SMTP server]
+    be -.->|Google Workspace, later release| google[Google APIs]
 ```
 
 ## Ways to run HR
@@ -68,7 +73,7 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
 | Part | Technology | Runs as |
 | --- | --- | --- |
 | Backend | Go 1.27, chi, pgx | Deployment `hr-backend` (`/server`, port 8080) |
-| Migrations | Goose, separate binary | initContainer `migrate` in `hr-backend` (`hr-migrate` image). The server **never** migrates (ADR-0003). |
+| Migrations | Goose, separate binary | initContainer `migrate` in `hr-backend` (`hr-migrate` image). The server **never** migrates. |
 | Frontend | React 19, Rsbuild, TanStack Query, Tailwind | Deployment `hr-frontend` (nginx) |
 | Database | PostgreSQL 16 | shared server, database `hr` |
 
@@ -89,9 +94,11 @@ restrict who can read its database and backups.
 ## In this section
 
 - [Setup](setup.md): install HR in each posture.
-- [Admin guide](admin-guide.md): onboarding, offboarding, departments, settings.
+- [Admin guide](admin-guide.md): roles, onboarding, review queue, imports, offboarding, departments, settings.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.
+- [Personal data](personal-data.md): what HR stores, who sees it, retention.
+- [Google Workspace](google-workspace.md): accounts in your Workspace domain (prepared; the client comes in a later release).
 
 Design decisions: HR's [ADRs](https://github.com/AGlElectronics/hr/tree/main/docs/adr)
 and [domain model](https://github.com/AGlElectronics/hr/blob/main/docs/domain-model.md).

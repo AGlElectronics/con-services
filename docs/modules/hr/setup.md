@@ -712,7 +712,7 @@ way round).
 `groups` claim contains none of `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS` or
 `HR_LEAD_GROUPS` (defaults `hr-admin`, `hr-viewer`, `hr-lead`).
 `GET /api/me` shows the groups HR saw. A lead who leads no department yet
-sees nothing until an admin adds them under **Departments → Leads**.
+sees nothing until an admin adds them with **Departments → Change leads**.
 
 **The Wiki's share dialog shows no HR departments.** The Wiki only asks HR
 while both are paired with Den and the Wiki has `HR_DIRECTORY_URL` set.
