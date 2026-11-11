@@ -149,6 +149,9 @@ nav:
           - modules/learn/index.md
           - Setup: modules/learn/setup.md
           - Configuration: modules/learn/configuration.md
+          - Guide for learners: modules/learn/guides/learner.md
+          - Guide for trainers: modules/learn/guides/trainer.md
+          - Guide for admins and managers: modules/learn/guides/admin.md
           - API reference: modules/learn/api.md
       - Wiki:
           - modules/wiki/index.md
