@@ -173,7 +173,7 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
 | Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080; ingress rule on Stash done, the other modules' manifests and charts must admit `den-backend` from `conservices-den`. |
-| HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
+| HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Already allowed on both sides, port 8080: HR chart egress `networkPolicy.den` (on by default) and Den ingress from every module backend (Helm `networkPolicy.allowFromModules`, Kustomize `den-backend`). |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 
 Calls that come from the **browser**, not from a pod, go through the

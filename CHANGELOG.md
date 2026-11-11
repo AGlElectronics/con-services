@@ -230,6 +230,17 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Den's Helm chart and Kustomize nginx include the shared
+  `security-headers-frame-self.conf` for `/silent-callback.html` (same-origin
+  framing for silent sign-in). The image copies that template; it no longer
+  builds a `security-headers-frameable.conf` with `sed`. `EXTRA_FRAME_SRC`
+  stays empty on Den.
+- The [Den API reference](docs/modules/den/api.md#get-apiv1integrationsmodules)
+  documents `GET /api/v1/integrations/modules`: a paired module lists the
+  organisation's enabled, paired modules and each one's `role_catalog_url`.
+  HR's call is already allowed by the module-backend egress to `den-backend`
+  and Den's ingress from module backends
+  ([Network policies](docs/operations/network-policies.md#calls-between-modules)).
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

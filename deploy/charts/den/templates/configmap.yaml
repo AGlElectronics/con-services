@@ -124,8 +124,9 @@ data:
             try_files $uri =404;
         }
         # Target of the hidden sign-in iframe, framed by Den itself.
+        # Shared snippet: frame-ancestors 'self', X-Frame-Options SAMEORIGIN.
         location = /silent-callback.html {
-            include /etc/nginx/snippets/security-headers-frameable.conf;
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
             add_header Cache-Control "no-cache" always;
         }
         location / {

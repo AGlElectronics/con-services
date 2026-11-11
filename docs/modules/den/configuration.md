@@ -425,10 +425,10 @@ locations that serve the web app (`/`, `/static/`, `/config.json`), never to
 `/api/`, where the backend sends its own stricter headers.
 
 `/silent-callback.html` is the one exception: the web app loads it in a
-hidden iframe of itself to renew the sign-in silently, so it gets the same
-policy with `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`
-(the snippet `security-headers-frameable.conf`, made from the shared
-template when the image is built).
+hidden iframe of itself to renew the sign-in silently, so that exact
+location includes the shared snippet `security-headers-frame-self.conf`
+(`frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`). The image
+copies that template; it does not rewrite the main policy.
 
 The image fills in the sign-in server when the container starts:
 
@@ -436,6 +436,7 @@ The image fills in the sign-in server when the container starts:
 | --- | --- | --- | --- |
 | `KEYCLOAK_ORIGIN` | empty | with `oidc` | Origin of the sign-in server (scheme, host and port, no path), for example `https://auth.example.org`. Allowed in `connect-src`, `frame-src` and `form-action`. Helm derives it from the issuer; Kustomize sets it in the ConfigMap `den-frontend-env`; Compose sets it on `den-frontend`. |
 | `DEN_ORIGIN`, `S3_ORIGIN`, `EXTRA_CONNECT_SRC` | empty | no | Further origins the browser may call. Den's web app only talks to its own address, so leave them empty. |
+| `EXTRA_FRAME_SRC` | empty | no | Extra `frame-src` tokens. Den leaves this empty. Desk is the app that sets `about:srcdoc`. |
 
 On Kubernetes the root file system is read-only, so the manifests mount an
 `emptyDir` at `/etc/nginx/snippets` where the snippets are written.

@@ -10,7 +10,7 @@ pushes a new brand revision before an event, or starts a backup. Every
 other module is configured relative to Den, so this is the API to read
 first.
 
-This page lists all **48 endpoints**, taken from
+This page lists all **49 endpoints**, taken from
 [`backend/internal/http/router.go`](https://github.com/AGlElectronics/den/blob/main/backend/internal/http/router.go)
 and its handlers. What all modules share (error shape, request IDs, probes,
 how tokens are checked) is on
@@ -42,7 +42,10 @@ for anyone, plus `/api/health`, `/api/role-catalog` and the root probes.
 **Rate limits.** The endpoints that need no sign-in are limited per client
 address: `POST /api/v1/integrations/pairing/redeem` 10 a minute,
 `/api/v1/public/*` 120 a minute, `GET /api/v1/backup-downloads/{token}` 10 a
-minute. IPv6 clients count per `/64` network, so one machine cannot dodge
+minute. `GET /api/v1/integrations/modules` needs a module credential and is
+also limited to 120 a minute per client address; the limit is checked
+before the credential, so a flood of bad credentials is `429` as well.
+IPv6 clients count per `/64` network, so one machine cannot dodge
 the limit by rotating addresses. Everything for signed-in people is limited
 to 600 requests a minute **per person** (issuer and subject of the token),
 with short bursts allowed. Over the limit Den answers `429 rate_limited`
@@ -222,6 +225,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | POST | `/api/v1/integrations/pairing/redeem` | pairing token (rate-limited) | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/bundle`, `/settings`, `/module-settings` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/module-settings/secrets` | module credential | [Integration](#get-apiv1integrationsmodule-settingssecrets) |
+| GET | `/api/v1/integrations/modules` | module credential (rate-limited) | [Integration](#get-apiv1integrationsmodules) |
 | GET | `/api/v1/integrations/branding/profile`, `/assets`, `/assets/{id}` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET, PUT | `/api/v1/integrations/user-preferences` | module credential | [Integration](#integration-api-for-paired-modules) |
 
@@ -1689,6 +1693,67 @@ and the audit log never return it. It is as safe as the secret it comes
 from ([Secrets](../../operations/secrets.md)): update the secret manager
 and restart Den. A mounted `DEN_SMTP_PASSWORD_FILE` is read on each
 request, so replacing the file needs no restart.
+
+### `GET /api/v1/integrations/modules`
+
+The organisation's enabled, paired modules, so HR can find each one's
+[role catalog](../../concepts/role-catalog.md) without a hand-written list.
+**Auth:** `Authorization: Bearer <module credential>` (the caller's own
+pairing credential). **Request body:** none. Rate-limited to 120 requests
+a minute per client address.
+
+Den lists a module when it is enabled, its status is `paired` or
+`degraded`, and it still has a credential that has not been revoked.
+Disabled modules, unpaired modules and modules whose credentials are all
+revoked are left out.
+
+| Field | Meaning |
+| --- | --- |
+| `slug`, `display_name` | As registered in Den. |
+| `base_url` | Public address, for links. |
+| `internal_url` | Address a backend inside the cluster uses. Empty when the registration has none. |
+| `role_catalog_url` | Where HR fetches `GET /api/role-catalog`: `internal_url` when that is set, otherwise `base_url`, plus `/api/role-catalog`. Empty when the module has no address. Do not append the path again. |
+
+The body is the five fields per module (a handful of addresses, well under
+64 KiB).
+
+```sh
+curl -s -H "Authorization: Bearer $CRED" \
+  https://den-backend.conservices-den.svc.cluster.local:8080/api/v1/integrations/modules
+```
+
+The same path on `$DEN` answers the same JSON. From a laptop that is
+`curl -s -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/modules`.
+
+```json
+{
+  "modules": [
+    {
+      "slug": "desk",
+      "display_name": "Desk",
+      "base_url": "https://desk.con.example.org",
+      "internal_url": "https://desk-backend.conservices-desk.svc.cluster.local:8080",
+      "role_catalog_url": "https://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog"
+    },
+    {
+      "slug": "wiki",
+      "display_name": "Wiki",
+      "base_url": "https://wiki.con.example.org",
+      "internal_url": "",
+      "role_catalog_url": "https://wiki.con.example.org/api/role-catalog"
+    }
+  ]
+}
+```
+
+| Status | Code | When |
+| --- | --- | --- |
+| 401 | `unauthorized` | No `Authorization: Bearer` header (`missing bearer token`), or the credential is unknown or revoked (`invalid or revoked credential`). |
+| 429 | `rate_limited` | More than 120 requests a minute from this client address. `Retry-After` is the wait in seconds. |
+
+Network policy: HR's backend already has egress to `den-backend` on port
+8080, and Den admits every module backend. See
+[Network policies](../../operations/network-policies.md#calls-between-modules).
 
 ### `GET /api/v1/integrations/branding/profile`
 

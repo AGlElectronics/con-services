@@ -985,23 +985,12 @@ scripts are files. No other app sets `EXTRA_FRAME_SRC`.
 
 **Silent sign-in after a reload times out; the console says *Refused to display '…/silent-callback.html' in a frame because it set 'X-Frame-Options' to 'deny'***
 : oidc-client-ts loads the app's own `silent-callback.html` in a hidden
-  iframe, and the template's `frame-ancestors 'none'` and
-  `X-Frame-Options: DENY` forbid that. Serve that one page with a variant
-  that allows same-origin framing. Den makes it from the template when the
-  image is built (`infra/Dockerfile.frontend`):
-
-    ```dockerfile
-    RUN sed -e "s/frame-ancestors 'none'/frame-ancestors 'self'/" -e 's/"DENY"/"SAMEORIGIN"/' \
-          /etc/nginx/templates/security-headers.conf.template \
-          > /etc/nginx/templates/security-headers-frameable.conf.template
-    ```
-
-    ```nginx
-    location = /silent-callback.html {
-        include /etc/nginx/snippets/security-headers-frameable.conf;
-        add_header Cache-Control "no-cache" always;
-    }
-    ```
+  iframe. That exact location must include the shared
+  `security-headers-frame-self.conf` (`frame-ancestors 'self'`,
+  `X-Frame-Options: SAMEORIGIN`). Copy
+  `security-headers-frame-self.conf.template` into the image next to the
+  main template; do not rewrite the main policy with `sed`. See
+  [Silent sign-in iframe](#silent-sign-in-iframe). Den does this.
 
 ## Google Workspace service account
 
