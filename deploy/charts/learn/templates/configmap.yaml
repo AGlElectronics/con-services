@@ -1,4 +1,8 @@
 {{- $tls := .Values.internalTLS.enabled -}}
+{{- $gd := .Values.config.GROUP_DIRECTORY | default "keycloak" -}}
+{{- if not (has $gd (list "keycloak" "off")) -}}
+{{- fail (printf "config.GROUP_DIRECTORY must be keycloak or off, not %q" $gd) -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -68,6 +68,7 @@ conservices/                       KV version 2 mount (openbao.kvPath)
 │   │   └── operator-token         generated  token
 │   ├── stash/s3                   you        (rally, learn, wiki, tasks alike)
 │   ├── learn/service-token        generated  token (wiki, tasks alike)
+│   ├── learn/feedback-pepper      generated  pepper
 │   └── desk/secret-key            generated  key
 └── infra/
     ├── postgres/
@@ -473,6 +474,7 @@ while the entry is missing.
 | `conservices/infra/postgres/roles/<role>` | `password` | password of a PostgreSQL login: `den`, `keycloak`, and one per enabled module (`stash`, `hr`, `events` for Rally, `finance`, `learn`, `wiki`, `desk`, `tasks`) | generated | `postgres` and the application | always (`den`, `keycloak`); per enabled module |
 | `conservices/modules/den/operator-token` | `token` | token between Den's backend and its operator | generated | `den` | always |
 | `conservices/modules/<module>/service-token` | `token` | token HR uses to call `learn`, `wiki`, `tasks` | generated | that module, `hr` | that module enabled |
+| `conservices/modules/learn/feedback-pepper` | `pepper` | key of the hash that stops a person giving anonymous feedback on a course twice (`LEARN_FEEDBACK_PEPPER`); rotating it lets everyone give feedback once more | generated | `learn` | Learn enabled |
 | `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |

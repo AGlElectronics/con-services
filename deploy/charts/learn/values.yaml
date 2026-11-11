@@ -26,9 +26,11 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY, KEYCLOAK_CLIENT_SECRET, LEARN_SERVICE_TOKEN, and
+# S3_SECRET_ACCESS_KEY, KEYCLOAK_CLIENT_SECRET, LEARN_SERVICE_TOKEN,
+# LEARN_FEEDBACK_PEPPER (required with APP_ENV other than development; both
+# tokens at least 32 random characters: openssl rand -hex 32), and
 # optionally SMTP_PASSWORD and TELEGRAM_BOT_TOKEN. This chart never creates
-# Secrets.
+# Secrets. Docs: https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: learn-secrets
 
 # Learn's access config (roles, permissions, OIDC group bindings).
@@ -74,6 +76,17 @@ config:
   KEYCLOAK_BASE_URL: https://keycloak.conservices-identity.svc.cluster.local:8443
   KEYCLOAK_REALM: conservices
   KEYCLOAK_CLIENT_ID: learn-provisioner
+  # keycloak: read groups and people from the Keycloak admin API above.
+  # off: never (an identity provider other than Keycloak); group links then
+  # use the groups people sign in with, and the web app shows a warning.
+  # Also set networkPolicy.keycloakAdmin.enabled: false with off.
+  GROUP_DIRECTORY: keycloak
+  # Groups trainers may see and link (full paths, comma-separated; "/a/*" =
+  # every group below /a, "*" = every group). Course managers link any group.
+  LEARN_LINKABLE_GROUPS: "/learn/*"
+  # Telegram Bot API origin; change only for a proxy. Delivery needs
+  # TELEGRAM_BOT_TOKEN in existingSecret and networkPolicy.telegram below.
+  TELEGRAM_API_URL: https://api.telegram.org
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
 
 # Den pairing. Docs: https://aglelectronics.github.io/con-services/concepts/pairing/#required-or-standalone
@@ -274,6 +287,16 @@ networkPolicy:
     podSelector:
       app: keycloak
     port: 8443
+  # Telegram reminders call the Bot API on the internet. Turn on together
+  # with TELEGRAM_BOT_TOKEN. fqdns renders the CiliumNetworkPolicy
+  # learn-telegram (toFQDNs plus a DNS rule to kube-dns) when
+  # networkPolicy.gateway.cilium is true; cidrs adds plain ipBlock rules for
+  # other CNIs (Telegram's published ranges, or 0.0.0.0/0).
+  telegram:
+    enabled: false
+    fqdns: ["api.telegram.org"]
+    cidrs: []  # e.g. ["149.154.160.0/20", "91.108.4.0/22"]
+    port: 443
   # Add your SMTP server here when SMTP_HOST is set, e.g.
   #   - to: [{ ipBlock: { cidr: 203.0.113.10/32 } }]
   #     ports: [{ protocol: TCP, port: 587 }]

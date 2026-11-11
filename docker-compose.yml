@@ -794,6 +794,10 @@ services:
       KEYCLOAK_REALM: conservices
       KEYCLOAK_CLIENT_ID: learn-provisioner
       KEYCLOAK_CLIENT_SECRET: learn-provisioner-dev-secret
+      # keycloak: groups and people from the admin API above; off: never.
+      GROUP_DIRECTORY: ${LEARN_GROUP_DIRECTORY:-keycloak}
+      # Groups trainers may link (apply-mvp.sh creates /learn/demo-cohort).
+      LEARN_LINKABLE_GROUPS: ${LEARN_LINKABLE_GROUPS:-/learn/*}
       # Learn's own notices. Dev: Mailpit; prod: real SMTP.
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
@@ -801,6 +805,9 @@ services:
       SMTP_FROM_NAME: Con Services
       # Shared secret for HR -> Learn service calls (qualification holdings).
       LEARN_SERVICE_TOKEN: learn-service-dev-token
+      # DEV ONLY. Keys the anonymous-feedback dedupe hash; real installations
+      # keep it in their secret manager (see the Secrets page).
+      LEARN_FEEDBACK_PEPPER: learn-feedback-dev-pepper
       # Empty = Telegram notifications disabled.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     volumes:

@@ -18,6 +18,18 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Learn in the shared Docker stack: `GROUP_DIRECTORY`
+  (`LEARN_GROUP_DIRECTORY`, default `keycloak`), `LEARN_LINKABLE_GROUPS`
+  (default `/learn/*`) and a dev-only `LEARN_FEEDBACK_PEPPER`. The dev
+  Keycloak script (`infra/keycloak/apply-mvp.sh`) creates the
+  `learn-manager` group (training managers) and a `/learn` parent group
+  with `/learn/demo-cohort` for trainers to link.
+- Documentation: user guides for Learn learners, trainers and admins;
+  the Learn feedback pepper (`conservices/modules/learn/feedback-pepper`)
+  in the secrets inventory and the OpenBao layout; Learn's egress to the
+  Telegram Bot API on the network-policy page. `scripts/smoke-learn.ps1`
+  now also covers quizzes, media uploads, in-person sessions with QR
+  check-in, and certificates.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →

@@ -114,6 +114,13 @@ learn_group() {
 LEARN_ADMIN_GID=$(learn_group learn-admin | tail -n1)
 LEARN_TRAINER_GID=$(learn_group learn-trainer | tail -n1)
 learn_group learn-coordinator >/dev/null
+learn_group learn-manager >/dev/null
+# Parent of the groups trainers may link (LEARN_LINKABLE_GROUPS=/learn/*),
+# with one demo cohort.
+LEARN_PARENT_GID=$(learn_group learn | tail -n1)
+if ! $KC get "groups/$LEARN_PARENT_GID/children" -r conservices --fields name --format csv --noquotes | grep -qx demo-cohort; then
+  $KC create "groups/$LEARN_PARENT_GID/children" -r conservices -s name=demo-cohort
+fi
 
 # Learn reads groups and members (quiz assignment by group). Read-only.
 LEARN_PROV=$($KC get clients -r conservices -q clientId=learn-provisioner --fields id --format csv --noquotes | tail -n1 || true)

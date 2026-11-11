@@ -102,6 +102,7 @@ belong to which.
 | `den-backend`, `den-operator`, module backend | CloudNativePG pods (`cnpg.io/cluster: conservices-pg`) in `conservices-data` | 5432 | Helm (`networkPolicy.data.postgres`) | Own database (Den's operator: admin login). |
 | `den-backend`, `den-operator`, module backend with a bucket | Garage pods (`app.kubernetes.io/name: garage`) in `conservices-data` | 3900 | Helm (`networkPolicy.data.s3`) | Buckets, through Garage's TLS sidecar. |
 | `den-backend`, `den-operator`, module backend | external S3 (for example `*.your-objectstorage.com`) | 443 | Helm, only when `networkPolicy.data.s3.external` is set | Buckets at a managed S3 provider. Cilium: the `CiliumNetworkPolicy` `<name>-external-s3` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `external.cidrs`. Checked against public CAs, not the internal CA. |
+| `learn-backend` | Telegram Bot API (`api.telegram.org`) | 443 | Helm, only with `networkPolicy.telegram.enabled` | Telegram reminders. Cilium: the `CiliumNetworkPolicy` `learn-telegram` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.telegram.cidrs`. Off by default, like `TELEGRAM_BOT_TOKEN`. |
 | `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for [Keycloak sync](../modules/den/admin-guide.md#keycloak-sync). |
 | `den-backend` | `den-operator` | 8080 | both | Backups and module databases (bearer `OPERATOR_TOKEN`). |
 | `den-backend` | `postgres` | 5432 | Kustomize | Den's own database (also the `migrate` initContainer). |
@@ -288,6 +289,22 @@ spec:
 This one policy covers both `den-backend` and `den-operator` (both carry
 `app.kubernetes.io/name: den`). Add the same in each module namespace that
 uses S3, with that module's selector.
+
+### Telegram (Learn reminders)
+
+Learn sends Telegram reminders through the Bot API at `api.telegram.org`.
+With the Learn chart, turn the egress on together with the bot token:
+
+```yaml
+networkPolicy:
+  telegram:
+    enabled: true
+    fqdns: ["api.telegram.org"]   # Cilium: CiliumNetworkPolicy learn-telegram
+    cidrs: []                     # other CNIs, e.g. ["149.154.160.0/20", "91.108.4.0/22"]
+```
+
+Without this rule the backend logs `notification delivery failed` with a
+timeout, and the reminder is not counted as delivered.
 
 ## Rules for a new module
 
