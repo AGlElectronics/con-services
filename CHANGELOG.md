@@ -265,6 +265,17 @@ led by Den's MAJOR; see
 - [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
+- Kustomize: the Den operator's `FILES_S3_BUCKETS` in the base and the
+  overlays now says to add each installed module's bucket (for example
+  `wiki-data`; Wiki's page bodies exist only in its bucket).
+- Root `docker-compose.yml`: `wiki-backend` sets
+  `WIKI_REVISION_RETENTION_DAYS` and the (empty) group-picker settings
+  `HR_DIRECTORY_URL` and `HR_DIRECTORY_TOKEN`.
+- Network policies: the flow table and *Calls between modules* list HR →
+  Wiki (role catalog and offboarding hook, with the HR chart values to add),
+  Wiki → HR (group picker directory, opt-in) and Wiki → Keycloak admin API
+  (group picker when standalone, opt-in). The secrets inventory lists
+  Wiki's optional `HR_DIRECTORY_TOKEN` and `IDP_DIRECTORY_CLIENT_SECRET`.
 
 ### Security
 

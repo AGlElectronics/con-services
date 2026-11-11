@@ -87,7 +87,10 @@ You need Den up and checked first: see
     ```
 
     `WIKI_SERVICE_TOKEN` must be the same token HR uses in
-    `OFFBOARD_HOOKS` (step 8).
+    `OFFBOARD_HOOKS` (step 8). Optional, for the share dialog's group
+    picker: add `HR_DIRECTORY_TOKEN` (once HR serves the directory, step 8)
+    or `IDP_DIRECTORY_CLIENT_SECRET` (Keycloak, see
+    [Group picker](configuration.md#group-picker)) to the same entry.
 
 5. **Create the access config.** It maps Keycloak groups to Wiki roles.
    Start from `infra/access-config.toml` in the Wiki repository:
@@ -143,17 +146,52 @@ You need Den up and checked first: see
    as a `wiki-admin`: **Settings → Den connection**, paste it and confirm.
    Wiki shows Den's brand within a minute.
 
-8. **Connect HR** (only if you run HR). HR calls Wiki when an account is
-   deleted. In HR's settings:
+8. **Connect HR** (only if you run HR). HR reads Wiki's role catalog (so
+   the Wiki roles appear in HR's access picker) and calls Wiki when an
+   account is deleted. HR's chart only lists Stash by default, so add Wiki
+   to your HR values and upgrade HR:
+
+    ```yaml
+    # my-hr.yaml (HR chart deploy/charts/hr)
+    config:
+      ROLE_CATALOG_SOURCES: >-
+        stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,wiki=https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/role-catalog
+    networkPolicy:
+      moduleEgressNamespaces:
+        - conservices-stash
+        - conservices-wiki
+    ```
+
+    And in HR's secret (`hr-secrets`), the hook with Wiki's service token:
 
     ```text
     OFFBOARD_HOOKS=https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded|<WIKI_SERVICE_TOKEN>
     ```
 
-    The Wiki chart already admits HR's backend (`networkPolicy.allowFromNamespaces`).
-    HR's namespace needs the matching **egress** rule to
-    `conservices-wiki` port 8080; see
-    [Network policies](../../operations/network-policies.md#calls-between-modules).
+    ```sh
+    helm upgrade hr deploy/charts/hr -n conservices-hr -f my-hr.yaml
+    ```
+
+    The Wiki chart already admits HR's backend
+    (`networkPolicy.allowFromNamespaces` lists `conservices-hr`). Check it:
+    in HR, **Access** for any person now lists the Wiki roles.
+    See [Network policies](../../operations/network-policies.md#calls-between-modules).
+
+    **Group picker from HR (later).** Once HR serves
+    `GET /api/internal/directory/groups` (contract on
+    [Group picker](configuration.md#group-picker); HR does not have it yet),
+    let Wiki read HR's departments and access groups: put
+    `HR_DIRECTORY_TOKEN` in `wiki-secrets` (the same token HR accepts), then
+
+    ```yaml
+    # my-wiki.yaml
+    config:
+      HR_DIRECTORY_URL: https://hr-backend.conservices-hr.svc.cluster.local:8080
+    networkPolicy:
+      hr: { enabled: true }
+    ```
+
+    and add `conservices-wiki` to HR's `networkPolicy.allowFromNamespaces`.
 
 9. **Verify.**
 
@@ -216,6 +254,12 @@ with these Wiki-specific values:
     ```
 
 - The backend still runs **one replica** with a buffer volume.
+- Optional: let the share dialog suggest your Keycloak groups. Create the
+  read-only client as in [Group picker](configuration.md#group-picker), add
+  `IDP_DIRECTORY_CLIENT_SECRET` to `wiki-secrets`, and set
+  `config.IDP_DIRECTORY_URL`, `config.IDP_DIRECTORY_CLIENT_ID` and an egress
+  rule to Keycloak (`networkPolicy.keycloakAdmin.enabled: true` in-cluster,
+  or an `extraEgress` rule for an external Keycloak).
 - Internal TLS stays on by default and needs cert-manager, trust-manager
   and an issuer in your cluster. Without them, turn it off or bring your
   own certificates ([Without cert-manager](#without-cert-manager)). For a
@@ -533,8 +577,16 @@ your secret manager, then
 managed database use `sslmode=verify-full&sslrootcert=<path to the provider's CA>`.
 
 **HR's offboarding fails with a timeout.** HR's namespace has no egress rule
-to `conservices-wiki`. With `401`, `WIKI_SERVICE_TOKEN` and the token in
+to `conservices-wiki` (add it to HR's `networkPolicy.moduleEgressNamespaces`,
+step 8). With `401`, `WIKI_SERVICE_TOKEN` and the token in
 `OFFBOARD_HOOKS` differ. With `404`, `WIKI_SERVICE_TOKEN` is empty on Wiki.
+
+**The Wiki roles are missing from HR's access picker.** HR's
+`ROLE_CATALOG_SOURCES` does not list `wiki=…/api/role-catalog`, or HR cannot
+reach Wiki (the same egress rule as above). See step 8.
+
+**The group picker only shows your own groups.** See
+[Configuration → Troubleshooting](configuration.md#troubleshooting).
 
 **Public share links answer `404`.** They are off until Den's organisation
 setting `wiki_public_links` (or `PUBLIC_LINKS_ENABLED` standalone) is on.

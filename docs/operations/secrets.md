@@ -180,7 +180,7 @@ with each module's docs):
 | Stash | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `conservices-stash` |
 | HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, SMTP password if any | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
-| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
+| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`; optional for the share dialog's group picker: `HR_DIRECTORY_TOKEN` (equals the token HR accepts on `GET /api/internal/directory/groups`) or `IDP_DIRECTORY_CLIENT_SECRET` (a read-only Keycloak client, see [Wiki configuration](../modules/wiki/configuration.md#group-picker)) | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL` | `conservices-finance` |
@@ -189,6 +189,13 @@ with each module's docs):
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
+Wiki's `HR_DIRECTORY_TOKEN` is the same kind of shared token, for Wiki
+calling HR; rotate it on both sides at once like the others.
+`IDP_DIRECTORY_CLIENT_SECRET` belongs to a Keycloak client that can only
+read groups; rotate it in Keycloak (**Clients → wiki-directory →
+Credentials → Regenerate**), update your secret manager, then restart
+`wiki-backend`. Both are only needed when the group picker uses that
+directory.
 
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;

@@ -113,7 +113,10 @@ belong to which.
 | module backend | `postgres` | 5432 | Kustomize | The module's own database. |
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
+| HR backend (`conservices-hr`) | `wiki-backend` | 8080 | Helm (Wiki: `networkPolicy.allowFromNamespaces`, includes `conservices-hr` by default; HR: `networkPolicy.moduleEgressNamespaces`, add `conservices-wiki`) | HR reads Wiki's `GET /api/role-catalog` and calls the offboarding hook `POST /api/internal/offboarded` (bearer `WIKI_SERVICE_TOKEN`). |
+| `wiki-backend` | HR backend (`conservices-hr`) | 8080 | Helm, opt-in (Wiki: `networkPolicy.hr.enabled`; HR: `networkPolicy.allowFromNamespaces`, add `conservices-wiki`) | The share dialog's group picker reads `GET /api/internal/directory/groups` (bearer `HR_DIRECTORY_TOKEN`). Only with `HR_DIRECTORY_URL` set. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
+| `wiki-backend` | `keycloak` | 8443 | Helm, opt-in (`networkPolicy.keycloakAdmin.enabled`; merged with the OIDC rule when it targets the same pods) | Keycloak admin API, read-only: the group picker lists realm groups when Wiki is not paired with HR. Only with `IDP_DIRECTORY_URL` set. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
 backends on 8443, CloudNativePG admitting them on 5432, an in-cluster S3
@@ -167,12 +170,14 @@ namespace and an *ingress* rule in the target's namespace.
 | --- | --- | --- | --- |
 | HR | every module | `GET /api/role-catalog` (roles HR can grant) | Ingress rule on Stash done; HR's manifests (egress) not written yet. |
 | HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Planned with HR and Learn manifests. |
-| HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
+| HR | Wiki | `GET /api/role-catalog`, `POST /api/internal/offboarded` (offboarding hook, `WIKI_SERVICE_TOKEN`) | Ingress in the Wiki chart (`networkPolicy.allowFromNamespaces`, `conservices-hr` by default). Egress in the HR chart: add `conservices-wiki` to `networkPolicy.moduleEgressNamespaces` (see [Set up Wiki](../modules/wiki/setup.md#option-1-kubernetes-platform-recommended), step 8). |
+| Wiki | HR | `GET /api/internal/directory/groups` (group picker, `HR_DIRECTORY_TOKEN`) | Egress in the Wiki chart (`networkPolicy.hr.enabled`, off by default); ingress in the HR chart (`networkPolicy.allowFromNamespaces`: add `conservices-wiki`). HR does not serve this endpoint yet; the contract is on [Wiki configuration](../modules/wiki/configuration.md#group-picker). |
 | HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
 | Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
+| Wiki | Keycloak admin API | listing realm groups for the group picker (standalone, `IDP_DIRECTORY_URL`) | Egress in the Wiki chart (`networkPolicy.keycloakAdmin.enabled`, off by default); the ingress rule on Keycloak is the platform's. |
 
 Calls that come from the **browser**, not from a pod, go through the
 Gateway and need no policy of their own: Den's portal fetching

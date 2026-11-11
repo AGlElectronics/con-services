@@ -25,7 +25,7 @@ manager creates (see [Secrets](../../operations/secrets.md)). The chart sets
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` | Everything below marked "no" in the Secret column. |
-| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`. |
+| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`; optionally `HR_DIRECTORY_TOKEN` or `IDP_DIRECTORY_CLIENT_SECRET` for the [group picker](#group-picker). |
 | ConfigMap `wiki-access-config` | The access config file (roles and group bindings). |
 | Secrets `wiki-backend-tls`, `wiki-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -79,6 +79,7 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | `S3_REGION` | `us-east-1` | no | no | Region of the bucket. |
 | `S3_USE_PATH_STYLE` | `true` | no | no | `true` for the local S3 server (SeaweedFS) and most self-hosted S3; `false` for AWS virtual-hosted addresses. |
 | `WIKI_BUFFER_DIR` | `./data/buffer` | no | no | Directory for the last few seconds of live edits before they are shipped to S3. Put it on a volume; the images use `/var/lib/wiki/buffer`. One backend replica owns it. |
+| `WIKI_REVISION_RETENTION_DAYS` | `0` | no | no | Page history: revisions older than this many days are deleted, every hour, from S3 and the database. `0` keeps every revision. Once paired, Den's module settings override it; see [Revision retention](#revision-retention). A negative number stops the backend at start. |
 
 ### Sharing and offboarding
 
@@ -87,6 +88,126 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | `PUBLIC_LINKS_ENABLED` | `false` | no | no | Allows public share links while Wiki is **not paired**. Once paired, Den's organisation setting `wiki_public_links` decides. |
 | `WIKI_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `POST /api/internal/offboarded`. **Empty turns that endpoint off** (it answers `404`). Must equal the token in HR's `OFFBOARD_HOOKS`. Generate with `openssl rand -hex 32`. |
 | `WIKI_OFFBOARD_GRACE_DAYS` | `30` | no | no | Days an offboarded person's private space stays (visible to Wiki admins) before an hourly sweep deletes it. |
+| `HR_DIRECTORY_URL` | none | no | no | HR's backend address, for example `https://hr-backend.conservices-hr.svc.cluster.local:8080`. While Wiki is paired with Den, the group picker lists HR's departments and access groups from it. See [Group picker](#group-picker). |
+| `HR_DIRECTORY_TOKEN` | none | with `HR_DIRECTORY_URL` | **yes** | Bearer token Wiki sends to HR's `GET /api/internal/directory/groups`. Must equal the token HR accepts there. Generate with `openssl rand -hex 32`. |
+| `IDP_DIRECTORY_URL` | none | no | no | Keycloak's address as the backend reaches it, for example `https://keycloak.conservices-identity.svc.cluster.local:8443`. Used by the group picker when HR is not used. |
+| `IDP_DIRECTORY_REALM` | `conservices` | no | no | Realm whose groups are listed. |
+| `IDP_DIRECTORY_CLIENT_ID` | none | with `IDP_DIRECTORY_URL` | no | Confidential Keycloak client (client credentials) that may read groups, for example `wiki-directory`. |
+| `IDP_DIRECTORY_CLIENT_SECRET` | none | with `IDP_DIRECTORY_URL` | **yes** | That client's secret. |
+
+### Group picker
+
+The share dialog's **group picker** suggests group names while you type.
+You can always type any group name yourself; the picker only saves you from
+remembering exact names. The backend picks one source per request:
+
+1. **HR**, when Wiki is paired with Den and `HR_DIRECTORY_URL` is set: HR's
+   departments (the group behind each department) and access groups (the
+   groups behind module roles).
+2. **The identity provider**, when `IDP_DIRECTORY_URL` is set: every group in
+   the realm, read through Keycloak's admin API. A top-level group is offered
+   by its name (`dept-security`), a nested one by its full path
+   (`/org/dept-x`).
+3. Otherwise **your own groups**, from your sign-in token.
+
+Answers from HR or Keycloak are cached for 5 minutes. If the source fails,
+the picker falls back to your own groups and shows a short warning; the
+backend logs `group directory unavailable`.
+
+**What HR must expose.** HR does not serve this endpoint yet. When it does,
+it must answer exactly this, with the bearer token from `HR_DIRECTORY_TOKEN`:
+
+```text
+GET /api/internal/directory/groups
+Authorization: Bearer <HR_DIRECTORY_TOKEN>
+```
+
+```json
+{
+  "groups": [
+    { "name": "dept-security", "display_name": "Security", "kind": "department" },
+    { "name": "wiki-editor", "display_name": "Wiki editors", "kind": "access" }
+  ]
+}
+```
+
+- `name` is the identity provider group exactly as it appears in tokens.
+- `display_name` is what people read (the department's name).
+- `kind` is `department` or `access`; anything else is treated as `access`.
+- A wrong token answers `401`. Until HR serves the endpoint, leave
+  `HR_DIRECTORY_URL` empty.
+
+**Keycloak client for the identity provider source.** Create it once in the
+Keycloak admin console:
+
+1. **Clients → Create client**, client ID `wiki-directory`, **Client
+   authentication** on, only **Service accounts roles** ticked.
+2. **Service account roles → Assign role → Filter by clients**, pick
+   `realm-management` `query-groups` and `view-users`.
+3. **Credentials** shows the secret. Put it in your secret manager as
+   `IDP_DIRECTORY_CLIENT_SECRET` (see [Secrets](../../operations/secrets.md)).
+4. Set `IDP_DIRECTORY_URL` and `IDP_DIRECTORY_CLIENT_ID=wiki-directory`,
+   restart the backend. On Kubernetes also set
+   `networkPolicy.keycloakAdmin.enabled: true` in the chart.
+
+Check it as any signed-in person:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" https://wiki.example.org/api/v1/groups
+```
+
+```json
+{"groups":[{"name":"dept-security","display_name":"dept-security","kind":"idp"},{"name":"/org/dept-x","display_name":"dept-x","kind":"idp"}],"source":"idp"}
+```
+
+`"source":"token"` with a `warning` means the directory failed; see
+Troubleshooting below.
+
+### Revision retention
+
+By default every revision is kept, so the bucket grows with every page's
+history. `WIKI_REVISION_RETENTION_DAYS=90` deletes revisions older than 90
+days once an hour: first the S3 object, then its database row, so a failed
+delete is retried on the next run. The current page is never affected,
+only its history. The history panel tells people how long revisions are
+kept.
+
+Once Wiki is paired, Den can set the retention for Wiki in its **module
+settings**; Den's value wins. Den sends it in the integration bundle
+(`GET /api/v1/integrations/bundle`), which Wiki stores with its pairing:
+
+```json
+{
+  "brand": { "...": "..." },
+  "settings": { "data": {} },
+  "retention": { "revision_days": 90 }
+}
+```
+
+`revision_days` must be a whole number, `0` or more (`0` keeps everything).
+Anything else, or no `retention` at all, means "use
+`WIKI_REVISION_RETENTION_DAYS`". Den does not send `retention` yet; until it
+does, the local setting applies.
+
+### Troubleshooting
+
+- **The group picker only shows my own groups.** No directory is set, Wiki
+  is not paired (HR is only used while paired), or the directory failed:
+  `GET /api/v1/groups` then has a `warning` and the backend log shows
+  `group directory unavailable` with the reason. `401` from HR: the tokens
+  differ. `401` from Keycloak: wrong client secret. `403` from Keycloak: the
+  client lacks `query-groups`. A timeout on Kubernetes: the network policy
+  egress is missing (`networkPolicy.hr.enabled` or
+  `networkPolicy.keycloakAdmin.enabled`, plus the ingress rule on the other
+  side).
+- **The backend does not start: `HR_DIRECTORY_TOKEN is required when
+  HR_DIRECTORY_URL is set`** (or the same for `IDP_DIRECTORY_*`). Add the
+  secret, or empty the URL.
+- **Revisions are not deleted.** `GET /api/v1/pages/<id>/revisions` shows
+  `retention_days` and `retention_source`; `0` keeps everything. With
+  `source` `den`, the value comes from Den and overrides the local one. A
+  failing S3 delete is logged as `could not remove an expired revision` and
+  retried next hour.
 
 ### Internal TLS
 
