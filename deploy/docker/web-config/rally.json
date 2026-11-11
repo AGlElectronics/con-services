@@ -1,0 +1,9 @@
+{
+  "authMode": "oidc",
+  "oidcAuthority": "https://auth.con.example.org/realms/conservices",
+  "oidcClientId": "events-spa",
+  "oidcScope": "openid profile email",
+  "apiBaseUrl": "",
+  "productName": "Rally",
+  "publicScheduleKey": ""
+}

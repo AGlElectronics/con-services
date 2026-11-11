@@ -1,0 +1,5 @@
+# Secrets and files generated for one installation (docs: Docker production).
+.env
+keycloak/
+nginx/
+access-config/

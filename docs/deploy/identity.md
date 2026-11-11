@@ -170,7 +170,7 @@ wrote charts/keycloak/templates/realm-attendees.yaml (1 clients, users kept: non
 ```
 
 The same script writes plain JSON realms for the
-[Docker production path](../operations/docker-production.md#step-3-generate-the-realm)
+[Docker production path](../operations/docker-production.md#the-realm)
 with `--format json --domain <your domain>`.
 
 !!! warning "A realm is imported only once"

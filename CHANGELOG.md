@@ -151,6 +151,19 @@ led by Den's MAJOR; see
   and `tasks-data-dev`). `.env.example` documents `COMPOSE_PROFILES`,
   `DEN_MODE` and `TELEGRAM_BOT_TOKEN`
   ([Local development](docs/contributing/local-development.md#how-the-stack-protects-your-computer)).
+- Docker production is a supported target: `deploy/docker/` holds a
+  tested `compose.production.yml` (pinned images, no dev services,
+  healthchecks, non-root users, read-only file systems, only the proxy
+  publishes ports, bundled PostgreSQL without a published port, one
+  profile per module), a `Caddyfile` with Let's Encrypt, HSTS, Keycloak
+  limited to its public paths and the admin console restricted to
+  `ADMIN_ALLOWED_CIDRS`, an `.env.example` for secrets written from a
+  secret manager, `postgres/init-databases.sh` and the web apps'
+  `/config.json` files. The realm comes from the GitOps template's
+  `keycloak-realm.py --format json`; the web apps' nginx gets the shared
+  security headers. CI renders it (Den only and every profile) and
+  validates the Caddyfile
+  ([Docker production](docs/operations/docker-production.md)).
 - Docs: [Production](docs/operations/production.md#secrets) lists every
   public test value (database logins, S3 keys, Keycloak admin and client
   secrets, service tokens, `DESK_SECRET_KEY`, `DEN_LINK_ENCRYPTION_KEY`,

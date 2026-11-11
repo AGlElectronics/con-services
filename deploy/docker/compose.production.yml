@@ -1,0 +1,721 @@
+# Con Services on one Docker host (production).
+# Docs: https://aglelectronics.github.io/con-services/operations/docker-production/
+#
+# Pulls published, pinned images; builds nothing. Secrets come from .env next
+# to this file (mode 600, written from your secret manager, never committed).
+# Only the proxy publishes ports (80, 443). PostgreSQL has no published port;
+# files live in your managed S3 service. Den always runs; each module is a
+# profile (COMPOSE_PROFILES in .env):
+#
+#   docker compose -f compose.production.yml config --quiet   # check
+#   docker compose -f compose.production.yml pull
+#   docker compose -f compose.production.yml up -d
+#
+# Host names are fixed labels below DOMAIN: auth, auth-admin, den, hr, events,
+# submit, stash, finance, learn, wiki, desk, tasks.
+
+name: conservices
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  tmpfs: ["/tmp"]
+  networks: [internal]
+
+# Module backends: the internal network (database, Keycloak through the
+# proxy, Den) plus egress (S3, SMTP).
+x-backend: &backend
+  <<: *hardening
+  networks: [internal, egress]
+
+# Web apps: nginx as UID 101 on port 8080, writing only to its tmpfs.
+x-frontend: &frontend
+  <<: *hardening
+  tmpfs: ["/tmp", "/var/cache/nginx", "/run"]
+  healthcheck:
+    test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+
+# Settings every module backend shares.
+x-module-env: &module-env
+  APP_ENV: production
+  HTTP_ADDR: ":8080"
+  AUTH_MODE: oidc
+  OIDC_ISSUER_URL: https://auth.${DOMAIN:?set DOMAIN in .env}/realms/conservices
+  # Modules wait for Den until you pair them on Den's Modules page.
+  DEN_MODE: required
+  DEN_INTERNAL_URL: http://den-backend:8080
+  # Docker networks are private ranges; only the proxy forwards to nginx.
+  TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_REGION: ${S3_REGION:-}
+  S3_USE_PATH_STYLE: ${S3_USE_PATH_STYLE:-true}
+
+services:
+  # ── Platform ─────────────────────────────────────────────────────────────
+  proxy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?set ADMIN_ALLOWED_CIDRS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      public: {}
+      # Containers reach the public addresses through the proxy (OIDC
+      # discovery, pairing URLs) without leaving the host.
+      internal:
+        aliases:
+          - auth.${DOMAIN}
+          - den.${DOMAIN}
+
+  postgres:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    # The image's "postgres" user; the data volume is created for it.
+    user: "70:70"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    shm_size: 256m
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  # One-shot on every `up`: creates the login and database of Den, Keycloak
+  # and every module whose *_DB_PASSWORD is set, if missing. Never changes or
+  # drops anything.
+  postgres-init:
+    image: postgres:16.15-alpine
+    restart: "no"
+    user: "70:70"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "/init/init-databases.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DEN_DB_PASSWORD: ${DEN_DB_PASSWORD:?set DEN_DB_PASSWORD in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+      HR_DB_PASSWORD: ${HR_DB_PASSWORD:-}
+      EVENTS_DB_PASSWORD: ${EVENTS_DB_PASSWORD:-}
+      STASH_DB_PASSWORD: ${STASH_DB_PASSWORD:-}
+      FINANCE_DB_PASSWORD: ${FINANCE_DB_PASSWORD:-}
+      LEARN_DB_PASSWORD: ${LEARN_DB_PASSWORD:-}
+      WIKI_DB_PASSWORD: ${WIKI_DB_PASSWORD:-}
+      DESK_DB_PASSWORD: ${DESK_DB_PASSWORD:-}
+      TASKS_DB_PASSWORD: ${TASKS_DB_PASSWORD:-}
+    volumes:
+      - ./postgres/init-databases.sh:/init/init-databases.sh:ro
+    networks: [internal]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    restart: unless-stopped
+    # Runs as the image's user 1000. Not read-only: `start` builds its
+    # optimised configuration into /opt/keycloak on the first start.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    command: ["start", "--import-realm"]
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME: https://auth.${DOMAIN}
+      KC_HOSTNAME_ADMIN: https://auth-admin.${DOMAIN}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      # Temporary admin of the master realm: replace it after the first
+      # login and delete it (docs: First admin login).
+      KC_BOOTSTRAP_ADMIN_USERNAME: temp-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?set KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD in .env}
+      # ${...} placeholders of the realm files (first import only).
+      DEN_KEYCLOAK_CLIENT_SECRET: ${DEN_KEYCLOAK_CLIENT_SECRET:?set DEN_KEYCLOAK_CLIENT_SECRET in .env}
+      HR_PROVISIONER_CLIENT_SECRET: ${HR_PROVISIONER_CLIENT_SECRET:-}
+      LEARN_PROVISIONER_CLIENT_SECRET: ${LEARN_PROVISIONER_CLIENT_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # The login theme fetches the brand from Den in the browser.
+      DEN_PUBLIC_URL: https://den.${DOMAIN}
+    volumes:
+      # realm-conservices.json and realm-attendees.json from
+      # keycloak-realm.py --format json (docs: Generate the realm).
+      - ./keycloak/realm:/opt/keycloak/data/import:ro
+      - ./keycloak/themes/conservices:/opt/keycloak/themes/conservices:ro
+    healthcheck:
+      # Management interface :9000, inside the container only.
+      test:
+        [
+          "CMD-SHELL",
+          "{ printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/127.0.0.1/9000",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks: [internal, egress]
+
+  # ── Den ──────────────────────────────────────────────────────────────────
+  den-migrate:
+    <<: *hardening
+    image: ghcr.io/aglelectronics/den-backend:${DEN_VERSION:-1.0.0-1}
+    restart: "no"
+    entrypoint: ["/den-migrate"]
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://den:${DEN_DB_PASSWORD}@postgres:5432/den?sslmode=disable
+
+  den-backend:
+    <<: *backend
+    image: ghcr.io/aglelectronics/den-backend:${DEN_VERSION:-1.0.0-1}
+    depends_on:
+      den-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+      proxy: { condition: service_healthy }
+    environment:
+      APP_ENV: production
+      APP_BASE_URL: https://den.${DOMAIN}
+      HTTP_ADDR: ":8080"
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: https://auth.${DOMAIN}/realms/conservices
+      OIDC_CLIENT_ID: den-spa
+      OIDC_AUDIENCE: den-spa
+      DEN_ADMIN_GROUPS: den-admin
+      DEN_MEMBER_GROUPS: den-member
+      CORS_ALLOWED_ORIGINS: https://den.${DOMAIN}
+      TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
+      DATABASE_URL: postgres://den:${DEN_DB_PASSWORD}@postgres:5432/den?sslmode=disable
+      S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
+      S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+      S3_USE_PATH_STYLE: ${S3_USE_PATH_STYLE:-true}
+      S3_BUCKET: ${DEN_S3_BUCKET:?set DEN_S3_BUCKET in .env}
+      S3_ACCESS_KEY_ID: ${DEN_S3_ACCESS_KEY_ID:?set DEN_S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${DEN_S3_SECRET_ACCESS_KEY:?set DEN_S3_SECRET_ACCESS_KEY in .env}
+      # Keeps the realm display name equal to the organisation name
+      # (den-keycloak, manage-realm). Empty KEYCLOAK_ADMIN_URL: off.
+      KEYCLOAK_ADMIN_URL: ${DEN_KEYCLOAK_ADMIN_URL-http://keycloak:8080}
+      KEYCLOAK_REALM: conservices
+      KEYCLOAK_CLIENT_ID: den-keycloak
+      KEYCLOAK_CLIENT_SECRET: ${DEN_KEYCLOAK_CLIENT_SECRET}
+      OPERATOR_URL: http://den-operator:8080
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:?set OPERATOR_TOKEN in .env}
+    healthcheck:
+      test: ["CMD", "/den-server", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # The only service with the PostgreSQL superuser login: backs up every
+  # database and the module buckets, encrypted, to the backup bucket.
+  den-operator:
+    <<: *backend
+    image: ghcr.io/aglelectronics/den-operator:${DEN_VERSION:-1.0.0-1}
+    # Dumps are written to /tmp before upload: a volume, not RAM.
+    tmpfs: []
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN}
+      PG_ADMIN_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=disable
+      MODULE_DB_HOST: postgres:5432
+      MODULE_DB_PARAMS: sslmode=disable
+      # postgres-init creates the databases; Den backs them up but does not
+      # create or drop them.
+      MANAGED_DATABASES: "false"
+      PROTECTED_DATABASES: den,keycloak
+      BACKUP_ENABLED: "true"
+      BACKUP_TIMEZONE: ${BACKUP_TIMEZONE:-UTC}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:?set BACKUP_S3_ENDPOINT in .env}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:?set BACKUP_S3_REGION in .env}
+      BACKUP_S3_USE_PATH_STYLE: ${BACKUP_S3_USE_PATH_STYLE:-true}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:?set BACKUP_S3_BUCKET in .env}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:?set BACKUP_S3_ACCESS_KEY_ID in .env}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:?set BACKUP_S3_SECRET_ACCESS_KEY in .env}
+      BACKUP_AGE_RECIPIENTS: ${BACKUP_AGE_RECIPIENTS:?set BACKUP_AGE_RECIPIENTS in .env}
+      # "true" when the backup bucket is on the live data's S3 service: Den
+      # warns on its Backups page.
+      BACKUP_SAME_STORAGE_AS_DATA: ${BACKUP_SAME_STORAGE_AS_DATA:-false}
+      FILES_S3_ENDPOINT: ${S3_ENDPOINT}
+      FILES_S3_REGION: ${S3_REGION}
+      FILES_S3_USE_PATH_STYLE: ${S3_USE_PATH_STYLE:-true}
+      FILES_S3_ACCESS_KEY_ID: ${FILES_S3_ACCESS_KEY_ID:?set FILES_S3_ACCESS_KEY_ID in .env}
+      FILES_S3_SECRET_ACCESS_KEY: ${FILES_S3_SECRET_ACCESS_KEY:?set FILES_S3_SECRET_ACCESS_KEY in .env}
+      FILES_S3_BUCKETS: ${FILES_S3_BUCKETS:?set FILES_S3_BUCKETS in .env}
+    volumes:
+      - den-operator-tmp:/tmp
+    healthcheck:
+      test: ["CMD", "den-operator", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  den-frontend:
+    <<: *frontend
+    image: ghcr.io/aglelectronics/den-frontend:${DEN_VERSION:-1.0.0-1}
+    depends_on:
+      den-backend: { condition: service_healthy }
+    volumes:
+      - ./nginx/den.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/den.json:/etc/conservices/config.json:ro
+
+  # ── HR (profile hr) ──────────────────────────────────────────────────────
+  hr-migrate:
+    <<: *hardening
+    profiles: ["hr"]
+    image: ghcr.io/aglelectronics/hr-migrate:${HR_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://hr:${HR_DB_PASSWORD:-}@postgres:5432/hr?sslmode=disable
+
+  hr-backend:
+    <<: *backend
+    profiles: ["hr"]
+    image: ghcr.io/aglelectronics/hr-backend:${HR_VERSION:-1.0.0-1}
+    depends_on:
+      hr-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://hr.${DOMAIN}
+      OIDC_CLIENT_ID: hr-spa
+      OIDC_AUDIENCE: hr-spa
+      HR_ACCESS_GROUPS: hr-admin
+      CORS_ALLOWED_ORIGINS: https://hr.${DOMAIN}
+      DATABASE_URL: postgres://hr:${HR_DB_PASSWORD:-}@postgres:5432/hr?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${HR_DEN_LINK_ENCRYPTION_KEY:-}
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: conservices
+      KEYCLOAK_CLIENT_ID: hr-provisioner
+      KEYCLOAK_CLIENT_SECRET: ${HR_PROVISIONER_CLIENT_SECRET:-}
+      KEYCLOAK_SETUP_CLIENT_ID: den-spa
+      KEYCLOAK_SETUP_REDIRECT_URI: https://den.${DOMAIN}/
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Con Services}
+      # Only the enabled modules (see .env.example).
+      ROLE_CATALOG_SOURCES: ${HR_ROLE_CATALOG_SOURCES:-}
+      QUALIFICATION_CATALOG_SOURCES: ${HR_QUALIFICATION_CATALOG_SOURCES:-}
+      LEARN_HOLDINGS_URL: ${HR_LEARN_HOLDINGS_URL:-}
+      LEARN_SERVICE_TOKEN: ${LEARN_SERVICE_TOKEN:-}
+      OFFBOARD_HOOKS: ${HR_OFFBOARD_HOOKS:-}
+      DEPARTMENT_HOOKS: ${HR_DEPARTMENT_HOOKS:-}
+
+  hr-frontend:
+    <<: *frontend
+    profiles: ["hr"]
+    image: ghcr.io/aglelectronics/hr-frontend:${HR_VERSION:-1.0.0-1}
+    depends_on: [hr-backend]
+    volumes:
+      - ./nginx/hr.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/hr.json:/etc/conservices/config.json:ro
+
+  # ── Rally (profile events) ───────────────────────────────────────────────
+  events-migrate:
+    <<: *hardening
+    profiles: ["events"]
+    image: ghcr.io/aglelectronics/rally-migrate:${RALLY_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://events:${EVENTS_DB_PASSWORD:-}@postgres:5432/events?sslmode=disable
+
+  events-backend:
+    <<: *backend
+    profiles: ["events"]
+    image: ghcr.io/aglelectronics/rally-backend:${RALLY_VERSION:-1.0.0-1}
+    depends_on:
+      events-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://events.${DOMAIN}
+      OIDC_CLIENT_ID: events-spa
+      OIDC_AUDIENCE: events-spa
+      ATTENDEE_OIDC_ISSUER_URL: https://auth.${DOMAIN}/realms/attendees
+      ATTENDEE_OIDC_CLIENT_ID: rally-submit
+      CORS_ALLOWED_ORIGINS: https://events.${DOMAIN},https://submit.${DOMAIN}
+      DATABASE_URL: postgres://events:${EVENTS_DB_PASSWORD:-}@postgres:5432/events?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${EVENTS_DEN_LINK_ENCRYPTION_KEY:-}
+      S3_ENABLED: "true"
+      S3_BUCKET: ${EVENTS_S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${EVENTS_S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${EVENTS_S3_SECRET_ACCESS_KEY:-}
+      PUBLIC_SCHEDULE_ENABLED: "false"
+      # Empty: the built-in public schedule key is off.
+      PUBLIC_API_BUILTIN_KEY: ${RALLY_PUBLIC_API_BUILTIN_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
+    volumes:
+      - ./access-config/rally.toml:/etc/rally/access-config.toml:ro
+
+  events-frontend:
+    <<: *frontend
+    profiles: ["events"]
+    image: ghcr.io/aglelectronics/rally-frontend:${RALLY_VERSION:-1.0.0-1}
+    depends_on: [events-backend]
+    volumes:
+      - ./nginx/rally.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/rally.json:/etc/conservices/config.json:ro
+
+  events-submit:
+    <<: *frontend
+    profiles: ["events"]
+    image: ghcr.io/aglelectronics/rally-submit:${RALLY_VERSION:-1.0.0-1}
+    depends_on: [events-backend]
+    volumes:
+      - ./nginx/rally.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/rally-submit.json:/etc/conservices/config.json:ro
+
+  # ── Stash (profile stash) ────────────────────────────────────────────────
+  stash-backend:
+    <<: *backend
+    profiles: ["stash"]
+    image: ghcr.io/aglelectronics/stash-backend:${STASH_VERSION:-1.0.0-1}
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://stash.${DOMAIN}
+      OIDC_CLIENT_ID: stash-spa
+      OIDC_AUDIENCE: stash-spa
+      CORS_ALLOWED_ORIGINS: https://stash.${DOMAIN}
+      DATABASE_URL: postgres://stash:${STASH_DB_PASSWORD:-}@postgres:5432/stash?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${STASH_DEN_LINK_ENCRYPTION_KEY:-}
+      S3_BUCKET: ${STASH_S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${STASH_S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${STASH_S3_SECRET_ACCESS_KEY:-}
+      PUBLIC_LOSTFOUND_CLAIM_ENABLED: "false"
+      ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
+    volumes:
+      - ./access-config/stash.toml:/etc/stash/access-config.toml:ro
+
+  stash-frontend:
+    <<: *frontend
+    profiles: ["stash"]
+    image: ghcr.io/aglelectronics/stash-frontend:${STASH_VERSION:-1.0.0-1}
+    depends_on: [stash-backend]
+    volumes:
+      - ./nginx/stash.conf:/etc/nginx/conf.d/default.conf:ro
+      # Stash scans barcodes: its copy allows the camera.
+      - ./nginx/security-headers-stash.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/stash.json:/etc/conservices/config.json:ro
+
+  # ── Finance (profile finance) ────────────────────────────────────────────
+  finance-migrate:
+    <<: *hardening
+    profiles: ["finance"]
+    image: ghcr.io/aglelectronics/finance-migrate:${FINANCE_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://finance:${FINANCE_DB_PASSWORD:-}@postgres:5432/finance?sslmode=disable
+
+  finance-backend:
+    <<: *backend
+    profiles: ["finance"]
+    image: ghcr.io/aglelectronics/finance-backend:${FINANCE_VERSION:-1.0.0-1}
+    depends_on:
+      finance-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://finance.${DOMAIN}
+      OIDC_CLIENT_ID: finance-spa
+      OIDC_AUDIENCE: finance-spa
+      FINANCE_ACCESS_GROUPS: finance-admin
+      CORS_ALLOWED_ORIGINS: https://finance.${DOMAIN}
+      DATABASE_URL: postgres://finance:${FINANCE_DB_PASSWORD:-}@postgres:5432/finance?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${FINANCE_DEN_LINK_ENCRYPTION_KEY:-}
+
+  finance-frontend:
+    <<: *frontend
+    profiles: ["finance"]
+    image: ghcr.io/aglelectronics/finance-frontend:${FINANCE_VERSION:-1.0.0-1}
+    depends_on: [finance-backend]
+    volumes:
+      - ./nginx/finance.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/finance.json:/etc/conservices/config.json:ro
+
+  # ── Learn (profile learn) ────────────────────────────────────────────────
+  learn-migrate:
+    <<: *hardening
+    profiles: ["learn"]
+    image: ghcr.io/aglelectronics/learn-migrate:${LEARN_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://learn:${LEARN_DB_PASSWORD:-}@postgres:5432/learn?sslmode=disable
+
+  learn-backend:
+    <<: *backend
+    profiles: ["learn"]
+    image: ghcr.io/aglelectronics/learn-backend:${LEARN_VERSION:-1.0.0-1}
+    depends_on:
+      learn-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://learn.${DOMAIN}
+      PUBLIC_BASE_URL: https://learn.${DOMAIN}
+      OIDC_CLIENT_ID: learn-spa
+      OIDC_AUDIENCE: learn-spa
+      # Den's web app calls Learn directly (portal widgets).
+      OIDC_EXTRA_AUDIENCES: den-spa
+      CORS_ALLOWED_ORIGINS: https://learn.${DOMAIN},https://den.${DOMAIN}
+      DATABASE_URL: postgres://learn:${LEARN_DB_PASSWORD:-}@postgres:5432/learn?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${LEARN_DEN_LINK_ENCRYPTION_KEY:-}
+      S3_BUCKET: ${LEARN_S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${LEARN_S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${LEARN_S3_SECRET_ACCESS_KEY:-}
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: conservices
+      KEYCLOAK_CLIENT_ID: learn-provisioner
+      KEYCLOAK_CLIENT_SECRET: ${LEARN_PROVISIONER_CLIENT_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Con Services}
+      LEARN_SERVICE_TOKEN: ${LEARN_SERVICE_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
+    volumes:
+      - ./access-config/learn.toml:/etc/learn/access-config.toml:ro
+
+  learn-frontend:
+    <<: *frontend
+    profiles: ["learn"]
+    image: ghcr.io/aglelectronics/learn-frontend:${LEARN_VERSION:-1.0.0-1}
+    depends_on: [learn-backend]
+    volumes:
+      - ./nginx/learn.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/learn.json:/etc/conservices/config.json:ro
+
+  # ── Wiki (profile wiki) ──────────────────────────────────────────────────
+  wiki-migrate:
+    <<: *hardening
+    profiles: ["wiki"]
+    image: ghcr.io/aglelectronics/wiki-migrate:${WIKI_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://wiki:${WIKI_DB_PASSWORD:-}@postgres:5432/wiki?sslmode=disable
+
+  wiki-backend:
+    <<: *backend
+    profiles: ["wiki"]
+    image: ghcr.io/aglelectronics/wiki-backend:${WIKI_VERSION:-1.0.0-1}
+    # Shutdown closes live connections and ships buffered edits to S3.
+    stop_grace_period: 30s
+    depends_on:
+      wiki-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://wiki.${DOMAIN}
+      OIDC_CLIENT_ID: wiki-spa
+      OIDC_AUDIENCE: wiki-spa
+      CORS_ALLOWED_ORIGINS: https://wiki.${DOMAIN}
+      DATABASE_URL: postgres://wiki:${WIKI_DB_PASSWORD:-}@postgres:5432/wiki?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${WIKI_DEN_LINK_ENCRYPTION_KEY:-}
+      S3_BUCKET: ${WIKI_S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${WIKI_S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${WIKI_S3_SECRET_ACCESS_KEY:-}
+      # Edits wait here (at most a few seconds) before going to S3.
+      WIKI_BUFFER_DIR: /var/lib/wiki/buffer
+      WIKI_SERVICE_TOKEN: ${WIKI_SERVICE_TOKEN:-}
+      WIKI_OFFBOARD_GRACE_DAYS: "30"
+      PUBLIC_LINKS_ENABLED: "false"
+      ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
+    volumes:
+      - ./access-config/wiki.toml:/etc/wiki/access-config.toml:ro
+      - wiki-buffer:/var/lib/wiki/buffer
+
+  wiki-frontend:
+    <<: *frontend
+    profiles: ["wiki"]
+    image: ghcr.io/aglelectronics/wiki-frontend:${WIKI_VERSION:-1.0.0-1}
+    depends_on: [wiki-backend]
+    volumes:
+      - ./nginx/wiki.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/wiki.json:/etc/conservices/config.json:ro
+
+  # ── Desk (profile desk) ──────────────────────────────────────────────────
+  desk-migrate:
+    <<: *hardening
+    profiles: ["desk"]
+    image: ghcr.io/aglelectronics/desk-migrate:${DESK_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://desk:${DESK_DB_PASSWORD:-}@postgres:5432/desk?sslmode=disable
+
+  desk-backend:
+    <<: *backend
+    profiles: ["desk"]
+    image: ghcr.io/aglelectronics/desk-backend:${DESK_VERSION:-1.0.0-1}
+    depends_on:
+      desk-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://desk.${DOMAIN}
+      OIDC_CLIENT_ID: desk-spa
+      OIDC_AUDIENCE: desk-spa
+      CORS_ALLOWED_ORIGINS: https://desk.${DOMAIN}
+      DATABASE_URL: postgres://desk:${DESK_DB_PASSWORD:-}@postgres:5432/desk?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${DESK_DEN_LINK_ENCRYPTION_KEY:-}
+      # Encrypts stored mailbox passwords. Never change it afterwards.
+      DESK_SECRET_KEY: ${DESK_SECRET_KEY:-}
+      FETCH_INTERVAL: 60s
+      # Fallback outbound mail for mailboxes without their own SMTP server.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: starttls
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
+    volumes:
+      - ./access-config/desk.toml:/etc/desk/access-config.toml:ro
+
+  desk-frontend:
+    <<: *frontend
+    profiles: ["desk"]
+    image: ghcr.io/aglelectronics/desk-frontend:${DESK_VERSION:-1.0.0-1}
+    depends_on: [desk-backend]
+    volumes:
+      - ./nginx/desk.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/desk.json:/etc/conservices/config.json:ro
+
+  # ── Tasks (profile tasks) ────────────────────────────────────────────────
+  tasks-migrate:
+    <<: *hardening
+    profiles: ["tasks"]
+    image: ghcr.io/aglelectronics/tasks-migrate:${TASKS_VERSION:-1.0.0-1}
+    restart: "no"
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://tasks:${TASKS_DB_PASSWORD:-}@postgres:5432/tasks?sslmode=disable
+
+  tasks-backend:
+    <<: *backend
+    profiles: ["tasks"]
+    image: ghcr.io/aglelectronics/tasks-backend:${TASKS_VERSION:-1.0.0-1}
+    depends_on:
+      tasks-migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    environment:
+      <<: *module-env
+      APP_BASE_URL: https://tasks.${DOMAIN}
+      OIDC_CLIENT_ID: tasks-spa
+      OIDC_AUDIENCE: tasks-spa
+      CORS_ALLOWED_ORIGINS: https://tasks.${DOMAIN}
+      DATABASE_URL: postgres://tasks:${TASKS_DB_PASSWORD:-}@postgres:5432/tasks?sslmode=disable
+      DEN_LINK_ENCRYPTION_KEY: ${TASKS_DEN_LINK_ENCRYPTION_KEY:-}
+      S3_BUCKET: ${TASKS_S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${TASKS_S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${TASKS_S3_SECRET_ACCESS_KEY:-}
+      TASKS_SERVICE_TOKEN: ${TASKS_SERVICE_TOKEN:-}
+      ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
+    volumes:
+      - ./access-config/tasks.toml:/etc/tasks/access-config.toml:ro
+
+  tasks-frontend:
+    <<: *frontend
+    profiles: ["tasks"]
+    image: ghcr.io/aglelectronics/tasks-frontend:${TASKS_VERSION:-1.0.0-1}
+    depends_on: [tasks-backend]
+    volumes:
+      - ./nginx/tasks.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./web-config/tasks.json:/etc/conservices/config.json:ro
+
+networks:
+  # No route out and no published ports: the services talk only to each
+  # other and to the proxy.
+  internal:
+    internal: true
+  # The proxy's published ports.
+  public: {}
+  # Outbound only (S3, SMTP, IMAP, Let's Encrypt is the proxy's): no
+  # published ports.
+  egress: {}
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}
+  postgres-data: {}
+  den-operator-tmp: {}
+  wiki-buffer: {}

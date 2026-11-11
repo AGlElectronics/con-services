@@ -156,6 +156,43 @@ jobs:
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             "$RUNNER_TEMP/rendered"
 
+  # The supported Docker production path: the compose file must render with
+  # the example settings, alone (Den only) and with every module profile, and
+  # its Caddyfile must be valid. Nothing is started.
+  docker-production:
+    name: Docker production (compose config)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: deploy/docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Den only
+        run: docker compose -f compose.production.yml --env-file .env.example config --quiet
+
+      - name: Every module profile
+        run: |
+          set -euo pipefail
+          sed -E -e 's/^# ([A-Z][A-Z0-9_]+)=.*/\1=ci-value/' \
+            -e 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=hr,events,stash,finance,learn,wiki,desk,tasks/' \
+            -e 's/^([A-Z]+_VERSION)=ci-value/\1=1.0.0-1/' .env.example > "$RUNNER_TEMP/all.env"
+          docker compose -f compose.production.yml --env-file "$RUNNER_TEMP/all.env" config --quiet
+          published="$(docker compose -f compose.production.yml --env-file "$RUNNER_TEMP/all.env" config --format json \
+            | jq -r '[.services | to_entries[] | select(.value.ports) | .key] | join(",")')"
+          if [ "$published" != "proxy" ]; then
+            echo "only the proxy may publish ports, got: $published"; exit 1
+          fi
+
+      - name: Caddyfile
+        run: |
+          docker run --rm -e DOMAIN=con.example.org -e ACME_EMAIL=ci@example.org \
+            -e ADMIN_ALLOWED_CIDRS=192.0.2.0/24 -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
   trivy-config:
     name: Trivy (deploy misconfiguration)
     runs-on: ubuntu-24.04

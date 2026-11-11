@@ -600,13 +600,13 @@ services:
       - "127.0.0.1:8090:8080"
     extra_hosts:
       - "localhost:host-gateway"
-    # The image has no shell or curl; the binary probes its own /livez.
+    # The image is distroless: the binary probes its own /livez.
     healthcheck:
       test: ["CMD", "/den-server", "healthcheck"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 5
+      start_period: 15s
 
   # Den operator — the only service with the Postgres admin login. Creates and
   # drops module databases for Den and backs up the whole suite (all
@@ -646,10 +646,10 @@ services:
       # Every module bucket created by the s3 service (its -bucket list).
       FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev
     healthcheck:
-      test: ["CMD", "/den-operator", "healthcheck"]
+      test: ["CMD", "den-operator", "healthcheck"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
       start_period: 10s
 
   den-frontend:

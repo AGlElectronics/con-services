@@ -30,35 +30,42 @@ where the values are kept changes:
 Con Services programs read their settings from **environment variables**
 only; they do not support `*_FILE` variables, and the backend images have no
 shell, so Docker's `secrets:` (files under `/run/secrets`) cannot feed them
-directly. On a production Docker host:
+directly. The supported [Docker production](docker-production.md) setup
+reads every setting and secret from one file, `.env`, next to
+`deploy/docker/compose.production.yml`; Compose fills them into each
+service's environment, and each service gets only the values its
+`environment:` names.
 
-1. Keep one env file per service in a folder outside the Git checkout, for
-   example `/etc/conservices/den-backend.env`, owned by root with mode
-   `600`:
-
-    ```sh
-    sudo install -d -m 700 /etc/conservices
-    sudo install -m 600 /dev/null /etc/conservices/den-backend.env
-    ```
-
-2. Fill those files from your secret manager when you deploy, instead of
-   typing values by hand. For example with Vault:
+1. Create `.env` readable only by the deploying user:
 
     ```sh
-    vault kv get -format=json secret/conservices/den/backend \
-      | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' \
-      | sudo tee /etc/conservices/den-backend.env > /dev/null
+    install -m 600 /dev/null .env
     ```
 
-    SOPS-encrypted env files in Git (`sops -d den-backend.enc.env`) or your
-    password manager's CLI work the same way.
+2. Fill it from your secret manager when you deploy, instead of typing
+   values by hand. For example with OpenBao or Vault, keeping the whole
+   file as the entry `secret/conservices/docker` with one property per
+   variable:
 
-3. Reference them with `env_file:` in the compose file, as the
-   [hardened example](docker-production.md) does.
+    ```sh
+    bao kv get -format=json secret/conservices/docker \
+      | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' > .env
+    ```
 
-The same rules as on Kubernetes apply: never commit the files, give each
-service only its own file, and restart the service after changing one
-(`docker compose up -d <service>`).
+    A SOPS-encrypted file in your deployment repository
+    (`sops --decrypt --input-type dotenv --output-type dotenv env.sops > .env`)
+    or your password manager's CLI work the same way.
+
+3. Check it: `docker compose -f compose.production.yml config --quiet`
+   fails with `required variable … is missing a value` for every platform
+   value still empty.
+
+The same rules as on Kubernetes apply: never commit `.env` (the folder's
+`.gitignore` excludes it), keep the secret manager as the source, and run
+`docker compose -f compose.production.yml up -d` after changing a value so
+the affected services are recreated. A plain `.env` on the server is the
+weakest link: restrict SSH access, encrypt the disk, and do not copy the
+file anywhere else.
 
 ## Why a secret manager
 
