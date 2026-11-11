@@ -156,6 +156,16 @@ led by Den's MAJOR; see
   `ip:2001:db8:1:2::/64`), so a client cannot dodge the limit by switching
   addresses inside its own network. IPv4 clients are still counted per
   address.
+- Nginx security headers: new `shared/nginx/security-headers.conf.template`
+  that the official nginx image fills in at start-up from
+  `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and `EXTRA_CONNECT_SRC`, so
+  one frontend image works for any domain. Both forms of the snippet now
+  allow an S3 storage origin (`connect-src` and `img-src`) for apps that
+  upload straight from the browser. The docs explain the Dockerfile lines,
+  why the snippet goes into each serving `location` and never at `server`
+  level or into `/api/` (two Content Security Policies), moving inline
+  scripts into files, and Stash's `camera=(self)`
+  ([Shared code](docs/concepts/shared-code.md#nginx-security-headers)).
 
 ### Security
 

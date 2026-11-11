@@ -331,27 +331,173 @@ every package into a scratch module that must build and pass its tests.
 
 ## Nginx security headers
 
-The web apps' nginx gets its headers from one snippet,
-`shared/nginx/security-headers.conf`: a Content Security Policy
-(`default-src 'self'`, with placeholders for the Keycloak and Den origins),
-`X-Frame-Options: DENY` and `frame-ancestors 'none'`, `nosniff`,
+The nginx that serves each web app (the React frontend) sends the same
+browser security headers: a **Content Security Policy** (CSP, the list of
+places the page may load scripts, images and data from:
+`default-src 'self'`, `script-src 'self'`, `frame-ancestors 'none'`),
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: strict-origin-when-cross-origin` and a
-`Permissions-Policy`. HSTS is set at the Gateway or Caddy, not here. The
-comments in the file say how to fill in the placeholders and where to
-`include` it; nginx forgets inherited `add_header` lines in every
-`location` that has its own, so include it there too. Check the result:
+`Permissions-Policy`. HSTS is set at the Gateway or Caddy, not here, and
+API responses get their own stricter headers from the backend
+(`authbase.SecurityHeaders`).
 
-```sh
-curl -sI https://hr.conservices.test/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
-```
+The headers come in two forms in `shared/nginx/`:
+
+| File | Use |
+| --- | --- |
+| `security-headers.conf.template` | **Preferred.** The origins are environment variables that the official nginx image fills in when the container starts, so one image works for any domain. |
+| `security-headers.conf` | The same headers with placeholders you replace by hand, for an app whose origins are fixed at build time. |
+
+The CSP allows these origins besides the app itself. Each is scheme, host
+and optional port, no path (`https://auth.con.example.org`); several are
+separated by spaces; an empty value leaves the origin out.
+
+| Variable | What it is | Where it appears in the CSP |
+| --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | The sign-in server (for Rally's submission site, the attendee realm's server). | `connect-src`, `frame-src` (silent token renewal), `form-action` |
+| `DEN_ORIGIN` | Den, when the browser calls Den or loads assets from it. Most apps leave it empty: they serve Den's brand through their own API. | `connect-src` |
+| `S3_ORIGIN` | The S3 storage, for apps whose browser uploads files straight to a bucket (presigned URLs) or shows images from it. | `connect-src`, `img-src` |
+| `EXTRA_CONNECT_SRC` | Anything else the browser must call. | `connect-src` |
+
+### Use the template in a web app
+
+1. Copy `shared/nginx/security-headers.conf.template` into the app, for
+   example to `infra/security-headers.conf.template`.
+2. In the frontend Dockerfile, put it into the image's template folder and
+   tell the image where to write the result. The official `nginx` and
+   `nginxinc/nginx-unprivileged` images run `envsubst` at start-up on every
+   `/etc/nginx/templates/*.template` file and write it, without the
+   `.template` suffix, to `NGINX_ENVSUBST_OUTPUT_DIR`. The filter limits the
+   substitution to the four variables, so nginx's own `$uri` and the like
+   are left alone; the empty defaults keep an unset variable from ending up
+   in the policy as literal text.
+
+    ```dockerfile
+    FROM nginxinc/nginx-unprivileged:1.30.6-alpine
+    COPY infra/nginx.conf /etc/nginx/conf.d/default.conf
+    COPY infra/security-headers.conf.template /etc/nginx/templates/security-headers.conf.template
+    USER root
+    # A copy without outside origins, used when /etc/nginx/snippets is read-only.
+    RUN mkdir -p /etc/nginx/snippets \
+     && sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/security-headers.conf.template \
+          > /etc/nginx/snippets/security-headers.conf \
+     && chown -R 101:101 /etc/nginx/snippets
+    USER 101
+    ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/snippets \
+        NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC)$' \
+        KEYCLOAK_ORIGIN="" \
+        DEN_ORIGIN="" \
+        S3_ORIGIN="" \
+        EXTRA_CONNECT_SRC=""
+    ```
+
+3. Include the snippet in **every `location` that serves the app**, not
+   at `server` level, and not in the `location /api/` that proxies to the
+   backend. nginx drops inherited `add_header` lines in a `location` that
+   has its own, so each serving `location` needs the `include`; and a
+   `server`-level include would also be inherited by `/api/`, which would
+   then send two Content Security Policies (the backend's and the app's).
+
+    ```nginx
+    location /api/ {
+        proxy_pass http://backend;   # no include: the backend sets its headers
+    }
+
+    location = /config.json {
+        alias /etc/conservices/config.json;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+    ```
+
+4. **Move inline scripts into files.** `script-src 'self'` blocks every
+   `<script>…</script>` written into `index.html` or `silent-callback.html`
+   (for example a theme initialiser). Put the code into a file under
+   `public/` and load it with `<script src="/theme-init.js"></script>`.
+5. **Stash only:** Stash scans barcodes with the camera, so its copy says
+   `camera=(self)` in `Permissions-Policy`. Every other app keeps
+   `camera=()`.
+6. Set the variables on the frontend container. With a read-only root file
+   system on Kubernetes, mount an `emptyDir` at `/etc/nginx/snippets` so
+   the start-up step can write the file.
+
+    === "Docker Compose"
+
+        ```yaml
+        rally-frontend:
+          environment:
+            KEYCLOAK_ORIGIN: https://auth.conservices.test
+            S3_ORIGIN: https://s3.conservices.test
+        ```
+
+    === "Kubernetes"
+
+        ```yaml
+        env:
+          - name: KEYCLOAK_ORIGIN
+            value: https://auth.con.example.org
+          - name: S3_ORIGIN
+            value: https://s3.con.example.org
+        volumeMounts:
+          - name: nginx-snippets
+            mountPath: /etc/nginx/snippets
+        # volumes: - name: nginx-snippets
+        #            emptyDir: {}
+        ```
+
+7. Check the result:
+
+    ```sh
+    curl -sI https://events.conservices.test/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+    ```
+
+    ```text
+    content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.conservices.test; font-src 'self' data:; connect-src 'self' https://auth.conservices.test   https://s3.conservices.test ; frame-src 'self' https://auth.conservices.test; frame-ancestors 'none'; form-action 'self' https://auth.conservices.test; base-uri 'self'; object-src 'none'
+    x-frame-options: DENY
+    x-content-type-options: nosniff
+    referrer-policy: strict-origin-when-cross-origin
+    permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+    ```
+
+    The extra spaces left by empty variables are harmless. `curl -sI
+    https://events.conservices.test/api/health` must show the backend's
+    `default-src 'none'` policy **only**.
+
+The container log shows the start-up step:
 
 ```text
-content-security-policy: default-src 'self'; script-src 'self'; … frame-ancestors 'none'; …
-x-frame-options: DENY
-x-content-type-options: nosniff
-referrer-policy: strict-origin-when-cross-origin
-permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/security-headers.conf.template to /etc/nginx/snippets/security-headers.conf
 ```
+
+#### Troubleshooting the headers
+
+**The browser console says *Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self'"***
+: An inline `<script>` is left in an HTML file. Move it into a file
+  (step 4).
+
+**Sign-in or uploads fail with *Refused to connect to 'https://…'***
+: The origin is missing from `connect-src`. Set `KEYCLOAK_ORIGIN`,
+  `S3_ORIGIN` or `EXTRA_CONNECT_SRC` on the frontend container and
+  restart it.
+
+**The policy contains `${S3_ORIGIN}` literally**
+: The variable is not defined in the container and has no empty default.
+  Add the `ENV … S3_ORIGIN=""` defaults from step 2.
+
+**The log says `/etc/nginx/templates exists, but /etc/nginx/snippets is not writable`**
+: The root file system is read-only. Mount an `emptyDir` at
+  `/etc/nginx/snippets` (step 6). Until then nginx uses the copy baked
+  into the image, which allows no outside origins.
+
+**API responses carry two `Content-Security-Policy` headers**
+: The snippet is included at `server` level or in `location /api/`. Include
+  it only in the locations that serve the app (step 3).
 
 ## Google Workspace service account
 
