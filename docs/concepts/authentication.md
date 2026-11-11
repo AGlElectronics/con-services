@@ -206,6 +206,32 @@ A token without the expected audience is refused with `401`
 `{"error":{"code":"unauthorized","message":"invalid token"}}`: add the
 mapper (above), sign out and in again.
 
+#### Refusing ID tokens
+
+A backend on the token contract accepts access tokens only. It tells them
+apart by Keycloak's **`typ` claim** in the token body: Keycloak writes
+`"typ": "Bearer"` into access tokens and `"typ": "ID"` into ID tokens. The
+backend refuses every token whose `typ` is not `Bearer` with the same `401
+invalid token`.
+
+This is a Keycloak convention, not an OIDC standard: other identity
+providers leave `typ` out or put `at+jwt` in the token *header* instead
+(RFC 9068). The audience check is the second line of defence: an ID
+token's `aud` is the web app's client (`hr-spa`), never the API's name
+(`hr-api`), so it fails there too, as long as `OIDC_AUDIENCE` is never set
+to a web app's client id. If you put another identity provider in front of
+Con Services, check what it writes before relying on `typ`.
+
+Check the claim with the token from the example above:
+
+```sh
+python3 -c 'import base64,json,sys; p=sys.argv[1].split(".")[1]; print(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["typ"])' "$TOKEN"
+```
+
+```text
+Bearer
+```
+
 ### What Den's backend checks
 
 At start-up, Den downloads Keycloak's public configuration and signing keys
@@ -357,7 +383,9 @@ roles.
 
 When an admin types a group into a module's access settings, the module
 stores the normalised form (for comparisons and uniqueness) and shows what
-was typed.
+was typed. With a prefix or `last` the stored form is not what is compared,
+so a backend matches grants in code, never with an SQL `=`; see
+[Shared code → groupmatch](shared-code.md#what-adopting-a-package-involves).
 
 ### The role catalog
 

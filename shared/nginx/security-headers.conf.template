@@ -3,6 +3,13 @@
 # container starts. Source: con-services shared/nginx/security-headers.conf.template.
 # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
 #
+# Nothing fills in the ${...} placeholders when this file is copied: the
+# sync script copies only Go code, and you copy this file by hand. The
+# official nginx image's entrypoint (20-envsubst-on-templates.sh) fills them
+# in from the container's environment every time the container starts.
+# Charts pass the four variables as env on the frontend container; never
+# bake a filled-in copy into the image or a ConfigMap.
+#
 # The image is the same for every installation; the origins the browser may
 # talk to besides the app come from environment variables (scheme + host
 # (+ port), no path; several separated by spaces; empty leaves them out):
@@ -32,7 +39,9 @@
 #            include /etc/nginx/snippets/security-headers.conf;
 #            add_header Cache-Control "no-cache" always;
 #        }
-#   4. script-src 'self' blocks inline <script> blocks: move them into files.
+#   4. script-src 'self' blocks inline <script> blocks: move them into files
+#      under public/, notably the theme script in index.html and the
+#      postMessage script in silent-callback.html.
 #   5. Stash only: camera=(self) in Permissions-Policy (barcode scanning);
 #      every other app keeps camera=().
 #   6. Check: curl -sI https://hr.con.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'

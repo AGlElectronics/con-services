@@ -38,7 +38,7 @@ and the drift check make sure they do not.
 | --- | --- | --- |
 | `groupmatch` | Decides whether a person's groups (from the ID token) match the groups a module grants roles to. | `OIDC_GROUPS_CLAIM`, `OIDC_GROUP_MATCH`, `OIDC_GROUP_PREFIX` |
 | `denlink` | Pairs the module with Den, stores the module credential **encrypted**, pulls Den's bundle every minute, serves the brand and the Den connection endpoints, and reports a **revoked** credential. | `DEN_MODE`, `DEN_INTERNAL_URL`, `DEN_ALLOWED_HOSTS`, `DEN_LINK_ENCRYPTION_KEY`, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `APP_ENV` |
-| `authbase` | The `AUTH_MODE`/`APP_ENV` start-up guard, CORS headers (dev headers only in dev mode), a JSON body decoder with a size limit, a rate limiter, security headers for API responses, and the person's identity key. | `AUTH_MODE`, `APP_ENV` |
+| `authbase` | The `AUTH_MODE`/`APP_ENV` start-up guard, CORS headers (dev headers only in dev mode), a JSON body decoder with a size limit, a rate limiter, the client address behind trusted proxies, security headers for API responses, and the person's identity key. | `AUTH_MODE`, `APP_ENV`, `TRUSTED_PROXY_CIDRS` |
 | `gworkspace` | A Google Workspace client: accounts and groups (Admin SDK Directory) and mailboxes (Gmail API), through a service account with domain-wide delegation. Comes with an in-memory fake for tests. | `GOOGLE_WORKSPACE_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_ADMIN_EMAIL`, `GOOGLE_WORKSPACE_DOMAIN` |
 
 `shared/go` is one Go module, `github.com/AGlElectronics/con-services/shared/go`,
@@ -84,6 +84,15 @@ handlers and `RequirePaired`), plus:
 | `denlink.ErrRevoked` | What `Sync` and the preferences calls return after a `401` from Den. |
 | `Config.HostAllowed(host)` | Whether a pasted pairing URL may point at that host. |
 | `denlink.Schema`, `denlink.SchemaUpgrade` | The `den_link` table for a new module, and the migration an existing one needs (adds `revoked_at`). |
+| `client.ModuleSettings() *ModuleSettings`, `Bundle.ModuleSettings` | Den's [module settings](module-settings.md) for this module, from the stored bundle (so they survive a restart); `nil` when standalone. Methods, all safe on `nil`: `Lookup(key)`, `Section(name)`, `Decode(key, &dst)`, `String`, `Bool`, `Int`, `Days(key)` (whole number, 0 or more), `Retention()`, `SMTP()` (only when `smtp.host` is set; port `587` and `starttls` by default), `FinanceSeller()`. Keys are dotted: `wiki.revision_retention_days`, `finance.seller`. |
+
+The pairing (`POST …/den/pair`) and preferences (`PUT …/me/preferences`)
+handlers accept a body of at most 64 KiB and answer like
+`authbase.DecodeJSON`: `413 request_too_large` when it is larger, `400
+bad_request` when it is not exactly one JSON value. `denlink` keeps its own
+small copy of that decoder instead of calling `authbase`, because a module
+may copy `denlink` without `authbase` and the shared packages never import
+each other.
 
 What changes in the module's API is on [Pairing](pairing.md#the-den-connection-api-in-each-module).
 
@@ -93,10 +102,11 @@ What changes in the module's API is on [Pairing](pairing.md#the-den-connection-a
 | --- | --- |
 | `authbase.FromEnv(os.Getenv) (Config, error)` | `AUTH_MODE` (default `oidc`) and `APP_ENV` (default `production`); fails for `AUTH_MODE=dev` unless `APP_ENV=development`. |
 | `authbase.NormalizeAppEnv(s)` | How `APP_ENV` is read: trimmed, lower-cased, empty is `production`. `denlink.NormalizeAppEnv` is an identical copy. |
-| `cfg.AllowedHeaders(extra...)`, `cfg.CORS(CORSOptions)` | CORS: `X-Dev-User` and `X-Dev-Groups` are allowed only in dev mode. |
+| `cfg.AllowedHeaders(extra...)`, `cfg.CORS(CORSOptions)` | CORS: `X-Dev-User` and `X-Dev-Groups` are allowed only in dev mode. `CORSOptions.ExposeHeaders` lists the response headers the page may read (`Access-Control-Expose-Headers`); `nil` means `authbase.DefaultExposeHeaders` (`X-Request-ID`), an empty slice exposes none. |
+| `cfg.TrustedProxies`, `authbase.ParseTrustedProxies(s)` | The proxies from `TRUSTED_PROXY_CIDRS` whose `X-Forwarded-For` is believed. `.ClientAddr(r)` finds the client (rules in [Client IP addresses](../operations/production.md#client-ip-addresses)), `.Middleware` replaces `r.RemoteAddr` with it, `.ClientIP` is a rate-limit key. The zero value trusts nobody. |
 | `cfg.StripDevHeaders(next)` | Middleware that deletes the dev headers from every request outside dev mode. |
 | `authbase.DecodeJSON(w, r, &dst, DecodeOptions{MaxBytes, DisallowUnknownFields, RequireJSONContentType})` | Decode a request body with `http.MaxBytesReader` (default 1 MiB). Errors are `413 request_too_large`, `415 unsupported_media_type` or `400 bad_request`; write them with `authbase.WriteDecodeError`. |
-| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`: each IPv4 address on its own, IPv6 addresses per `/64` network, since one home or phone usually holds a whole `/64`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. |
+| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`: each IPv4 address on its own, IPv6 addresses per `/64` network, since one home or phone usually holds a whole `/64`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. `ClientIP` only reads `r.RemoteAddr`: behind the Gateway, mount `cfg.TrustedProxies.Middleware` before the limiter (or keep the module's own trusted-proxy middleware), otherwise every request counts against the proxy's address. |
 | `authbase.SecurityHeaders(next)` | `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` on every API response. |
 | `authbase.UserKey{Issuer, Subject}` | A person's identity across Con Services (`iss` + `sub`), with `String`, `ParseUserKey` and `IsZero`. |
 
@@ -109,6 +119,67 @@ Content-Type: application/json
 
 {"error":{"code":"rate_limited","message":"Too many requests; try again in 2 seconds."}}
 ```
+
+Mount order on the API router, outermost first:
+
+```go
+auth, err := authbase.FromEnv(os.Getenv)
+if err != nil {
+    log.Fatal().Err(err).Msg("configuration")
+}
+r.Use(auth.TrustedProxies.Middleware) // RemoteAddr = the real client
+r.Use(auth.StripDevHeaders)
+r.Use(authbase.SecurityHeaders)
+r.Use(auth.CORS(authbase.CORSOptions{AllowedOrigins: origins}))
+r.With(limiter.Middleware).Get("/api/public/verify/{code}", verify)
+```
+
+#### Error codes
+
+These codes are part of the API contract. A module that uses `authbase`
+returns them unchanged in its standard error body
+`{"error":{"code":"…","message":"…"}}`, lists them in its API docs, and its
+web app may switch on them. Do not map them to the module's own codes (for
+example `validation_failed`). The constants are exported, so handlers can
+compare without string literals.
+
+| Status | Code | Constant | When |
+| --- | --- | --- | --- |
+| `400` | `bad_request` | `authbase.CodeBadRequest` | The body is empty, not valid JSON, has a field of the wrong type, an unknown field (with `DisallowUnknownFields`), or more than one JSON value. |
+| `413` | `request_too_large` | `authbase.CodeRequestTooLarge` | The body is larger than `DecodeOptions.MaxBytes` (default 1 MiB). |
+| `415` | `unsupported_media_type` | `authbase.CodeUnsupportedMediaType` | `RequireJSONContentType` is set and `Content-Type` is not `application/json` or `…+json`. |
+| `429` | `rate_limited` | `authbase.CodeRateLimited` | The rate limit is used up; `Retry-After` says how many seconds to wait. |
+
+For example, a module endpoint that decodes with `RequireJSONContentType`
+(here HR's `POST /api/people`, once HR has adopted `authbase`), called with
+a plain-text body:
+
+```sh
+curl -s -X POST https://hr.con.example.org/api/people \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" -d 'hello'
+```
+
+```json
+{"error":{"code":"unsupported_media_type","message":"Content-Type must be application/json"}}
+```
+
+#### Testing a module that uses authbase or denlink
+
+`authbase.FromEnv` and `denlink.FromEnv` default to `APP_ENV=production`.
+Module tests that sign in with `X-Dev-User`/`X-Dev-Groups`, or that call
+`denlink.Restore` or `Pair` without `DEN_LINK_ENCRYPTION_KEY`, must set
+`APP_ENV=development` (and `AUTH_MODE=dev` for the dev headers):
+
+```go
+t.Setenv("APP_ENV", "development")
+t.Setenv("AUTH_MODE", "dev")
+```
+
+Without it the dev headers are stripped (every request is anonymous and
+gets `401`), and `Restore` fails with
+`DEN_LINK_ENCRYPTION_KEY is required unless APP_ENV=development`. A
+hand-built `authbase.Config{}` or `denlink.Config{}` counts as production
+too.
 
 ### gworkspace
 
@@ -137,6 +208,7 @@ lists the same rows on its own configuration page.
 | --- | --- | --- | --- | --- |
 | `APP_ENV` | `production` | no | `authbase`, `denlink` | Only `development` relaxes the rules: allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to the development hosts. Anything else counts as production. Both packages trim spaces and ignore case the same way (`NormalizeAppEnv`), so ` Development ` is `development`. |
 | `AUTH_MODE` | `oidc` | no | `authbase` | `oidc` verifies Keycloak tokens. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. |
+| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | `authbase` | Comma-separated CIDRs (or single addresses) of the proxies in front of the API (Gateway, nginx, Caddy). Only on a connection from one of them is `X-Forwarded-For` read, right to left, and the first untrusted address is the client; `X-Real-IP` is never read. `none` trusts no proxy. An invalid entry stops the start-up. Same variable and rules as the modules' own handling; see [Client IP addresses](../operations/production.md#client-ip-addresses). Used only when the backend mounts `TrustedProxies.Middleware` or keys on `TrustedProxies.ClientIP`. |
 | `OIDC_GROUPS_CLAIM` | `groups` | no | `groupmatch` | The token claim that holds the person's groups. `roles` is never read in addition. A dotted name such as `realm_access.roles` is followed into nested objects when no claim has that exact name. |
 | `OIDC_GROUP_MATCH` | `full` | no | `groupmatch` | `full`: the whole group path must match. `last`: only the last path segment is compared. |
 | `OIDC_GROUP_PREFIX` | none | no | `groupmatch` | A parent group such as `/con2026` that is removed from group names before matching, for an identity provider that keeps each convention year under its own parent. |
@@ -249,17 +321,49 @@ longer exists in `shared/go` is deleted.
    when `GET /api/den/state` answers `"revoked": true`.
 6. Update tests that compare the state body exactly: it now has a
    `revoked` field.
+7. Read Den's [module settings](module-settings.md) with
+   `client.ModuleSettings()` instead of SQL on `den_link.bundle`; remove
+   such queries (Wiki's revision retention, Finance's seller details).
+8. Tests that call `Restore` or `Pair` set `APP_ENV=development` (see
+   [Testing](#testing-a-module-that-uses-authbase-or-denlink)).
 
 **groupmatch**: replace the module's own group comparison, store grants with
 `NewGrant` (a migration normalising existing grants), stop merging `roles`
 into groups, and add the three `OIDC_GROUP*` settings to the configuration
 page.
 
+!!! warning "Grants cannot be matched with SQL equality"
+    The stored grant (`Grant.Stored`) is only normalised. The form that is
+    compared, `cfg.Key(name)`, also drops `OIDC_GROUP_PREFIX` and, with
+    `OIDC_GROUP_MATCH=last`, everything but the last segment, and it does
+    so for the token's groups too. So
+    `WHERE grant_group = ANY($tokenGroups)` misses matches as soon as a
+    prefix or `last` is configured: `/con2026/departments/security` must
+    match the stored `departments/security`, and in `last` mode
+    `/teams/security` matches it as well. Load the module's grants (they
+    are few) and compare in Go with `cfg.Matching(groups, grants)`. Do not
+    store `cfg.Key` values either: they change when the settings change.
+
 **authbase**: call `authbase.FromEnv` at start-up (this changes the
 defaults to `AUTH_MODE=oidc` and `APP_ENV=production`; the module's
 `.env.example` and Compose service then set `APP_ENV=development`
 explicitly), mount `StripDevHeaders` and `SecurityHeaders` first on the API
-router, and use `DecodeJSON` for request bodies.
+router, and use `DecodeJSON` for request bodies. Also:
+
+- Keep the module's own trusted-proxy middleware, or replace it with
+  `cfg.TrustedProxies.Middleware` mounted before any rate limiter. Either
+  way `TRUSTED_PROXY_CIDRS` keeps its name and default.
+- Return the [error codes](#error-codes) unchanged and list them in the
+  module's API docs.
+- If the web app reads a response header such as `X-Request-ID` or
+  `Content-Disposition` cross-origin, list it in
+  `CORSOptions.ExposeHeaders` (`X-Request-ID` is exposed by default).
+- Set `APP_ENV=development` in tests that use the dev headers (see
+  [Testing](#testing-a-module-that-uses-authbase-or-denlink)).
+- `authbase` does not verify tokens. A backend that refuses ID tokens (the
+  [token contract](authentication.md#tokens-the-10-contract)) does so in
+  its own OIDC check, and relies on Keycloak's `typ` claim for it; see
+  [Refusing ID tokens](authentication.md#refusing-id-tokens).
 
 **Frontend lint (every module)**: the shared module CI runs
 `npm run --if-present lint` in the frontend folder, so a module whose
@@ -361,6 +465,29 @@ The headers come in two forms in `shared/nginx/`:
 | `security-headers.conf.template` | **Preferred.** The origins are environment variables that the official nginx image fills in when the container starts, so one image works for any domain. |
 | `security-headers.conf` | The same headers with placeholders you replace by hand, for an app whose origins are fixed at build time. |
 
+!!! note "Who fills in the origins"
+    **Nothing fills in the placeholders when you copy the file.** The sync
+    script (`scripts/sync-shared`) copies only the Go packages; you copy
+    the nginx file into the app by hand, once, and it stays a template
+    with `${KEYCLOAK_ORIGIN}` and the like in it. The values are filled in
+    **when the frontend container starts**: the official `nginx` and
+    `nginxinc/nginx-unprivileged` images run `envsubst` over
+    `/etc/nginx/templates/*.template` from their entrypoint
+    (`20-envsubst-on-templates.sh`), reading the container's environment
+    variables `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and
+    `EXTRA_CONNECT_SRC`. So one image works for every installation, and a
+    new domain needs only new environment values and a restart.
+
+    **Helm charts and Kustomize manifests pass the origins as `env` on the
+    frontend container**, filled from the chart's values (the Keycloak
+    origin is the scheme and host of `OIDC_ISSUER_URL`), and mount an
+    `emptyDir` at `/etc/nginx/snippets`; step 6 below shows the
+    container spec. A chart that mounts its own `nginx.conf` from a
+    ConfigMap keeps only the `include` line there. It never renders a
+    filled-in copy of `security-headers.conf` into a ConfigMap or bakes
+    one into the image: such a copy goes stale when the shared file
+    changes and pins the policy to one domain.
+
 The CSP allows these origins besides the app itself. Each is scheme, host
 and optional port, no path (`https://auth.con.example.org`); several are
 separated by spaces; an empty value leaves the origin out.
@@ -430,9 +557,43 @@ separated by spaces; an empty value leaves the origin out.
     ```
 
 4. **Move inline scripts into files.** `script-src 'self'` blocks every
-   `<script>…</script>` written into `index.html` or `silent-callback.html`
-   (for example a theme initialiser). Put the code into a file under
-   `public/` and load it with `<script src="/theme-init.js"></script>`.
+   `<script>…</script>` written into an HTML file, and the browser then
+   skips that code without any other sign than a console error. Two are
+   in nearly every app:
+
+    - the theme script in `index.html` that sets light or dark mode
+      before React starts (without it the page flashes in the wrong
+      theme);
+    - the script in `public/silent-callback.html` that hands the result of
+      the silent token renewal from the hidden frame back to the app
+      (`parent.postMessage(…)`); blocked, the session ends when the token
+      expires.
+
+    Put each into a file under `public/` and load it by URL. Vite copies
+    `public/` unchanged, so the file is served from the app's own origin:
+
+    ```html
+    <!-- index.html, in <head>, before the app's module script -->
+    <script src="/theme-init.js"></script>
+    ```
+
+    ```html
+    <!-- public/silent-callback.html -->
+    <!doctype html>
+    <html><body><script src="/silent-callback.js"></script></body></html>
+    ```
+
+    ```js
+    // public/silent-callback.js: the same code that was inline
+    parent.postMessage({ source: 'oidc-client', url: window.location.href, keepOpen: false }, window.location.origin);
+    ```
+
+    Check in the browser's developer tools (Console) after a reload and
+    after five minutes signed in: no *Refused to execute inline script*.
+
+    A `nonce` or a hash in `script-src` is no alternative: the headers are
+    the same for every response, so a nonce would be the same each time,
+    and a hash breaks with every edit.
 5. **Stash only:** Stash scans barcodes with the camera, so its copy says
    `camera=(self)` in `Permissions-Policy`. Every other app keeps
    `camera=()`.

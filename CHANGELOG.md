@@ -143,8 +143,45 @@ led by Den's MAJOR; see
   source of access with an offboarding warning, a review queue for
   volunteers with self-service data entry, and an `.xlsx`/`.csv`
   importer.
+- Shared Go code: `denlink` reads Den's [module settings](docs/concepts/module-settings.md)
+  from the bundle (`client.ModuleSettings()`, with helpers for retention,
+  SMTP and Finance's seller details and dotted keys such as
+  `wiki.revision_retention_days`). They are stored with the bundle, so a
+  restarted module has them before it reaches Den, and bundles stored by an
+  older Den still load. Modules no longer need their own SQL on
+  `den_link.bundle`.
+- Shared Go code: `authbase` can find the real client behind the Gateway
+  from `TRUSTED_PROXY_CIDRS` (the same variable and default every module
+  already uses; `X-Forwarded-For` is read only from trusted proxies, right
+  to left), and can expose response headers to the web app through CORS
+  (`X-Request-ID` by default).
+- [Shared code](docs/concepts/shared-code.md#error-codes) documents
+  `authbase`'s error codes (`bad_request`, `request_too_large`,
+  `unsupported_media_type`, `rate_limited`) as part of the API contract,
+  that module tests need `APP_ENV=development` for the dev headers and for
+  `denlink`, and that grants cannot be matched with an SQL `=` when
+  `OIDC_GROUP_PREFIX` or `OIDC_GROUP_MATCH=last` is set.
+  [Authentication](docs/concepts/authentication.md#refusing-id-tokens)
+  explains that refusing ID tokens relies on Keycloak's `typ` claim.
 
 ### Changed
+
+- [Module settings](docs/concepts/module-settings.md): the contract now
+  says where every key lives. Settings for one module are under its slug
+  (`finance.seller.legal_name`, `stash.lost_found.mode`,
+  `wiki.revision_retention_days`), shared ones under `retention.*` and
+  `smtp.*`, always inside `module_settings.data`; Den sends only the
+  calling module's own section. Adds Wiki's `wiki.revision_retention_days`
+  and a full example of every key.
+- Shared Go code: `denlink`'s pairing and preferences endpoints answer
+  `413 request_too_large` for a body over 64 KiB (was `400 bad_request`)
+  and `400 bad_request` for a body with more than one JSON value.
+- Nginx security headers: the docs and the template say plainly that
+  nothing fills in the origins when the file is copied; the nginx image
+  does at every container start from `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`,
+  `S3_ORIGIN` and `EXTRA_CONNECT_SRC`. Charts pass these as `env` and
+  never ship a filled-in copy. The inline scripts in `index.html` (theme)
+  and `silent-callback.html` must move to files; the docs show how.
 
 - Shared Go code: `authbase` and `denlink` read `APP_ENV` the same way
   (trimmed, any case, `production` when unset), through the new
