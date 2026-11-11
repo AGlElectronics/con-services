@@ -276,6 +276,10 @@ led by Den's MAJOR; see
   Wiki → HR (group picker directory, opt-in) and Wiki → Keycloak admin API
   (group picker when standalone, opt-in). The secrets inventory lists
   Wiki's optional `HR_DIRECTORY_TOKEN` and `IDP_DIRECTORY_CLIENT_SECRET`.
+- `scripts/smoke-wiki.ps1` also checks that SVG uploads download as
+  sandboxed attachments, that comment-level people start page discussions
+  but cannot anchor threads to text, that the people picker hides email
+  addresses from non-admins, and sends the issuer to the offboarding hook.
 
 ### Security
 
