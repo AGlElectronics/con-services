@@ -36,7 +36,7 @@ and the drift check make sure they do not.
 
 | Package | What it does | Reads |
 | --- | --- | --- |
-| `groupmatch` | Decides whether a person's groups (from the ID token) match the groups a module grants roles to. | `OIDC_GROUPS_CLAIM`, `OIDC_GROUP_MATCH`, `OIDC_GROUP_PREFIX` |
+| `groupmatch` | Decides whether a person's groups (from the token) match the groups a module grants roles to. | `OIDC_GROUPS_CLAIM`, `OIDC_GROUP_MATCH`, `OIDC_GROUP_PREFIX` |
 | `denlink` | Pairs the module with Den, stores the module credential **encrypted**, pulls Den's bundle every minute, serves the brand and the Den connection endpoints, and reports a **revoked** credential. | `DEN_MODE`, `DEN_INTERNAL_URL`, `DEN_ALLOWED_HOSTS`, `DEN_LINK_ENCRYPTION_KEY`, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `APP_ENV` |
 | `authbase` | The `AUTH_MODE`/`APP_ENV` start-up guard, CORS headers (dev headers only in dev mode), a JSON body decoder with a size limit, a rate limiter, the client address behind trusted proxies, security headers for API responses, and the person's identity key. | `AUTH_MODE`, `APP_ENV`, `TRUSTED_PROXY_CIDRS` |
 | `gworkspace` | A Google Workspace client: accounts and groups (Admin SDK Directory) and mailboxes (Gmail API), through a service account with domain-wide delegation. Comes with an in-memory fake for tests. | `GOOGLE_WORKSPACE_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_ADMIN_EMAIL`, `GOOGLE_WORKSPACE_DOMAIN` |
@@ -982,6 +982,26 @@ scripts are files. No other app sets `EXTRA_FRAME_SRC`.
 **API responses carry two `Content-Security-Policy` headers**
 : The snippet is included at `server` level or in `location /api/`. Include
   it only in the locations that serve the app (step 3).
+
+**Silent sign-in after a reload times out; the console says *Refused to display '…/silent-callback.html' in a frame because it set 'X-Frame-Options' to 'deny'***
+: oidc-client-ts loads the app's own `silent-callback.html` in a hidden
+  iframe, and the template's `frame-ancestors 'none'` and
+  `X-Frame-Options: DENY` forbid that. Serve that one page with a variant
+  that allows same-origin framing. Den makes it from the template when the
+  image is built (`infra/Dockerfile.frontend`):
+
+    ```dockerfile
+    RUN sed -e "s/frame-ancestors 'none'/frame-ancestors 'self'/" -e 's/"DENY"/"SAMEORIGIN"/' \
+          /etc/nginx/templates/security-headers.conf.template \
+          > /etc/nginx/templates/security-headers-frameable.conf.template
+    ```
+
+    ```nginx
+    location = /silent-callback.html {
+        include /etc/nginx/snippets/security-headers-frameable.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+    ```
 
 ## Google Workspace service account
 

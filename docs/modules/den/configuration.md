@@ -81,11 +81,11 @@ a message listing every problem, if something required is missing.
 
 | Variable | Default | Required | Description |
 | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | Environment name, logged at start-up. `development` switches to human-readable console logs; anything else logs JSON (one object per line). |
+| `APP_ENV` | `production` | no | `production` or `development` (also accepted: `prod`, `dev`, `local`, `test`; anything else counts as `production`). Only `development` allows `AUTH_MODE=dev`, plain `http://` module addresses and SMTP without encryption, sends the dev sign-in headers through CORS, and logs human-readable console lines; `production` logs JSON (one object per line). **Before Den 1.0 the default was `development`**: a local `.env` or Compose file without `APP_ENV` now needs `APP_ENV=development`. |
 | `APP_BASE_URL` | `http://localhost:8090` | no | Den's public address. Used to build pairing URLs, returned to modules as `den_base_url`, and used for the logo and background addresses pushed into Keycloak. Set it to the address modules and browsers use for Den, for example `https://den.example.org`. |
 | `HTTP_ADDR` | `:8090` | no | Address the API listens on. The Kubernetes manifests and the compose file set `:8080`. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | How long to let running requests finish when stopping. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3001` | no | Comma-separated browser origins allowed to call the API from another origin. Not needed when the web app and the API share an address (the normal setup behind nginx). |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3001` | no | Comma-separated browser origins allowed to call the API from another origin. Not needed when the web app and the API share an address (the normal setup behind nginx). The dev sign-in headers (`X-Dev-User` and friends) are only allowed through CORS with `APP_ENV=development`, and are removed from every request otherwise. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `TLS_CERT_FILE` | none | no | Path to the server certificate (PEM). Together with `TLS_KEY_FILE` the API serves HTTPS and re-reads both files every minute, so renewed certificates are picked up without a restart. Without both, plain HTTP (the Compose stack). The Kubernetes manifests set `/etc/conservices-tls/tls.crt`; see [Internal TLS](../../operations/internal-tls.md). |
 | `TLS_KEY_FILE` | none | no | Path to the matching private key (PEM). Must be set together with `TLS_CERT_FILE`; one without the other stops the backend with `tls: TLS_CERT_FILE and TLS_KEY_FILE must be set together`. Kubernetes: `/etc/conservices-tls/tls.key`. |
@@ -116,10 +116,13 @@ start-up if it does not exist.
 
 | Variable | Default | Required | Description |
 | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | `oidc` checks Keycloak tokens. `dev` trusts the `X-Dev-User` header and makes everyone an admin. **Always set `oidc` outside your own computer**; see [Dev mode](../../concepts/authentication.md#dev-mode-no-keycloak). |
+| `AUTH_MODE` | `oidc` | no | `oidc` checks Keycloak access tokens. `dev` trusts the `X-Dev-User` header and makes everyone an admin; the backend refuses to start with `dev` unless `APP_ENV=development`. See [Dev mode](../../concepts/authentication.md#dev-mode-no-keycloak). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | The identity provider's issuer, for example `https://auth.conservices.test/realms/conservices`. Must match the `iss` claim of the tokens exactly, and be reachable from the backend at start-up. |
-| `OIDC_CLIENT_ID` | none | with `oidc` | Den's OIDC client, for example `den-spa`. |
-| `OIDC_AUDIENCE` | `OIDC_CLIENT_ID` | no | The audience a token must carry. |
+| `OIDC_AUDIENCE` | `den-api` | no | The audience an access token must carry. The realm's audience mapper on the `den-spa` client adds `den-api` to its access tokens ([Authentication](../../concepts/authentication.md)). Den accepts only tokens with `typ` `Bearer` (access tokens); ID tokens are refused even when their audience matches. Empty with `oidc` stops the backend. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | The token claim that holds the person's groups. Groups are read from this claim only; the `roles` claim is never merged in. A dotted name reads a nested claim, for example `realm_access.roles`. |
+| `OIDC_GROUP_MATCH` | `full` | no | How a group in the token is compared with `DEN_*_GROUPS`. `full`: the whole path must match, so `/den-admin` and `den-admin` match but `/security/den-admin` does not. `last`: only the last path segment is compared. Any other value stops the backend. See [Group matching](../../concepts/authentication.md). |
+| `OIDC_GROUP_PREFIX` | none | no | Optional group path every role group sits under, for example `/con2026`. Den then only counts groups below it and compares the rest. |
+| `OIDC_CLIENT_ID` | none | no | Not read by the backend since Den 1.0 (tokens are checked against `OIDC_AUDIENCE`). The Helm chart still uses it as the default `oidcClientId` of the web app's `/config.json`. |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | In dev mode, the user assumed when no `X-Dev-User` header is sent. |
 | `DEN_ADMIN_GROUPS` | `den-admin` | no | Comma-separated IdP groups whose members are admins. The first one is published in the role catalog. |
 | `DEN_MEMBER_GROUPS` | `den-member` | no | Comma-separated IdP groups whose members may use the portal. The first one is published in the role catalog. |
@@ -389,6 +392,56 @@ manifests mount their own from the `den-frontend-nginx` ConfigMap, which
 listens on port 8080 with TLS and proxies `/api/` over HTTPS to
 `den-backend.conservices-den.svc.cluster.local:8080`.
 
+## Security headers of the web app
+
+nginx sends the shared Con Services browser security headers
+([nginx security headers](../../concepts/shared-code.md#nginx-security-headers)):
+a Content-Security-Policy with `script-src 'self'` (no inline scripts),
+`frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, a strict
+`Referrer-Policy` and a `Permissions-Policy`. They are added to the
+locations that serve the web app (`/`, `/static/`, `/config.json`), never to
+`/api/`, where the backend sends its own stricter headers.
+
+`/silent-callback.html` is the one exception: the web app loads it in a
+hidden iframe of itself to renew the sign-in silently, so it gets the same
+policy with `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`
+(the snippet `security-headers-frameable.conf`, made from the shared
+template when the image is built).
+
+The image fills in the sign-in server when the container starts:
+
+| Variable (web app container) | Default | Required | Description |
+| --- | --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | empty | with `oidc` | Origin of the sign-in server (scheme, host and port, no path), for example `https://auth.example.org`. Allowed in `connect-src`, `frame-src` and `form-action`. Helm derives it from the issuer; Kustomize sets it in the ConfigMap `den-frontend-env`; Compose sets it on `den-frontend`. |
+| `DEN_ORIGIN`, `S3_ORIGIN`, `EXTRA_CONNECT_SRC` | empty | no | Further origins the browser may call. Den's web app only talks to its own address, so leave them empty. |
+
+On Kubernetes the root file system is read-only, so the manifests mount an
+`emptyDir` at `/etc/nginx/snippets` where the snippets are written.
+
+Check:
+
+```sh
+curl -sI https://den.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+x-frame-options: DENY
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+Troubleshooting:
+
+- **Sign-in page never appears, the browser console reports `Refused to connect to https://auth…`**:
+  `KEYCLOAK_ORIGIN` is empty or wrong. Set it to the issuer's origin.
+- **After a reload you are sent to the login page although you are signed in to Keycloak**:
+  the silent sign-in iframe was blocked. Check that
+  `curl -sI https://den.example.org/silent-callback.html` shows
+  `x-frame-options: SAMEORIGIN`; a proxy in front of nginx that adds its own
+  `X-Frame-Options: DENY` breaks it.
+
 
 ## Operator
 
@@ -412,7 +465,8 @@ listens on port 8080 with TLS and proxies `/api/` over HTTPS to
 | `BACKUP_S3_USE_PATH_STYLE` | `true` | no | `false` for providers that need virtual-host style. |
 | `BACKUP_AGE_RECIPIENTS` | none | for backups | Comma-separated age public keys (`age1…`) the backups are encrypted for. |
 | `BACKUP_TIMEZONE` | `UTC` | no | Time zone of the daily backup hour, for example `Europe/Vienna`. |
-| `FILES_S3_BUCKETS` | none | no | Comma-separated module buckets copied into every full backup. |
+| `BACKUP_SAME_STORAGE_AS_DATA` | `false` | no | Set `true` when the backup bucket is on the same S3 service as the live data (the Compose stack and the local trial). Backups still run, but the operator's status carries a warning that Den shows on the **Backups** page and as a banner in the admin console: losing that one service loses the data and its backups together. The operator also warns when `BACKUP_S3_ENDPOINT` and `FILES_S3_ENDPOINT` name the same host, whatever this says. Production backups belong on another provider or account ([Backups](../../operations/databases-and-backups.md#backups)). |
+| `FILES_S3_BUCKETS` | none | no | Comma-separated module buckets copied into every full backup, for example `den-data,stash-data,finance-data`. List every installed module's bucket, and only buckets that exist: a missing bucket fails the whole backup. |
 | `FILES_S3_ENDPOINT` | none | when `FILES_S3_BUCKETS` is set | Live file storage endpoint to copy from. |
 | `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY` | none | with buckets | Credentials for the live file storage. |
 | `FILES_S3_REGION` | `us-east-1` | no | Region of the live file storage. |
@@ -436,8 +490,9 @@ configMapGenerator:
       - HTTP_ADDR=:8080
       - AUTH_MODE=oidc
       - OIDC_ISSUER_URL=https://auth.conservices.test/realms/conservices
-      - OIDC_CLIENT_ID=den-spa
-      - OIDC_AUDIENCE=den-spa
+      - OIDC_AUDIENCE=den-api
+      - OIDC_GROUPS_CLAIM=groups
+      - OIDC_GROUP_MATCH=full
       - DEN_ADMIN_GROUPS=den-admin
       - DEN_MEMBER_GROUPS=den-member
       - DEN_OPS_GROUPS=den-ops
@@ -490,13 +545,21 @@ configMapGenerator:
     behavior: replace
     files:
       - config.json=den-frontend-config.json
+  # The sign-in server, for the web app's Content-Security-Policy.
+  - name: den-frontend-env
+    namespace: conservices-den
+    behavior: merge
+    literals:
+      - KEYCLOAK_ORIGIN=https://login.example.org
   - name: den-operator-config
     namespace: conservices-den
     behavior: merge
     literals:
       - MODULE_DB_HOST=<db.example.org>:5432
       - MODULE_DB_PARAMS=sslmode=verify-full&sslrootcert=/etc/provider-ca/ca.pem
-      - BACKUP_S3_ENDPOINT=https://<your-s3-endpoint>
+      # Another provider or account than the live data.
+      - BACKUP_S3_ENDPOINT=https://<your-backup-s3-endpoint>
+      - BACKUP_SAME_STORAGE_AS_DATA=false
       - BACKUP_S3_BUCKET=<backup-bucket>
       - BACKUP_AGE_RECIPIENTS=<age1-public-key>
       - BACKUP_TIMEZONE=Europe/Vienna
@@ -624,6 +687,7 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 | `frontend.replicas` | `2` | Web app replicas, with a PodDisruptionBudget and spreading over nodes (`ha.*`). |
 | `frontend.clientMaxBodySize`, `frontend.moduleRemovalTimeout` | `20m`, `30m` | nginx upload limit and the read timeout for module removal. |
 | `frontend.config` | `{}` | The web app's `/config.json` ([Web app settings](#web-app-settings-configjson)), as the ConfigMap `<release>-frontend-config`. Keys left out come from `config.AUTH_MODE`, `config.OIDC_ISSUER_URL` and `config.OIDC_CLIENT_ID` (else `den-spa`). |
+| `frontend.securityHeaders.keycloakOrigin` | origin of `frontend.config.oidcAuthority`, else of `config.OIDC_ISSUER_URL` | `KEYCLOAK_ORIGIN` of the web app's security headers ([Security headers](#security-headers-of-the-web-app)). `denOrigin`, `s3Origin` and `extraConnectSrc` exist too and stay empty for Den. |
 | `route.*` | host `den.conservices.test`, Gateway `public` in `conservices-gateway`, `timeout: 60s`, `moduleRemovalTimeout: 30m` | `HTTPRoute` and `BackendTLSPolicy`; see [Exposing the web app](../../operations/helm.md#exposing-the-web-app-gateway-api). |
 | `ingress.*` | off | Plain `Ingress` (legacy). |
 | `networkPolicy.*` | on | As for the modules ([Network policy values](../../operations/helm.md#network-policy-values)), plus `allowFromModules` (module backends may call `den-backend`), `allowToModules.enabled` / `.port` (default on, `8080`: `den-backend` may call module backends for role catalogs and to-dos) and `operatorExtraEgress`. |
@@ -642,6 +706,35 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 
 **`IDENTITY_STAFF_MODE must be own, brokered or existing`** at start-up
 : Fix the value in `config` (or the ConfigMap); there is no other mode.
+
+**`AUTH_MODE=dev lets anyone sign in as anyone and is only allowed with APP_ENV=development`** at start-up
+: Dev sign-in is for your own computer only. Set `AUTH_MODE=oidc` with
+  `OIDC_ISSUER_URL`, or, on a local Compose stack, add
+  `APP_ENV=development` (it no longer is the default).
+
+**Everyone gets `401` after the upgrade to Den 1.0, and the backend logs `token typ "ID" is not Bearer` or `expected audience "den-api"`**
+: Den now accepts access tokens only, with the audience `den-api`. Make sure
+  the realm's `den-spa` client has the audience mapper that adds `den-api`
+  to access tokens (`infra/keycloak/apply-mvp.sh` creates it; the shipped
+  realm export has it) and that the web app is Den 1.0 or later, then
+  reload the page.
+
+**Admins lost their role after the upgrade**
+: Groups now come only from `OIDC_GROUPS_CLAIM` (default `groups`), and the
+  whole group path must match. A group `/staff/den-admin` no longer counts
+  as `den-admin`: move the person into the top-level group, set
+  `OIDC_GROUP_PREFIX=/staff`, or set `OIDC_GROUP_MATCH=last`. Roles in the
+  token's `roles` claim are no longer read; use groups.
+
+**The Backups page warns that backups are on the same S3 service as the live data**
+: `BACKUP_SAME_STORAGE_AS_DATA=true` is set on the operator, or
+  `BACKUP_S3_ENDPOINT` names the same host as `FILES_S3_ENDPOINT`. Move the
+  backup bucket to another provider or account, point `BACKUP_S3_*` at it
+  and set `BACKUP_SAME_STORAGE_AS_DATA=false`.
+
+**Backups fail with `list bucket <name>: The specified bucket does not exist`**
+: `FILES_S3_BUCKETS` names a bucket that does not exist, usually a module
+  that is not installed. Remove it from the list, or create the bucket.
 
 **A module's address is refused with `must use https`**
 : Module addresses must be `https://`; plain `http://` is only accepted with

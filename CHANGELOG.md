@@ -239,6 +239,21 @@ led by Den's MAJOR; see
   sees is unchanged: the API `message` field and `last_error` on the Den
   connection page still say "Den rejected…", "Den refused the pairing URL"
   and "Den returned …" (`denlink.UserMessage`).
+- Den's Compose stack and Kubernetes base accept access tokens with
+  audience `den-api` (the backend no longer reads `OIDC_CLIENT_ID`). The
+  operator sets `BACKUP_SAME_STORAGE_AS_DATA` (true on the local trial,
+  where backups share the S3 server with the live data) and the dev backup
+  list includes every module bucket, including `finance-data-dev`. The Den
+  web app container gets `KEYCLOAK_ORIGIN` for its Content-Security-Policy,
+  and `/silent-callback.html` is allowed to be framed by Den itself.
+- The [module settings contract](docs/concepts/module-settings.md) now
+  includes Tasks' retention and reminders and Rally's submission-site host,
+  and its Den API section matches Den: one organisation document at
+  `GET`/`PUT /api/v1/module-settings` with `{"data": {…}}`, a read-only
+  per-module view, and the SMTP password only from
+  `GET /api/v1/integrations/module-settings/secrets` (stored in Den's
+  database, not encrypted at rest).
+
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,

@@ -42,8 +42,12 @@ for anyone, plus `/api/health`, `/api/role-catalog` and the root probes.
 **Rate limits.** The endpoints that need no sign-in are limited per client
 address: `POST /api/v1/integrations/pairing/redeem` 10 a minute,
 `/api/v1/public/*` 120 a minute, `GET /api/v1/backup-downloads/{token}` 10 a
-minute. Over the limit Den answers `429 rate_limited` with a `Retry-After`
-header (seconds). The client address is worked out as described under
+minute. IPv6 clients count per `/64` network, so one machine cannot dodge
+the limit by rotating addresses. Everything for signed-in people is limited
+to 600 requests a minute **per person** (issuer and subject of the token),
+with short bursts allowed. Over the limit Den answers `429 rate_limited`
+with a `Retry-After` header (seconds). The client address is worked out as
+described under
 [Client IP addresses](../../operations/production.md#client-ip-addresses).
 With several backend replicas each counts on its own.
 
@@ -55,7 +59,19 @@ Retry-After: 42
 ```
 
 **Request bodies** are JSON (`Content-Type: application/json`), except the
-asset upload. Unknown fields are rejected with `400 bad_request`.
+asset upload. Unknown fields are rejected with `400 bad_request`. A JSON
+body may be at most 1 MiB; a larger one gets `413 request_too_large`.
+
+```text
+HTTP/1.1 413 Request Entity Too Large
+
+{"error":{"code":"request_too_large","message":"request body is larger than 1048576 bytes"}}
+```
+
+**Security headers.** Every API response carries
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
+`Referrer-Policy: no-referrer`.
 
 **Times** are RFC 3339 strings, for example `2026-11-06T10:15:00Z`.
 **IDs** are UUIDs.
@@ -89,8 +105,9 @@ Every error has the same shape:
 | `forbidden` | 403 | Signed in, but your role is not allowed to do this. |
 | `not_found` | 404 | The thing does not exist. The message names it, for example `module not found`. |
 | `conflict` | 409 | Not possible in the current state, for example the operator is not set up. |
+| `request_too_large` | 413 | The JSON body is larger than 1 MiB. |
 | `validation_failed` | 422 | The values are not acceptable. |
-| `rate_limited` | 429 | Too many requests from your address; wait `Retry-After` seconds. |
+| `rate_limited` | 429 | Too many requests from your address or account; wait `Retry-After` seconds. |
 | `internal` | 500 | Something broke inside Den; the details are in Den's log. |
 | `unavailable` | 502 | A service Den depends on (the operator) failed; the message says why. |
 
@@ -104,7 +121,7 @@ There are three kinds of caller (explained in
 
 | Kind | How it authenticates | Used for |
 | --- | --- | --- |
-| **People** | `Authorization: Bearer <ID token>` from Keycloak (OIDC mode), or `X-Dev-User: <name>` (dev mode). | Everything under `/api/v1` except the integration and public endpoints. |
+| **People** | `Authorization: Bearer <access token>` from Keycloak with the audience `den-api` (OIDC mode), or `X-Dev-User: <name>` (dev mode). | Everything under `/api/v1` except the integration and public endpoints. |
 | **Paired modules** | `Authorization: Bearer <module credential>`. | `/api/v1/integrations/*`. |
 | **Anyone** | Nothing. | Health, role catalog, public brand, pairing redeem, backup download links. |
 
@@ -126,7 +143,7 @@ Authentication errors:
 | Status | Message | When |
 | --- | --- | --- |
 | 401 | `missing bearer token` | No `Authorization: Bearer` header. |
-| 401 | `invalid token` | The token is expired, or not from the configured issuer and client. |
+| 401 | `invalid token` | The token is expired, not from the configured issuer, lacks the audience `den-api` (`OIDC_AUDIENCE`), or is not an access token (an ID token, `typ` other than `Bearer`). Den's log says which. |
 | 401 | `invalid or revoked credential` | A module credential Den does not know. |
 | 403 | `insufficient role` | Your role is too low for this endpoint. |
 | 403 | `this account is disabled` | The account is disabled in Den. |
@@ -144,7 +161,7 @@ Authentication errors:
     TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid-connect/token \
       -d grant_type=password -d client_id=den-spa \
       -d username=admin -d password=adminadmin -d scope=openid \
-      | jq -r .id_token)
+      | jq -r .access_token)
     ```
 
 === "Windows (PowerShell)"
@@ -152,12 +169,13 @@ Authentication errors:
     ```powershell
     $TOKEN = (Invoke-RestMethod -Method Post `
       -Uri https://auth.conservices.test/realms/conservices/protocol/openid-connect/token `
-      -Body @{ grant_type='password'; client_id='den-spa'; username='admin'; password='adminadmin'; scope='openid' }).id_token
+      -Body @{ grant_type='password'; client_id='den-spa'; username='admin'; password='adminadmin'; scope='openid' }).access_token
     ```
 
-Den expects the **ID token** (not the access token) as the bearer. The
-`curl` examples below use bash syntax and `$TOKEN`. Tokens last 5 minutes in
-the local realm.
+Den expects the **access token** as the bearer; it must carry the audience
+`den-api`, which the realm's audience mapper on `den-spa` adds. ID tokens
+are refused (since Den 1.0). The `curl` examples below use bash syntax and
+`$TOKEN`. Tokens last 5 minutes in the local realm.
 
 In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 `-H "X-Dev-User: dev-admin"`.
@@ -166,7 +184,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 
 | You are | Use | Get it from |
 | --- | --- | --- |
-| A person or a script acting as one | Keycloak **ID token** for `den-spa`, with the `admin` role for anything under `/modules`, `/brand`, `/org-settings`, `/module-settings`, `/keycloak-sync`, `/audit-events`, and the `ops` role for `/operations` (except `/operations/status`) | The token endpoint above (dev), or your web app sign-in. Roles come from `DEN_ADMIN_GROUPS` (default `den-admin`), `DEN_MEMBER_GROUPS` and `DEN_OPS_GROUPS` (default `den-ops`). |
+| A person or a script acting as one | Keycloak **access token** from `den-spa` (audience `den-api`), with the `admin` role for anything under `/modules`, `/brand`, `/org-settings`, `/module-settings`, `/keycloak-sync`, `/audit-events`, and the `ops` role for `/operations` (except `/operations/status`) | The token endpoint above (dev), or your web app sign-in. Roles come from `DEN_ADMIN_GROUPS` (default `den-admin`), `DEN_MEMBER_GROUPS` and `DEN_OPS_GROUPS` (default `den-ops`). |
 | A module's backend | **Module credential** | [Pairing](#pairing-end-to-end): an admin creates a pairing URL, the module redeems it once. |
 | A website or sign-in page | Nothing | `/api/v1/public/brand`. |
 
@@ -193,6 +211,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | GET | `/api/v1/public/brand`, `/api/v1/public/brand/assets/{role}` | anyone (rate-limited) | [Branding](#get-apiv1publicbrand) |
 | GET, PUT | `/api/v1/org-settings` | admin | [Organisation settings](#organisation-settings) |
 | GET, PUT | `/api/v1/module-settings` | admin | [Module settings](#module-settings) |
+| GET | `/api/v1/modules/{id}/settings` | admin | [Module settings](#get-apiv1modulesidsettings) |
 | GET, POST | `/api/v1/keycloak-sync` | admin | [Keycloak sync](#keycloak-sync) |
 | GET | `/api/v1/audit-events` | admin | [Audit log](#audit-log) |
 | GET | `/api/v1/operations/status` | admin or ops | [Operations](#operations-backups-and-databases) |
@@ -202,6 +221,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | GET | `/api/v1/backup-downloads/{token}` | anyone with the link (rate-limited) | [Operations](#get-apiv1backup-downloadstoken) |
 | POST | `/api/v1/integrations/pairing/redeem` | pairing token (rate-limited) | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/bundle`, `/settings`, `/module-settings` | module credential | [Integration](#integration-api-for-paired-modules) |
+| GET | `/api/v1/integrations/module-settings/secrets` | module credential | [Integration](#get-apiv1integrationsmodule-settingssecrets) |
 | GET | `/api/v1/integrations/branding/profile`, `/assets`, `/assets/{id}` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET, PUT | `/api/v1/integrations/user-preferences` | module credential | [Integration](#integration-api-for-paired-modules) |
 
@@ -1040,21 +1060,33 @@ Validation errors are `422` with one message per key:
 
 ## Module settings
 
-**Module settings** are what Den hands to paired modules besides the brand
-and the organisation settings: retention periods, the e-mail server,
-Finance's seller details, Stash's Lost & Found retention, Rally's
-submission site and the identity links. Every section and every field is
+**Module settings** are the settings every module must follow, decided once
+in Den: retention periods, the e-mail server, Finance's seller details,
+Stash's Lost & Found retention, Wiki's revision history, Tasks' retention
+and reminders, Rally's submission site, plus Den's own identity links. The
+keys, meanings and defaults are the
+[module settings contract](../../concepts/module-settings.md); Den stores
+one document for the organisation and gives each module `retention`,
+`smtp` and only its own section. Every section and every field is
 optional; a missing value means "the module decides". Unknown fields are
 refused (`400`).
 
 | Section | Fields | Rules | Given to |
 | --- | --- | --- | --- |
-| `retention` | `offboarded_volunteers_days`, `inactive_users_days`, `module_data_days` (1–3650), `backup_note` (text, at most 2000) | `pending_legal_review` is always `true` in answers: the periods have not been checked by a lawyer yet. | every module |
-| `smtp` | `host` (host name), `port` (1–65535), `from` (e-mail address, `Name <a@b>` allowed), `username`, `password` | `password` is **write-only**: a string sets it, `null` clears it, leaving it out keeps it. Answers show `password_set` instead. Removing the section clears the password too. | every module (with the password) |
-| `finance` | `seller_name`, `seller_address`, `vat_number` | `vat_number`: spaces, `.` and `-` are removed, upper-cased, must start with a two-letter country code (`NL123456789B01`). | the module with slug `finance` |
-| `stash` | `lost_and_found`: `{"mode": "days_after_con", "days": N}` (kept N days after the con, 0–3650) or `{"mode": "hours_after_closing", "hours": N}` (deleted N hours after closing, 0–8760) | | slug `stash` |
-| `rally` | `submission_site_host` | A host name without `https://`, e.g. `submit.example.org`. | slug `rally` or `events` |
-| `identity` | `account_console_url`, `sso_name` (at most 100), `idp_admin_console_url` | URLs `https://` (http only in development). The admin console link in Den's menu and the account link on the portal come from here. | every module; the portal (`identity_links`) |
+| `retention` | `offboarded_volunteers_days`, `inactive_users_days`, `module_data_days` | Whole days, 0–3650. | every module |
+| `smtp` | `host` (host name), `port` (1–65535, default `587`), `security` (`starttls` default, `tls`, or `none` only with `APP_ENV=development`), `username` (at most 256), `password`, `from` (e-mail address), `from_name` (at most 200) | `password` is **write-only**: a string sets it (at most 512), `null` clears it, leaving it out keeps it. Answers show `password_set` instead. Removing the section clears the password too. | every module; the password only through [`GET /api/v1/integrations/module-settings/secrets`](#get-apiv1integrationsmodule-settingssecrets) |
+| `finance` | `seller`: `legal_name` (at most 200), `address` (multi-line, at most 1000), `country`, `vat_id`, `tax_number` (at most 64), `registration` (at most 200), `email`, `website` | `country`: two-letter ISO code, upper-cased. `vat_id`: spaces, `.` and `-` removed, upper-cased, starts with a country code (`ATU12345678`). `website`: `https://` (http only in development). | slug `finance` |
+| `stash` | `lost_found`: `{"mode": "kept_after_con", "days": N}` (0–3650, default 30) or `{"mode": "deleted_after_closing", "hours": N}` (0–8760, default 48) | | slug `stash` |
+| `wiki` | `revision_retention_days` | 0–3650; `0` keeps every revision. | slug `wiki` |
+| `tasks` | `trash_days`, `notification_days`, `audit_days`, `automation_run_days` (0–3650), `due_soon_days` (0–30) | Whole days. `0` keeps forever (retention) or sends no reminder. Defaults when Tasks itself decides: trash 30, notifications 90, audit 730, automation runs 90, due soon 1. | slug `tasks` |
+| `rally` | `submission_site_host` | A host name without `https://`, e.g. `submit.example.org`. | slug `events` (or `rally`) |
+| `identity` | `account_console_url`, `sso_name` (at most 100), `idp_admin_console_url` | URLs `https://` (http only in development). The admin console link in Den's menu and the account link on the portal come from here. | no module; Den's portal (`identity_links`) |
+
+Den sets the defaults shown when a section is given without them (an SMTP
+host without port and security, a Lost & Found mode without its number).
+Existing settings saved by an earlier Den (`lost_and_found`,
+`seller_name`, …) are converted to these keys by a database migration on
+upgrade.
 
 ### `GET /api/v1/module-settings`
 
@@ -1067,10 +1099,12 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/module-settings
 ```json
 {
   "data": {
-    "retention": { "pending_legal_review": true, "offboarded_volunteers_days": 365, "backup_note": "Backups keep deleted data for 6 months." },
-    "smtp": { "host": "smtp.example.org", "port": 587, "from": "Example Con <noreply@example.org>", "username": "noreply", "password_set": true },
-    "finance": { "seller_name": "Example Con e.V.", "seller_address": "Main Street 1, 3511 Utrecht", "vat_number": "NL123456789B01" },
-    "stash": { "lost_and_found": { "mode": "hours_after_closing", "hours": 48 } },
+    "retention": { "offboarded_volunteers_days": 365, "inactive_users_days": 730 },
+    "smtp": { "host": "smtp.example.org", "port": 587, "security": "starttls", "username": "noreply", "password_set": true, "from": "noreply@example.org", "from_name": "Example Con" },
+    "finance": { "seller": { "legal_name": "Example Con e.V.", "address": "Main Street 1\n1010 Vienna", "country": "AT", "vat_id": "ATU12345678" } },
+    "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } },
+    "wiki": { "revision_retention_days": 365 },
+    "tasks": { "trash_days": 30, "notification_days": 90, "audit_days": 730, "automation_run_days": 90, "due_soon_days": 1 },
     "rally": { "submission_site_host": "submit.example.org" },
     "identity": {
       "account_console_url": "https://auth.example.org/realms/conservices/account",
@@ -1086,19 +1120,39 @@ Never saved: `{"data":{},"updated_at":null}`.
 
 ### `PUT /api/v1/module-settings`
 
-Replace the whole document (the `data` object, not wrapped). **Auth:**
-admin. Returns the saved document as `GET`. Audited as
-`module_settings.update`; the password never appears in the audit log, only
-the note `SMTP password set` or `SMTP password cleared`.
+Replace the whole document. **Auth:** admin. **Body:** `{"data": {…}}`,
+the same shape `GET` returns (sending a `GET` answer back, with its
+`updated_at`, works; `updated_at` is ignored). Returns the saved document as
+`GET`. Audited as `module_settings.update`; the password never appears in
+the audit log, only the note `SMTP password set` or `SMTP password
+cleared`.
 
 ```sh
 curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"smtp":{"host":"smtp.example.org","port":587,"from":"Example Con <noreply@example.org>","username":"noreply","password":"change-me"},"rally":{"submission_site_host":"submit.example.org"}}' \
+  -d '{"data":{"smtp":{"host":"smtp.example.org","username":"noreply","password":"change-me","from":"noreply@example.org","from_name":"Example Con"},"rally":{"submission_site_host":"submit.example.org"}}}' \
   $DEN/api/v1/module-settings
 ```
 
-Validation errors are `422` with one message per field, keyed
-`section.field`:
+```json
+{
+  "data": {
+    "smtp": { "host": "smtp.example.org", "port": 587, "security": "starttls", "username": "noreply", "password_set": true, "from": "noreply@example.org", "from_name": "Example Con" },
+    "rally": { "submission_site_host": "submit.example.org" }
+  },
+  "updated_at": "2026-11-11T12:05:00Z"
+}
+```
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `bad_request` | The body is not `{"data": {…}}` (for example the old unwrapped document), or has an unknown field. |
+| `401` / `403` | `unauthorized` / `forbidden` | Not signed in, or not an admin. |
+| `413` | `request_too_large` | The body is larger than 1 MiB. |
+| `422` | `validation_failed` | A value breaks a rule in the table above. |
+
+Validation errors have one message per field, keyed with the dotted key:
 
 ```json
 {
@@ -1112,6 +1166,29 @@ Validation errors are `422` with one message per field, keyed
   }
 }
 ```
+
+### `GET /api/v1/modules/{id}/settings`
+
+Read-only: exactly the `module_settings` that module receives in its bundle
+(`retention`, `smtp` with `password_set`, and its own section). **Auth:**
+admin.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/modules/$STASH_ID/settings
+```
+
+```json
+{
+  "data": {
+    "retention": { "inactive_users_days": 730 },
+    "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } }
+  },
+  "updated_at": "2026-11-11T12:00:00Z"
+}
+```
+
+**Errors:** `404 not_found` when there is no such module. `401` / `403` as
+for the other admin routes.
 
 ---
 
@@ -1267,6 +1344,8 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/operations/status
   "target": "http://s3:9000/conservices-backups",
   "recipients": ["age1…"],
   "file_buckets": ["den-data-dev", "hr-data-dev"],
+  "same_storage_as_data": true,
+  "warning": "Backups are stored on the same S3 service as the live data. If that service is lost, the data and its backups are lost together; move backups to another provider or location.",
   "timezone": "Europe/Vienna",
   "settings": { "hour": 3, "keep_daily": 7, "keep_weekly": 4, "keep_monthly": 6 },
   "last": {
@@ -1291,6 +1370,12 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/operations/status
 - `running` is present while a backup or removal is running.
 - `problem` is present when backups need attention: the last one failed,
   there has never been one, or the last good one is more than 26 hours old.
+- `same_storage_as_data` is `true` when backups go to the same S3 service
+  as the module files (`BACKUP_SAME_STORAGE_AS_DATA=true`, or the same
+  host and port in `FILES_S3_ENDPOINT` and `BACKUP_S3_ENDPOINT`). Then
+  `warning` explains the risk; Den shows it on the Backups page and as a
+  banner in the admin area. See
+  [Configuration](configuration.md#backups).
 - `last` and `last_success` are absent before the first backup.
 - `target`, `recipients`, `settings`, `last`, `last_success` and `next_run`
   are absent when backups are turned off.
@@ -1529,10 +1614,11 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/bundle
     "updated_at": "2026-11-06T09:44:02Z"
   },
   "module_settings": {
-    "retention": { "pending_legal_review": true, "offboarded_volunteers_days": 365 },
-    "smtp": { "host": "smtp.example.org", "port": 587, "from": "Example Con <noreply@example.org>", "username": "noreply", "password": "change-me" },
-    "identity": { "account_console_url": "https://auth.example.org/realms/conservices/account", "sso_name": "Example Con account" },
-    "stash": { "lost_and_found": { "mode": "hours_after_closing", "hours": 48 } },
+    "data": {
+      "retention": { "offboarded_volunteers_days": 365 },
+      "smtp": { "host": "smtp.example.org", "port": 587, "security": "starttls", "username": "noreply", "password_set": true, "from": "noreply@example.org", "from_name": "Example Con" },
+      "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } }
+    },
     "updated_at": "2026-11-11T12:00:00Z"
   }
 }
@@ -1540,12 +1626,16 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/bundle
 
 `brand` is the [public brand bundle](#get-apiv1publicbrand) without
 `logo_url`, `favicon_url` and `login_background_url`; fetch the files with
-the asset endpoint below. `module_settings` holds the
-[Module settings](#module-settings) for the calling module: `retention`,
-`smtp` (with the password) and `identity` for every module, plus only its
-own section (`finance` for slug `finance`, `stash` for `stash`, `rally` for
-`rally` or `events`). It is `{}` when nothing is set. A module shows these
-values as "Managed in Den" and keeps its own value for anything missing.
+the asset endpoint below. `module_settings` is always
+`{"data": {…}, "updated_at": "…"}`. `data` holds `retention` and `smtp`
+(with `password_set`, never the password) for every module, plus only that
+module's own section (`finance.seller` for slug `finance`, `stash.lost_found`
+for `stash`, `wiki` for `wiki`, `tasks` for `tasks`, `rally` for slug
+`events` or `rally`). `identity` is Den's own and is not included. `data`
+is `{}` when nothing is set for that module. A module shows these values
+as "Managed in Den" and keeps its own value for anything missing. The
+password, when `password_set` is true, comes from
+[`GET /api/v1/integrations/module-settings/secrets`](#get-apiv1integrationsmodule-settingssecrets).
 
 ### `GET /api/v1/integrations/settings`
 
@@ -1557,15 +1647,42 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/settings
 
 ### `GET /api/v1/integrations/module-settings`
 
-Only the module settings, as in `bundle.module_settings`.
+Only the module settings, as in `bundle.module_settings`: `{"data": {…}, "updated_at": "…"}`.
 
 ```sh
 curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings
 ```
 
 ```json
-{ "rally": { "submission_site_host": "submit.example.org" }, "updated_at": "2026-11-11T12:00:00Z" }
+{
+  "data": {
+    "retention": { "offboarded_volunteers_days": 365 },
+    "rally": { "submission_site_host": "submit.example.org" }
+  },
+  "updated_at": "2026-11-11T12:00:00Z"
+}
 ```
+
+### `GET /api/v1/integrations/module-settings/secrets`
+
+The secret values of the calling module's settings. The bundle never
+carries them (a module stores the bundle). **Auth:** module credential.
+**Response:** `200`, `Cache-Control: no-store`. Keys without a value are
+left out, so `{}` means no password is set.
+
+```sh
+curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings/secrets
+```
+
+```json
+{"smtp": {"password": "change-me"}}
+```
+
+**Errors:** `401` when the credential is missing or revoked.
+
+Den keeps the password in its database, in a column the admin API, the
+bundle and the audit log never return. It is not encrypted there, so it is
+as safe as Den's database and its backups (the operator encrypts those).
 
 ### `GET /api/v1/integrations/branding/profile`
 
@@ -1653,8 +1770,10 @@ You need Den's `admin` role: a group from `DEN_ADMIN_GROUPS` (default
 after changing groups.
 
 **`401 invalid token` with a token that works in another module.**
-Den checks that the token was issued for `den-spa`. Get one with that
-`client_id`, and send the `id_token`, not the `access_token`.
+Den accepts an **access token** whose audience includes `den-api`
+(`OIDC_AUDIENCE`). An ID token, or an access token minted for another
+module's audience, is refused. Get a token with `client_id=den-spa` (the
+realm's audience mapper adds `den-api`) and send `access_token`.
 
 **A module's pairing fails with `pairing token expired` or `already consumed`.**
 Pairing URLs work once and for 15 minutes. Create a new one with

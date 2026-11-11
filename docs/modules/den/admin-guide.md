@@ -87,7 +87,7 @@ The admin console has its own menu on the left:
 | **Modules** | Add, edit, pair and remove modules; see and revoke their credentials. |
 | **Branding** | Colours, fonts, wording, logo, favicon, sign-in background, Keycloak name sync. |
 | **Organisation** | The organisation settings document. |
-| **Module settings** | Settings Den hands to modules: retention, e-mail, Finance, Stash, Rally, identity links. |
+| **Module settings** | Settings Den hands to modules: retention, e-mail, Finance, Stash, Wiki, Tasks, Rally, and Den's own identity links. |
 | **Backups** | Backup status, schedule and downloads (ops role); the database list. |
 | **Audit log** | Every change made in Den, who made it and when. |
 | **Settings** | The sign-in mode, the dev user name (dev mode only) and version information. |
@@ -456,17 +456,21 @@ if a value is not valid, the message appears under the field.
 
 | Section | What it is | Who gets it |
 | --- | --- | --- |
-| **Retention** | How long HR keeps offboarded volunteers, how long unused accounts stay, how long old module data is kept (days), and a note about backups. Marked **pending legal review**: the periods have not been checked against data-protection law yet. | every module |
-| **E-mail (SMTP)** | Server, port, sender, user name and password for the e-mails modules send. The password is never shown again after saving; type a new one to replace it, or tick *Remove the saved password*. | every module |
-| **Finance: seller details** | Name, address and VAT number printed on invoices and receipts. | Finance |
+| **Retention** | How long HR keeps offboarded volunteers, how long unused accounts stay, and how long old module data is kept (days). The suggested numbers are **pending legal review**: they have not been checked against data-protection law yet. | every module |
+| **E-mail (SMTP)** | Server, port, security, sender, user name and password for the e-mails modules send. The password is never shown again after saving; type a new one to replace it, or tick *Remove the saved password*. Modules fetch it separately when they send mail; it is not in the bundle. | every module |
+| **Finance: seller details** | Legal name, address, country, VAT ID and the other details printed on invoices and receipts. | Finance |
 | **Stash: Lost & Found** | Either *kept for N days after the con* or *deleted N hours after closing*. | Stash |
-| **Rally: submission site** | The host name attendees submit events on, for example `submit.example.org`. | Rally |
-| **Identity links** | The name of your sign-in (SSO), the "manage my account" address (password, two-factor) and the identity provider's admin console. | every module; Den's menu and portal |
+| **Wiki** | How many days old page revisions are kept. `0` keeps every revision. | Wiki |
+| **Tasks** | How long trash, read notifications, the audit log and automation history are kept, and how many days before a due date a reminder is sent. | Tasks |
+| **Rally: submission site** | The host name attendees submit events on, for example `submit.example.org`. Rally's address in Den may be the slug `events`; it still receives this section. | Rally |
+| **Identity links** | The name of your sign-in (SSO), the "manage my account" address (password, two-factor) and the identity provider's admin console. | Den only: the menu and the portal. No module receives this. |
 
-The SMTP password is stored in Den's database and sent to paired modules over
-their authenticated connection; see
-[Secrets](../../operations/secrets.md). Changes are written to the
-[audit log](#audit-log) without the password.
+The SMTP password is stored in Den's database (not encrypted there; the
+backups of that database are encrypted) and is not in the bundle. A module
+fetches it, when it sends mail, from Den with its pairing credential. See
+[Secrets](../../operations/secrets.md) and the
+[module settings contract](../../concepts/module-settings.md). Changes are
+written to the [audit log](#audit-log) without the password.
 
 ## Audit log
 
