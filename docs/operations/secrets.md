@@ -178,9 +178,9 @@ with each module's docs):
 | Module | Secrets | Namespace |
 | --- | --- | --- |
 | Stash | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `conservices-stash` |
-| HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, SMTP password if any | `conservices-hr` |
+| HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, `HR_DIRECTORY_TOKEN` (optional), SMTP password if any; with Google Workspace, the service-account key in its own Secret `hr-google-workspace` (key `credentials.json`) | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
-| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
+| Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `HR_DIRECTORY_TOKEN` (optional) | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL` | `conservices-finance` |
@@ -189,6 +189,19 @@ with each module's docs):
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
+`HR_DIRECTORY_TOKEN` is set on both HR and the Wiki: the Wiki sends it to
+list HR's departments and access groups. Generate it (at least 16
+characters, for example `openssl rand -hex 32`); to rotate, store a new
+value and restart HR and the Wiki. Without it HR's directory endpoint is
+off and the Wiki's share dialog falls back to other sources.
+
+The **Google Workspace service-account key** (a JSON file) can create,
+suspend and delete accounts in your Workspace domain. Keep it only in your
+secret manager, deliver it as the Secret `hr-google-workspace` with the key
+`credentials.json` (chart value `googleWorkspace.existingSecret`), and
+rotate it by creating a new key for the service account in Google Cloud,
+storing it, restarting HR and deleting the old key. See
+[Google Workspace](../modules/hr/google-workspace.md).
 
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;
