@@ -197,7 +197,7 @@ with each module's docs):
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL`, `S3_*` keys | `conservices-finance` |
-| Rally | `DATABASE_URL`, `S3_*` keys, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
+| Rally | `DATABASE_URL`, `S3_*` keys, `DEN_LINK_ENCRYPTION_KEY`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
 
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
@@ -233,7 +233,34 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Allows only catalog reads. Rotate by writing a new value everywhere, then restart. |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally checks it from its first release (`rally-secrets`, key `HR_SERVICE_TOKEN`). Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
+
+### HR service token
+
+`HR_SERVICE_TOKEN` is one value per installation that HR's backend sends
+when it reads the modules' role catalogs. It only allows reading the
+catalogs (role names and their groups), so a leak reveals the access
+structure, not people or data.
+
+1. Generate it once:
+
+    ```sh
+    openssl rand -hex 32
+    ```
+
+2. Store the same value in HR's entry and in the entry of every module with
+   a catalog, for example
+   `vault kv patch secret/conservices/rally/backend HR_SERVICE_TOKEN=<value>`.
+   The `ExternalSecret` of each module extracts its whole entry
+   ([Add a module's secrets](#add-a-modules-secrets)), so the key reaches
+   `rally-secrets` without changes.
+3. Restart the modules, then HR. Between the two, HR's access picker shows
+   the modules with an error; nothing else is affected.
+
+To **rotate** it, repeat the three steps with a new value.
+
+For local work the root `docker-compose.yml` uses the dev-only value
+`dev-only-hr-service-token-change-me-0000000000`; never use it anywhere else.
 
 ### Den link encryption key
 
@@ -751,6 +778,7 @@ On PowerShell, replace `$(date +%s)` with
 | Module credential | Pair the module again (Den → Modules → Pair, paste in the module). The new credential replaces every older one at once. To cut a module off first, revoke in Den → Modules → Credentials. | None when pairing again; after revoking, the module is disconnected until it is paired. |
 | `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
 | `DEN_LINK_ENCRYPTION_KEY` | Old value into `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, new value into `DEN_LINK_ENCRYPTION_KEY`, restart; after a minute remove the previous key and restart again. [Details](#den-link-encryption-key). | Two restarts. |
+| `HR_SERVICE_TOKEN` | New value in HR's and every module's entry, restart the modules, then HR. [Details](#hr-service-token). | HR's access picker cannot read catalogs until all are restarted. |
 | Google Workspace service-account key | New key in the Google Cloud console, replace the file in the secret manager, restart, delete the old key. [Details](#google-workspace-service-account-key). | A restart. |
 | Backup age key | Add the new public key to `BACKUP_AGE_RECIPIENTS` and restart the operator. Only new backups use it; **keep the old secret key** as long as backups made with it are kept. | None. |
 | Keycloak bootstrap admin | Create a permanent admin in the master realm, then remove the bootstrap one and its secret. | None. |

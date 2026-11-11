@@ -28,7 +28,8 @@ The API has three parts:
 | --- | --- | --- |
 | `/api/v1/…` | The staff app and staff scripts. | Staff token (except `/api/v1/brand`). |
 | `/api/public/v1/…` | The submission site, websites, calendars. | None, an attendee token, or a public API key, per endpoint. |
-| `/livez`, `/readyz`, `/api/health`, `/api/role-catalog` | Probes, monitoring, HR. | None. |
+| `/livez`, `/readyz`, `/api/health` | Probes, monitoring. | None. |
+| `/api/role-catalog` | HR's access picker. | HR's service token or a staff token. |
 
 Both web apps forward `/api/` to the same backend, so either address works
 for every endpoint. The examples use the
@@ -51,14 +52,29 @@ Keycloak client (`events-spa`) and groups use `events`.
 
 | Caller | What to send | Accepted on |
 | --- | --- | --- |
-| **Staff** | `Authorization: Bearer <ID token>` from the staff issuer (`OIDC_ISSUER_URL`, realm `conservices`), issued to `OIDC_CLIENT_ID` (`events-spa`) or with audience `OIDC_AUDIENCE`. | `/api/v1/*` |
-| **Attendees** | `Authorization: Bearer <ID token>` from the attendee issuer (`ATTENDEE_OIDC_ISSUER_URL`, realm `attendees`), client `rally-submit`. | Signed-in routes under `/api/public/v1` |
+| **Staff** | `Authorization: Bearer <access token>` from the staff issuer (`OIDC_ISSUER_URL`, realm `conservices`) with audience `OIDC_AUDIENCE` (default `events-api`). | `/api/v1/*`, `/api/role-catalog` |
+| **Attendees** | `Authorization: Bearer <access token>` from the attendee issuer (`ATTENDEE_OIDC_ISSUER_URL`, realm `attendees`) with audience `ATTENDEE_OIDC_AUDIENCE` (default `events-public-api`). | Signed-in routes under `/api/public/v1` |
+| **HR's backend** | `Authorization: Bearer <HR_SERVICE_TOKEN>`. | `/api/role-catalog` only |
 | **Websites, calendars** | A public API key: `Authorization: Bearer rsk_…`, or `?key=rsk_…` for calendar feeds that cannot send headers. | `/api/public/v1/schedules…` only |
-| Local development (`AUTH_MODE=dev`) | `X-Dev-User: <name>`, or nothing (staff: `DEV_DEFAULT_USER`, default `dev-admin`; attendees: `dev-attendee`). | everything |
+| Local development (`AUTH_MODE=dev` with `APP_ENV=development`) | `X-Dev-User: <name>`, or nothing (staff: `DEV_DEFAULT_USER`, default `dev-admin`; attendees: `dev-attendee`). | everything |
+
+**ID tokens are refused** everywhere, whatever their audience, and so are
+access tokens for another module's API (for example `aud: hr-api`); see the
+[token contract](../../concepts/authentication.md#tokens-the-10-contract).
+Keycloak adds Rally's audience with an audience mapper on each client
+([Set up Rally](setup.md#2-prepare-keycloak)).
 
 Staff tokens never work on attendee routes and attendee tokens never work
-on staff routes: each side has its own verifier, and attendees never get
-staff memberships or permissions.
+on staff routes: each side has its own verifier, a token from the other
+realm is refused before anything else is checked (`401 attendee accounts
+cannot use the staff API`, or `401 staff accounts cannot use the submission
+site; sign in with an attendee account`), and attendees never get staff
+memberships or permissions: their group claims are ignored.
+
+Staff groups come only from the claim named by `OIDC_GROUPS_CLAIM`
+(default `groups`) and are compared with the shared rule
+([How groups are matched](../../concepts/authentication.md#how-groups-are-matched));
+the `roles` claim never grants anything.
 
 **Permissions.** A staff member's Keycloak groups are bound to Rally roles
 in the access configuration, and roles carry permissions (see
@@ -92,13 +108,16 @@ Writes without the permission answer **403** `missing permission: <name>`.
     must turn off direct access grants, and the dev accounts must not exist
     there. See [Secrets](../../operations/secrets.md).
 
+Take the **access token**; it carries `events-api` once `events-spa` has
+the audience mapper ([Set up Rally](setup.md#2-prepare-keycloak)).
+
 === "macOS / Linux"
 
     ```sh
     TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid-connect/token \
       -d grant_type=password -d client_id=events-spa \
       -d username=admin -d password=adminadmin -d scope=openid \
-      | jq -r .id_token)
+      | jq -r .access_token)
     ```
 
 === "Windows (PowerShell)"
@@ -106,8 +125,11 @@ Writes without the permission answer **403** `missing permission: <name>`.
     ```powershell
     $TOKEN = (Invoke-RestMethod -Method Post `
       -Uri https://auth.conservices.test/realms/conservices/protocol/openid-connect/token `
-      -Body @{ grant_type='password'; client_id='events-spa'; username='admin'; password='adminadmin'; scope='openid' }).id_token
+      -Body @{ grant_type='password'; client_id='events-spa'; username='admin'; password='adminadmin'; scope='openid' }).access_token
     ```
+
+To check the audience, decode the token's middle part, for example on
+<https://jwt.io> (local tokens only): `"aud"` must contain `events-api`.
 
 The attendee client `rally-submit` does **not** allow password grants. To
 call attendee endpoints, sign in to the submission site and copy the
@@ -117,24 +139,45 @@ developer tools into `$ATTENDEE`, or use dev mode
 
 ### Requests, responses and errors
 
-- Bodies are JSON; unknown fields give `400 invalid JSON: json: unknown field "…"`.
+- Bodies are JSON, at most 1 MiB; unknown fields give `400 unknown field "…"`,
+  broken JSON `400 request body is not valid JSON (at byte 17)`, and a larger
+  body `413 request_too_large`.
 - A malformed id in the path gives `400 invalid <name> id: <value>`.
 - Times are RFC 3339 with offset (`2027-03-13T10:00:00Z`).
 - Lists answer `{"items": [...]}`; some also include `"total"`. Nothing is paginated.
-- Every response carries `X-Request-ID`. Requests are cut off after 60 seconds.
-- Rally has **no rate limits** (never `429`). Protect the public schedule
-  with API keys and caching instead.
+- Every response carries `X-Request-ID` and the security headers
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` and
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`.
+  Requests are cut off after 60 seconds.
+- **Rate limits** apply to everything under `/api/public/v1` (per client
+  IP, `PUBLIC_RATE_LIMIT`, default 120 a minute with bursts of 30) and,
+  additionally, to creating and submitting submissions, inviting
+  co-presenters, invite codes and starting uploads (per person,
+  `SUBMISSION_RATE_LIMIT`, default 20 a minute with bursts of 10). Over the
+  limit the answer is `429` with `Retry-After` in seconds; wait that long.
+  Limits count per backend replica ([Rate limits](configuration.md#rate-limits)).
+
+```text
+HTTP/1.1 429 Too Many Requests
+Retry-After: 3
+Content-Type: application/json
+
+{"error":{"code":"rate_limited","message":"Too many requests; try again in 3 seconds."}}
+```
 
 Errors use `{"error":{"code","message","details"}}`:
 
 | Status | `code` | Typical cause in Rally |
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, unknown field, bad id or version number. |
-| 401 | `unauthorized` | `missing bearer token`, `invalid token`, or a missing/revoked public API key. |
+| 401 | `unauthorized` | `missing bearer token`, `invalid token` (also an ID token or a token for another API), a token from the other realm, or a missing/revoked public API key. |
 | 403 | `forbidden` | `missing permission: cfp.manage`, `only the submitter can do this`, `you cannot decide your own submission`. |
 | 404 | `not_found` | The thing does not exist **or you may not see it**; also the public schedule while it is switched off. |
 | 409 | `conflict` | Not allowed in the current state: a state-machine move (`invalid submission transition: cannot accept a draft submission`), a closed call, a blocking schedule rule (with `details.conflicts`). |
+| 413 | `request_too_large` | The JSON body is larger than 1 MiB. |
 | 422 | `validation_failed` | Field errors in `details`, keyed by path (`title`, `answers.bio`, `form.fields[2].id`, `speakers[0].name`). |
+| 429 | `rate_limited` | Too many requests from one client; retry after `Retry-After` seconds. |
 | 503 | `service_unavailable` | A feature is not configured here: file storage (`S3_ENABLED=false`) or attendee sign-in. |
 | 500 | `internal` | A bug or database failure; details only in Rally's log. |
 
@@ -148,7 +191,8 @@ The Den pairing endpoints use their own codes (`pairing_failed`,
 | Method | Path | Access | Section |
 | --- | --- | --- | --- |
 | GET | `/livez`, `/readyz`, `/api/health` | public | [Health](#health-and-catalog) |
-| GET | `/api/role-catalog` | public | [Health](#health-and-catalog) |
+| GET | `/api/role-catalog` | HR service token or staff | [Health](#health-and-catalog) |
+| GET | `/api/den/state`, `/api/v1/den/state` | public | [Den pairing](#den-pairing) |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | public | [Brand](#brand-and-preferences) |
 | GET | `/api/public/v1/brand`, `/api/public/v1/brand/{role}` | public | [Brand](#brand-and-preferences) |
 | GET | `/api/v1/me` | staff | [You](#you) |
@@ -240,10 +284,44 @@ curl -s $RALLY/api/health
 
 ### `GET /api/role-catalog`
 
-Rally's roles for HR's access picker (module `events`). **Access:** public.
+Rally's roles for HR's access picker (module `events`), following the
+[role catalog contract](../../concepts/role-catalog.md).
+
+**Who may call it:**
+
+- HR's backend, with `Authorization: Bearer <HR_SERVICE_TOKEN>`. Rally
+  compares it in constant time with its own `HR_SERVICE_TOKEN`; the token
+  allows nothing else.
+- Anyone signed in to the **staff** realm, with a staff access token (any
+  role, or none: the catalog names roles, not who holds them). Attendee
+  tokens are refused.
+
+The path stays open while Rally waits for Den (`DEN_MODE=required`).
+
+**Request body:** none. Send `If-None-Match` with the last `ETag` to get
+`304 Not Modified` while the catalog is unchanged.
+
+**Response:** `200` with the catalog. Each role appears **once**:
+
+| Field | Meaning in Rally |
+| --- | --- |
+| `revision` | A hash of the catalog's content; also the `ETag`. It changes only when the access configuration changes, and is the same on every replica. |
+| `roles[].key` | The role name from the access configuration. Rally has no dynamic roles (`dynamic` is always `false`). |
+| `roles[].group`, `roles[].group_display` | The group of the role's **first** binding in the access configuration: normalised (`group`, lower case, no leading `/`) and as written (`group_display`). Empty for a role without a binding. |
+| `roles[].assignable`, `roles[].scope` | `true` and `organization` for a role with a group binding; `false` and `edition` for one that is assigned per edition inside Rally. |
+| `roles[].privileged` | `true` for a role that can change settings, grant access or see other people's data: any of `org.manage`, `edition.edit`, `member.view`, `member.manage`, `audit.view`, `cfp.manage`, `submission.review`, `submission.decide`, `schedule.publish`. Reviewers are privileged because they read speakers' submissions. A role in the access configuration may set `privileged = true` or `false` to override this. |
+| `roles[].default` | Always `false`: HR gives no Rally role by default. |
+| `roles[].permissions` | The role's permissions, sorted. |
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `401` | `unauthorized` | No token (`authentication required`), a wrong service token or an invalid token (`invalid token`), or an attendee token. |
 
 ```sh
-curl -s $RALLY/api/role-catalog
+curl -s https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN"
 ```
 
 ```json
@@ -251,33 +329,63 @@ curl -s $RALLY/api/role-catalog
   "module": "events",
   "display_name": "Events",
   "description": "Editions, calls for papers and the programme.",
+  "revision": "sha256-3f9c2a71d0b4e8a5",
   "roles": [
     {
       "key": "organization_admin",
       "label": "Organization Admin",
       "description": "Full control of the organization: editions, CfPs, members.",
       "group": "events-admin",
+      "group_display": "events-admin",
       "assignable": true,
-      "scope": "organization:demo-org",
+      "default": false,
+      "scope": "organization",
+      "privileged": true,
+      "dynamic": false,
       "permissions": ["audit.view", "cfp.manage", "edition.edit", "edition.view", "member.manage", "member.view",
                       "org.manage", "org.view", "schedule.edit", "schedule.publish", "submission.decide", "submission.review"]
     },
     {
-      "key": "submitter",
-      "label": "Submitter",
-      "description": "Submits talks to open calls for papers.",
+      "key": "viewer",
+      "label": "Viewer",
+      "description": "Read-only access to the organization and editions.",
       "group": "",
+      "group_display": "",
       "assignable": false,
+      "default": false,
       "scope": "edition",
+      "privileged": false,
+      "dynamic": false,
       "permissions": ["edition.view", "org.view"],
-      "note": "Assigned per edition inside Events, not via an IdP group."
+      "note": "Assigned per edition inside Rally, not via an IdP group."
     }
   ]
 }
 ```
 
-A role bound to a group in the access configuration appears once per
-binding (`assignable: true`); unbound roles appear once with `scope: "edition"`.
+Without a token:
+
+```sh
+curl -s -i $RALLY/api/role-catalog
+```
+
+```text
+HTTP/2 401
+content-type: application/json; charset=utf-8
+
+{"error":{"code":"unauthorized","message":"authentication required"}}
+```
+
+Revalidating:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN" -H 'If-None-Match: "sha256-3f9c2a71d0b4e8a5"'
+```
+
+```text
+304
+```
 
 ---
 
@@ -382,10 +490,34 @@ Connects Rally to Den so it follows Den's brand, organisation name and the
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| GET | `/api/v1/den` | Status: `{"paired":true,"den_base_url":"https://den.conservices.test","module_id":"…","paired_at":"…","synced_at":"…"}`, or `{"paired":false}`. |
-| POST | `/api/v1/den/pair` | Body `{"pairing_url":"…"}`. Redeems it and syncs. **422** `pairing_failed` when the URL is malformed, Den is unreachable or Den refuses it. |
-| POST | `/api/v1/den/sync` | Fetch Den's brand and settings now (Rally also does this every minute). **409** `sync_failed` when not paired, **502** when Den fails. |
+| GET | `/api/v1/den` | Status: `{"paired":true,"den_base_url":"https://den.conservices.test","module_id":"…","paired_at":"…","synced_at":"…","revoked":false}`, or `{"paired":false,"revoked":false}`. After Den rejected the credential: `"revoked":true`, `"revoked_at"` and the reason in `last_error`. |
+| POST | `/api/v1/den/pair` | Body `{"pairing_url":"…"}`. Redeems it and syncs; also clears a revoked state. **422** `pairing_failed` when the URL is malformed, Den is unreachable, Den refuses it, or the host is not allowed (`pairing with Den at … is not allowed here; add the host to DEN_ALLOWED_HOSTS or set DEN_INTERNAL_URL`; outside `APP_ENV=development` the URL must use `https://`). |
+| POST | `/api/v1/den/sync` | Fetch Den's brand and settings now (Rally also does this every minute). **409** `sync_failed` when not paired, **409** `den_credential_revoked` when Den rejected the credential (pair again), **502** `sync_failed` when Den fails. |
 | DELETE | `/api/v1/den/pair` | Forget the credential; back to standalone. **204**. |
+
+The credential Den hands out is stored **encrypted** with
+`DEN_LINK_ENCRYPTION_KEY` ([Configuration](configuration.md#den-and-branding)).
+
+### `GET /api/den/state`
+
+Also at `/api/v1/den/state`. Whether Rally waits for Den, is paired, and
+whether Den rejected its credential, so the web app can show *Waiting for
+Den* or *pair again* before anyone signs in. **Access:** public.
+**Request body:** none. **Errors:** none.
+
+```sh
+curl -s $RALLY/api/den/state
+```
+
+```json
+{"mode":"required","paired":true,"revoked":false}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `DEN_MODE`: `required` or `standalone`. |
+| `paired` | Rally holds a pairing (also while it is revoked). |
+| `revoked` | Den rejected the credential (`401`); an admin must pair again. Rally keeps Den's last brand and settings meanwhile and stays unlocked. |
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -1480,9 +1612,25 @@ Call [`GET /api/v1/me`](#get-apiv1me). Empty `memberships` means none of
 your Keycloak groups is bound to a role in the access configuration. Group
 changes apply with your next token.
 
-**`401 invalid token` with a token from another module.**
-Staff tokens must be issued to `events-spa` (or `OIDC_AUDIENCE`); attendee
-tokens to the attendee realm. A Den or HR token does not work here.
+**`401 invalid token` with a token from another module, or with an ID token.**
+Rally takes access tokens whose `aud` contains `OIDC_AUDIENCE` (staff,
+default `events-api`) or `ATTENDEE_OIDC_AUDIENCE` (attendees, default
+`events-public-api`). A Den or HR token does not work here, and neither does
+an ID token (`jq -r .id_token`); use `.access_token`. If the access token
+has no `events-api` in `aud`, the audience mapper on `events-spa` is missing
+([Set up Rally](setup.md#2-prepare-keycloak)).
+
+**`401 authentication required` from `/api/role-catalog`.**
+The catalog needs `HR_SERVICE_TOKEN` or a staff token; it is no longer public.
+
+**`429 rate_limited`.**
+Wait the seconds in `Retry-After`. Scripts that create many submissions or
+invitations at once should pace themselves, or the operator raises
+`SUBMISSION_RATE_LIMIT` ([Rate limits](configuration.md#rate-limits)).
+
+**`413 request_too_large`.**
+The JSON body is over 1 MiB. Files never go through the API: upload them
+with the signed link from `POST …/uploads`.
 
 **A call or edition answers `404` but exists.**
 Draft calls and staff data are hidden as 404 from people without CfP or

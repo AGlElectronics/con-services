@@ -21,13 +21,40 @@ delivered as the `rally-secrets` Secret ([Secrets](../../operations/secrets.md))
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | ConfigMap | `development` gives console logs; use `production` otherwise. |
+| `APP_ENV` | `production` | no | ConfigMap | Only `development` relaxes the rules for local work: it allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs, and gives console logs. Anything else counts as production. Docker Compose sets `development` explicitly. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | ConfigMap | Rally's public staff address. |
 | `HTTP_ADDR` | `:8080` | no | ConfigMap | Listen address inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **Secret** | PostgreSQL URL. Also the only setting the `rally-migrate` image reads. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3002` | no | ConfigMap | Comma-separated browser origins allowed to call the API. Include the submission site when it runs on its own host. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | ConfigMap | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | ConfigMap | Grace period for running requests on stop. |
+
+## Rate limits
+
+Rally limits how fast one client can call the submission site's API, so a
+script cannot flood it with drafts, invitations or guesses at invite codes.
+Limits are counted **per backend replica**, in memory: with two replicas a
+client gets up to twice the rate. A client over its limit gets
+`429 rate_limited` with a `Retry-After` header (see
+[API reference](api.md#requests-responses-and-errors)).
+
+A rate is written `N/s`, `N/m` or `N/h` (requests per second, minute or
+hour); `off` switches the limiter off. The burst is how many requests a
+client may make at once before the rate applies.
+
+| Name | Default | Required | Where | What it does |
+| --- | --- | --- | --- | --- |
+| `PUBLIC_RATE_LIMIT` | `120/m` | no | ConfigMap | Every request under `/api/public/v1` (open calls, the public schedule API, the submission site), per client IP. The client IP comes from `TRUSTED_PROXY_CIDRS`. |
+| `PUBLIC_RATE_BURST` | `30` | no | ConfigMap | Burst for `PUBLIC_RATE_LIMIT`. |
+| `SUBMISSION_RATE_LIMIT` | `20/m` | no | ConfigMap | Creating a submission (both APIs), submitting it, inviting or re-inviting a co-presenter, opening, accepting or declining an invite code, and starting an upload, per signed-in person (per client IP without one). Counted in addition to `PUBLIC_RATE_LIMIT`. |
+| `SUBMISSION_RATE_BURST` | `10` | no | ConfigMap | Burst for `SUBMISSION_RATE_LIMIT`. |
+
+A wrong value stops the backend, for example
+`invalid config: PUBLIC_RATE_LIMIT: rate "fast" must look like 10/s, 60/m or 1000/h (or off)`.
+
+Request bodies are limited to 1 MiB; a larger JSON body gets
+`413 request_too_large`. Files never pass through the API (browsers upload
+straight to S3), so no form comes near the limit.
 
 ## Internal TLS
 
@@ -71,22 +98,46 @@ checks.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | ConfigMap | `oidc` verifies bearer tokens. `dev` trusts `X-Dev-User`: local only. |
-| `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Staff issuer, for example `https://auth.example.org/realms/conservices`. |
+| `AUTH_MODE` | `oidc` | no | ConfigMap | `oidc` verifies bearer access tokens. `dev` trusts `X-Dev-User` and is **refused unless `APP_ENV=development`**: the backend stops with `AUTH_MODE=dev lets anyone sign in as anyone and is only allowed with APP_ENV=development (got APP_ENV="production")`. In dev mode the API also accepts the `X-Dev-User` and `X-Dev-Groups` headers through CORS; in OIDC mode it deletes them from every request. See [Defaults: AUTH_MODE and APP_ENV](../../concepts/authentication.md#defaults-auth_mode-and-app_env). |
+| `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Staff issuer, for example `https://auth.example.org/realms/conservices`. Write it exactly as the identity provider publishes it (Keycloak: no trailing slash). |
 | `OIDC_CLIENT_ID` | none | with `oidc` | ConfigMap | Staff web app client (`events-spa`). |
-| `OIDC_AUDIENCE` | none | no | ConfigMap | Expected audience if different from the client id. |
+| `OIDC_AUDIENCE` | `events-api` | no | ConfigMap | The audience (`aud`) the staff app's **access tokens** must carry. Keycloak adds it with an audience mapper on `events-spa` ([Set up Rally](setup.md#2-prepare-keycloak)). ID tokens are refused whatever their audience, and so is a token for another module's API. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | ConfigMap | The token claim that holds a staff member's groups. The `roles` claim is **never** read in addition. A dotted name such as `realm_access.roles` is followed into nested objects. |
+| `OIDC_GROUP_MATCH` | `full` | no | ConfigMap | How a group in the token is compared with a binding in the access configuration: `full` compares the whole path, `last` only the last segment. See [How groups are matched](../../concepts/authentication.md#how-groups-are-matched). |
+| `OIDC_GROUP_PREFIX` | none | no | ConfigMap | A parent group such as `/con2026` removed from group names before comparing, for an identity provider that keeps each convention year under its own parent. |
 | `ACCESS_CONFIG_PATH` | none | in production | ConfigMap | Path of `access-config.toml` (roles and group bindings). The chart sets `/etc/rally/access-config.toml`. A wrong path or unknown permission stops startup (`load access config: …`). Without it the built-in roles apply but no group grants anything. |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | ConfigMap | Name used in `dev` mode without an `X-Dev-User` header. |
-| `ATTENDEE_OIDC_ISSUER_URL` | none | for attendee sign-in | ConfigMap | Issuer of the **attendee** realm, for example `https://auth.example.org/realms/attendees`. Must differ from `OIDC_ISSUER_URL`. Empty: the submission site only lists open calls. |
+| `ATTENDEE_OIDC_ISSUER_URL` | none | for attendee sign-in | ConfigMap | Issuer of the **attendee** realm, for example `https://auth.example.org/realms/attendees`. Must be another realm than `OIDC_ISSUER_URL`, compared without regard to case, default port or a trailing slash; the backend also refuses to start when both realms' discovery documents name the same issuer. Empty: the submission site only lists open calls. |
 | `ATTENDEE_OIDC_CLIENT_ID` | none | with the issuer | ConfigMap | Submission site client (`rally-submit`). |
+| `ATTENDEE_OIDC_AUDIENCE` | `events-public-api` | no | ConfigMap | The audience the submission site's access tokens must carry (an audience mapper on `rally-submit`). Must differ from `OIDC_AUDIENCE`. |
+
+**Staff and attendees never mix.** Staff tokens are accepted only on
+`/api/v1/...` and the role catalog, attendee tokens only on
+`/api/public/v1/...`. A token from the other realm is refused before
+anything else is checked, with `401` and a message saying which kind of
+account is needed. Attendee tokens never carry groups, so they can never
+grant a staff role. People are stored by issuer and subject, so the same
+subject in both realms is two different people.
 
 ## Den and branding
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces the host of a pasted Den pairing URL (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty when standalone. |
+| `DEN_INTERNAL_URL` | none | on Kubernetes | ConfigMap | Replaces scheme and host of a pasted Den pairing URL (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); the pasted host is then never contacted. |
+| `DEN_ALLOWED_HOSTS` | none | when `DEN_INTERNAL_URL` is empty | ConfigMap | Comma-separated hosts a pasted pairing URL may point at, for example `den.example.org` or `*.example.org`. Outside `APP_ENV=development` the URL must also use `https://`; in development `localhost`, `127.0.0.1`, `::1` and `*.conservices.test` are always allowed. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | **yes**, unless `APP_ENV=development` | **Secret** | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts the Den credential Rally stores in its database (AES-256-GCM). Without it outside development the backend stops with `DEN_LINK_ENCRYPTION_KEY is required unless APP_ENV=development`. A credential stored before the key was set is encrypted on the next read, so no re-pairing is needed. One key per module, never shared; see [Den link encryption key](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **Secret** | The old key during a [rotation](../../operations/secrets.md#den-link-encryption-key). |
 | `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | ConfigMap | Optional `brand.json` for standalone use; Den's brand replaces it once paired. |
+
+## Role catalog
+
+HR reads Rally's roles from [`GET /api/role-catalog`](api.md#get-apirole-catalog)
+to offer them in its access picker.
+
+| Name | Default | Required | Where | What it does |
+| --- | --- | --- | --- | --- |
+| `HR_SERVICE_TOKEN` | none | for HR's access picker | **Secret** | The token HR's backend sends to read the catalog; the same value as HR's `HR_SERVICE_TOKEN`, at least 32 characters (`openssl rand -hex 32`). It allows nothing but reading the catalog and is compared in constant time. Empty: only staff sign-ins can read the catalog, so HR cannot. See [Secrets](../../operations/secrets.md#inventory). |
 
 ## Public schedule
 
@@ -244,6 +295,99 @@ cache-control: no-store
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
 
+### Tokens and sessions
+
+Both web apps follow the platform's
+[token contract](../../concepts/authentication.md#tokens-the-10-contract):
+
+- They send the **access token** to the API, never the ID token. Its
+  audience must be `OIDC_AUDIENCE` (staff app) or `ATTENDEE_OIDC_AUDIENCE`
+  (submission site); see [Set up Rally](setup.md#2-prepare-keycloak) for
+  the audience mappers.
+- They keep tokens **in memory only**, never in `localStorage` or
+  `sessionStorage`. After a reload the app signs in again silently through
+  the Keycloak session (a hidden frame to Keycloak), so nobody types a
+  password; only when the Keycloak session has ended does the sign-in page
+  appear. Each tab holds its own tokens and follows the Keycloak session:
+  signing out in one tab or app signs out the others within seconds.
+- The submission site remembers only *that* the browser signed in before (a
+  `rally.oidc.signedIn` flag, not a token), so it does not contact Keycloak
+  for visitors who never had an account.
+
+## Web app security headers
+
+nginx in both web app images sends a Content Security Policy and the other
+browser security headers on every page (not on `/api/`, where the backend
+sets its own). The policy allows scripts, styles and fonts only from the app
+itself, connections to the app, the sign-in server and the S3 upload
+address, and images from that upload address. The image fills the origins
+in when the container starts, from these environment variables of the
+**web app** container (the shared template; empty leaves the origin out):
+
+| Name | Default | What it does |
+| --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | none | The sign-in server's origin (scheme and host, no path), for example `https://auth.example.org`. On the submission site: the attendee realm's server. The audience `events-public-api` is not an origin. Empty: allowed only with dev sign-in. |
+| `S3_ORIGIN` | none | The origin browsers upload attachments to, and may show images from: the scheme and host of the backend's `S3_PUBLIC_BASE_URL`, for example `https://s3.example.org`. Empty: uploads fail with a CSP error in the browser console. |
+| `DEN_ORIGIN` | none | Leave empty. Rally serves Den's brand from its own API. |
+| `EXTRA_CONNECT_SRC` | none | Anything else the browser must call. The chart's `frontend.cspConnectSrc` is this list. |
+| `EXTRA_FRAME_SRC` | none | Leave empty. Rally does not frame sandboxed HTML. |
+
+`/silent-callback.html` is the one exception on both web apps. A reload
+signs in again by loading that page in a hidden frame of the app itself,
+which `frame-ancestors 'none'` would block. That exact location uses the
+same policy with `frame-ancestors 'self'` and `X-Frame-Options:
+SAMEORIGIN`. Every other page stays unframeable. See
+[Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
+
+The Helm chart fills `KEYCLOAK_ORIGIN` from `config.OIDC_ISSUER_URL` (or
+`config.ATTENDEE_OIDC_ISSUER_URL` for the submission site) and `S3_ORIGIN`
+from `config.S3_PUBLIC_BASE_URL`, and mounts both snippets; see
+[Helm values](#helm-values). Check the result:
+
+```sh
+curl -sI https://events.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.example.org; font-src 'self' data:; connect-src 'self' https://auth.example.org https://s3.example.org; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+x-frame-options: DENY
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+**Troubleshooting**
+
+- **Sign-in hangs or the browser console shows `Refused to connect to
+  'https://auth…' because it violates the … Content Security Policy`**:
+  `KEYCLOAK_ORIGIN` is empty or wrong. On the submission site it must be
+  the attendee realm's server.
+- **Uploads fail with `Refused to connect to 'https://s3…'`**: set
+  `S3_ORIGIN` to the scheme and host of `S3_PUBLIC_BASE_URL`.
+- **The container logs `20-envsubst-on-templates.sh: ERROR: … is not
+  writable`**: the root file system is read-only and nothing mounted the
+  headers file; the image then uses its built-in copy without outside
+  origins. The Helm chart mounts its own files and switches this step off.
+- **A reload asks for the password again, and the console says framing
+  `/silent-callback.html` violated `frame-ancestors 'none'`**: that
+  location is still including `security-headers.conf`. It must include
+  `security-headers-frame-self.conf`. The image's nginx configs do; a
+  nginx file you mount yourself has to as well.
+
+Check the silent sign-in page on its own. `frame-ancestors` is `'self'`
+and `X-Frame-Options` is `SAMEORIGIN`. The home page still says `'none'`
+and `DENY`. On the submission site, use that host and the attendee realm's
+server in `KEYCLOAK_ORIGIN`.
+
+```sh
+curl -sI https://submit.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: … frame-src 'self' https://auth.example.org; frame-ancestors 'self'; …
+x-frame-options: SAMEORIGIN
+```
+
 ## Frontend build settings
 
 Docker build arguments of `infra/Dockerfile.frontend`. None of them is
@@ -253,7 +397,7 @@ installation-specific; the sign-in settings live in `/config.json` (above).
 | --- | --- | --- |
 | `RALLY_APP` | `staff` | `staff` builds the staff app (`rally-frontend`), `submit` the public submission site (`rally-submit`). |
 | `RALLY_VERSION` | `dev` | Version shown in the app. |
-| `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config. The Helm chart (and the Kustomize manifests) mount their own. |
+| `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config (`nginx.conf`, `nginx.stack.conf` or `nginx.k8s.conf`). The Helm chart mounts its own. Every one includes the security-header snippets, and `location = /silent-callback.html` includes the frame-self snippet ([Web app security headers](#web-app-security-headers)). |
 
 ```sh
 docker build -f infra/Dockerfile.frontend \
@@ -275,7 +419,8 @@ maps these settings as follows:
 | Values key | Becomes |
 | --- | --- |
 | `config.*` | ConfigMap `<release>-config`, loaded into the backend with `envFrom`. Every non-secret variable above. |
-| `existingSecret` (default `rally-secrets`) | Loaded with `envFrom`; must hold `DATABASE_URL` and the S3 keys, optionally `TELEGRAM_BOT_TOKEN`. The chart never creates it. |
+| `existingSecret` (default `rally-secrets`) | Loaded with `envFrom`; must hold `DATABASE_URL`, `DEN_LINK_ENCRYPTION_KEY` and the S3 keys, optionally `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` and, during a rotation, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`. The chart never creates it. |
+| `frontend.cspConnectSrc` (default `[]`) | Extra origins added to the web apps' `connect-src` only, for example an attendee identity provider whose token endpoint lives on another host. The sign-in server (staff realm, or the attendee realm on the submission site) and the S3 origin are derived from `config`. Images from that S3 origin are allowed. `frame-src` stays the app and the sign-in server ([Web app security headers](#web-app-security-headers)). |
 | `accessConfig.existingConfigMap` (default `rally-access-config`) | Mounted at `accessConfig.mountPath` (`/etc/rally`); `ACCESS_CONFIG_PATH` is set to it. |
 | `image.backend`, `image.migrate`, `image.frontend` | Images; `tag` is required. |
 | `submit.enabled`, `submit.image`, `submit.host` | Optional submission site Deployment, Service, and the host of its HTTPRoute (or Ingress). `submit.image.repository` defaults to `ghcr.io/aglelectronics/rally-submit`, an empty `submit.image.tag` to `image.frontend.tag`. |

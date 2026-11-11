@@ -36,8 +36,28 @@ next request; removing someone from the group removes the role.
 
 **Changing the roles:** edit `access-config.toml` (in the platform: the
 `rally-access-config` ConfigMap) and restart the backend. Group names are
-compared without case and without Keycloak's leading `/`. A permission
-name Rally does not know stops it from starting, with the error in the log.
+compared with the platform's shared rule: without case, without Keycloak's
+leading `/`, by default as whole paths (`/departments/events` is not the
+same as `/teams/events`), and only from the token's `groups` claim, never
+from realm roles. The operator can change the claim, compare only the last
+path segment or remove a parent group such as `/con2026`
+(`OIDC_GROUPS_CLAIM`, `OIDC_GROUP_MATCH`, `OIDC_GROUP_PREFIX`; see
+[How groups are matched](../../concepts/authentication.md#how-groups-are-matched)).
+A permission name Rally does not know stops it from starting, with the
+error in the log.
+
+**Privileged roles in HR.** HR asks for confirmation before it assigns a
+*privileged* role and lists those roles separately on the person. In Rally
+every role that can change settings, grant access or read other people's
+submissions is privileged, reviewers included. To change that for a role,
+set `privileged = true` or `false` under it in `access-config.toml`:
+
+```toml
+[roles.reviewer]
+description = "Reads, comments on and scores submissions; the lead decides."
+permissions = ["org.view", "edition.view", "submission.review"]
+privileged = true
+```
 
 ```sh
 kubectl create configmap rally-access-config -n conservices-rally \
@@ -184,11 +204,19 @@ URL from Den. Once paired, Rally uses Den's brand and organisation name,
 and Den's `events_public_schedule` setting decides the public schedule.
 See [Pairing](../../concepts/pairing.md).
 
+If Den rejects Rally's credential (the module was removed or re-registered
+in Den), admins see **Den rejected this module's credential: pair again** at
+the top of every page, and the Den connection panel asks for a new pairing
+URL. Rally keeps Den's last brand and settings until then. Create a new
+pairing URL in Den (**Admin → Modules → Pair**) and paste it.
+
 ## Troubleshooting
 
 **A staff member sees no edition.** None of their groups is bound in the
 access configuration, or the binding's organisation slug does not exist.
-Have them open `/api/v1/me`: `memberships` must not be empty.
+Have them open `/api/v1/me`: `memberships` must not be empty. A role that
+only exists as a Keycloak *realm role* (in the `roles` claim) grants
+nothing; put the person into the group instead.
 
 **"Edition not found" for someone who clearly has a role.** Draft
 schedules, rooms and event types are only shown to programme and CfP staff;

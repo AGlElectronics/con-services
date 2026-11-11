@@ -30,6 +30,19 @@ metadata:
 data:
   default.conf: |
     {{- include "rally.nginx" . | nindent 4 }}
+  # Mounted at /etc/nginx/snippets/ of each web app. The frame-self files are
+  # only for /silent-callback.html. The submission site's sign-in origin is
+  # the attendee realm (ATTENDEE_OIDC_ISSUER_URL).
+  security-headers-frontend.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "frontend") | nindent 4 }}
+  security-headers-frame-self-frontend.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "frontend" "frameSelf" true) | nindent 4 }}
+  {{- if .Values.submit.enabled }}
+  security-headers-submit.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "submit") | nindent 4 }}
+  security-headers-frame-self-submit.conf: |
+    {{- include "rally.securityHeaders" (dict "root" . "app" "submit" "frameSelf" true) | nindent 4 }}
+  {{- end }}
   {{- if $tls }}
   # Started by the nginx image's entrypoint. nginx reads its certificate
   # only at start and on reload; reload every six hours to pick up a

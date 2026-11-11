@@ -770,12 +770,17 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: events-spa
-      OIDC_AUDIENCE: events-spa
-      # DEV ONLY. The token HR sends to read this module's role catalog.
-      HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      # Rally takes access tokens with these audiences only (token contract);
+      # Keycloak adds them with an audience mapper on events-spa and
+      # rally-submit (see docs/modules/rally/setup.md, step 2).
+      OIDC_AUDIENCE: events-api
       # Public submission site: attendees sign in through their own realm.
       ATTENDEE_OIDC_ISSUER_URL: https://auth.conservices.test/realms/attendees
       ATTENDEE_OIDC_CLIENT_ID: rally-submit
+      ATTENDEE_OIDC_AUDIENCE: events-public-api
+      # DEV ONLY (public value): lets HR read GET /api/role-catalog; HR must
+      # send the same value once it adopts the role catalog contract.
+      HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
       # Standalone default; Den's "events_public_schedule" setting wins once paired.
       PUBLIC_SCHEDULE_ENABLED: "true"
       # The public schedule API requires a key. This is the builtin
@@ -808,6 +813,10 @@ services:
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/rally.json:/etc/conservices/config.json:ro
+    environment:
+      # Allowed by the web app's Content-Security-Policy besides itself.
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
+      S3_ORIGIN: https://s3.conservices.test
     restart: unless-stopped
     depends_on:
       - events-backend
@@ -834,6 +843,9 @@ services:
       # Web app settings (/config.json). publicScheduleKey must match
       # events-backend's PUBLIC_API_BUILTIN_KEY.
       - ./infra/frontend-config/rally-submit.json:/etc/conservices/config.json:ro
+    environment:
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
+      S3_ORIGIN: https://s3.conservices.test
     restart: unless-stopped
     depends_on:
       - events-backend
