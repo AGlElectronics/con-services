@@ -77,9 +77,110 @@ the bucket on first start if it does not exist and the keys allow it.
 | `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Issuer of staff tokens, for example `https://auth.example.org/realms/conservices`. Must match the tokens' `iss` exactly. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | ConfigMap | Keycloak client of the web app (`stash-spa` on the platform). |
 | `OIDC_AUDIENCE` | none | no | ConfigMap | Expected token audience if it differs from the client id. |
-| `ACCESS_CONFIG_PATH` | none | with `oidc` | ConfigMap | Path to the access config TOML file (roles, permissions, group bindings), for example `/etc/stash/access-config.toml`. The file itself is mounted from a ConfigMap. See [Admin guide](admin-guide.md#who-can-do-what). |
+| `ACCESS_CONFIG_PATH` | none | with `oidc` | ConfigMap | Path to the access config TOML file (roles, permissions, group bindings), for example `/etc/stash/access-config.toml`. The file itself is mounted from a ConfigMap. See [The access config file](#the-access-config-file). |
 | `OIDC_BINDINGS_PATH` | none | no | ConfigMap | Old name of `ACCESS_CONFIG_PATH`, still read when the new name is not set. |
-| `DEV_DEFAULT_USER` | `dev-admin` | no | ConfigMap | User assumed in `dev` mode when no `X-Dev-User` header is sent. |
+| `DEV_DEFAULT_USER` | `dev-admin` | no | ConfigMap | User assumed in `dev` mode when no `X-Dev-User` header is sent. A plain name (`dev-admin`) is an admin; `name:role` or `name:role1,role2` (for example `bob:volunteer`) signs in with only those roles. The same syntax works in the `X-Dev-User` header. An unknown role answers `403 unknown dev role`. |
+
+## Background jobs and notifications
+
+One replica of the backend runs the background jobs: it holds a PostgreSQL
+advisory lock and logs `jobs: this replica is the leader`. If it stops,
+another replica takes over within 30 seconds. The jobs are:
+
+| Job | How often | What it does |
+| --- | --- | --- |
+| Lost & Found retention | hourly | Deletes reports whose retention has passed, with their photos and Telegram link (see [Retention](admin-guide.md#lost--found-retention)). |
+| Anonymise inactive people | every 6 hours | Only when the setting *Anonymise staff who have not signed in for* is above 0. |
+| Overdue reminders | hourly | Emails overdue sign-outs once a day, when overdue emails are on. |
+| Telegram bot | continuously | Long-polls Telegram for `/start` and `/stop` messages while the bot is on. |
+
+| Name | Default | Required | Where | What it does |
+| --- | --- | --- | --- | --- |
+| `JOBS_ENABLED` | `true` | no | ConfigMap | `false` keeps this replica out of the leader election. Only for debugging; with every replica at `false` nothing is ever deleted or sent. |
+| `TELEGRAM_BOT_TOKEN` | none | no | **Secret** | Token of Stash's own Telegram bot, from [@BotFather](https://t.me/BotFather) (looks like `123456789:AA…`). Empty means no Telegram, whatever the setting says. The backend then needs egress to `api.telegram.org:443` ([network policies](../../operations/network-policies.md)). |
+| `TELEGRAM_API_URL` | `https://api.telegram.org` | no | ConfigMap | Bot API server. Change it only for a self-hosted Bot API server or tests. |
+| `SMTP_PASSWORD` | none | no | **Secret** | Password for the SMTP server set in Stash's settings (or Den's). Empty logs in without a password, which suits a local relay or the dev stack's mailpit. |
+
+The SMTP server itself (host, port, user, sender, TLS mode) is not an
+environment variable but a setting, so an admin can change it without a
+restart: see [Settings](admin-guide.md#settings).
+
+## Settings that Den can manage
+
+Some of Stash's settings can come from Den, so one person sets them for all
+modules. While Stash is paired, Den's organisation settings (Den → Admin →
+Organisation) override these keys, and Stash shows them read-only with
+*Managed in Den*. Unpaired, or when Den does not set a key, Stash's own
+value applies.
+
+| Den organisation setting | Stash setting | Example |
+| --- | --- | --- |
+| `organization_name` | `organization_name` | `"Example Con"` |
+| `stash_con_end_date` | `con_end_date` | `"2026-08-16"` |
+| `stash_lostfound_retention_mode` | `lostfound_retention_mode` | `"after_con"` or `"after_close"` or `"off"` |
+| `stash_lostfound_retention_days` | `lostfound_retention_days` | `30` |
+| `stash_lostfound_retention_hours` | `lostfound_retention_hours` | `720` |
+| `stash_smtp_host` | `smtp_host` | `"smtp.example.org"` |
+| `stash_smtp_port` | `smtp_port` | `587` |
+| `stash_smtp_username` | `smtp_username` | `"stash@example.org"` |
+| `stash_smtp_from` | `smtp_from` | `"Stash <stash@example.org>"` |
+| `stash_smtp_tls` | `smtp_tls` | `"starttls"`, `"tls"` or `"none"` |
+
+A value Stash does not accept (for example `"stash_smtp_port": "abc"`) is
+ignored and Stash keeps its own. The SMTP password never comes from Den; it
+is always `SMTP_PASSWORD`.
+
+## The access config file
+
+`access-config.toml` says which permissions each role has and which
+Keycloak groups give which role. The backend reads it once at start;
+restart it after a change. The shipped file is
+[`infra/access-config.toml`](https://github.com/AGlElectronics/stash/blob/main/infra/access-config.toml).
+
+**Roles are global.** A role applies to every department: a department lead
+handles every department's gear. A binding with `department_id` stops the
+backend at start with `department_id is not supported; roles are global,
+remove the line`.
+
+A person gets a role in two ways:
+
+1. a `[[bindings]]` entry maps one of their groups to the role, or
+2. they are in a group named exactly like the role's key, `stash_<role>`
+   (for example `stash_volunteer`), with no binding needed.
+
+Group names are compared exactly (case and a leading `/` matter).
+
+```toml
+# Listing a role replaces its built-in permissions completely.
+[roles.volunteer]
+description = "Look up items, run sign-outs and ask for gear."
+permissions = ["item.view", "signout.view", "signout.create", "signout.return", "request.create"]
+
+[[bindings]]
+group = "stash-admin"
+role = "admin"
+```
+
+`GET /api/role-catalog` lists every role once with key `stash_<role>`, scope
+`global`, its permissions and the group HR adds people to: the first group
+bound to the role, otherwise the key itself.
+
+| Permission | Allows |
+| --- | --- |
+| `item.view` | See items, departments, categories, locations, purchases |
+| `item.create`, `item.edit` | Add and change items (also by CSV import) |
+| `item.retire`, `item.move`, `item.adjust`, `item.damage`, `item.lose` | The item actions of the same names; `item.adjust` also records purchases |
+| `signout.view` | See sign-outs and packing lists; overdue notices |
+| `signout.create`, `signout.confirm`, `signout.return`, `signout.cancel`, `signout.close` | The sign-out steps; `signout.create` also edits packing lists |
+| `department.manage`, `location.manage`, `category.manage` | Create, rename and delete reference data (also by typing a new name in the item form) |
+| `user.manage` | See people and anonymise them |
+| `access.manage` | Settings and the Den connection |
+| `audit.view` | The audit log (guest data hidden without `lostfound.view`) |
+| `export.create` | CSV exports and reports |
+| `file.upload` | Upload and delete photos and documents |
+| `lostfound.view`, `lostfound.create`, `lostfound.edit`, `lostfound.resolve`, `lostfound.reopen`, `lostfound.delete` | Lost & Found |
+| `lostfound.notify` | Message a guest on Telegram |
+| `request.create`, `request.manage` | Ask for gear; decide requests |
 
 ## Den and guest features
 
@@ -93,7 +194,7 @@ the bucket on first start if it does not exist and the keys allow it.
 
 | Name | Where | What it does |
 | --- | --- | --- |
-| `STASH_ACCESS_CONFIG` | `.env` for Compose only | Host path of the access config file mounted by `infra/docker-compose.local.yml`. Not read by Stash itself. |
+| `STASH_ACCESS_CONFIG` | `.env` for Compose only | Host path of the access config file mounted by `infra/docker-compose.local.yml` (default `./access-config.toml`). Not read by Stash itself. |
 
 ## Web app settings (config.json)
 
@@ -237,7 +338,8 @@ The chart in `deploy/charts/stash` maps its values onto the variables above:
 | Value | Becomes |
 | --- | --- |
 | `config.*` | One entry each in the ConfigMap `<release>-config`. |
-| `existingSecret` | Name of the Secret loaded with `envFrom` (`DATABASE_URL`, `S3_*` keys). |
+| `existingSecret` | Name of the Secret loaded with `envFrom` (`DATABASE_URL`, `S3_*` keys, and optionally `TELEGRAM_BOT_TOKEN` and `SMTP_PASSWORD`). |
+| `networkPolicy.telegramEgress` (default `false`), `networkPolicy.smtpEgress` (default `false`, ports `[587, 465]`) | Let the backend reach `api.telegram.org` and your SMTP server on port 443 / the SMTP ports. Turn them on with the Telegram bot and overdue emails. |
 | `accessConfig.existingConfigMap`, `mountPath`, `fileName` | The mounted access config and `ACCESS_CONFIG_PATH`. |
 | `backend.extraEnv`, `extraVolumes`, `extraVolumeMounts` | Extra settings, for example another CA volume (then set `SSL_CERT_DIR` in `config:` to both folders, separated by `:`). |
 | `image.*.tag` | `MAJOR.MINOR.PATCH-BUILD`; required. |

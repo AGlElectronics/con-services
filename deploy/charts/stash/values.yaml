@@ -23,7 +23,8 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY. This chart never creates Secrets.
+# S3_SECRET_ACCESS_KEY and, optionally, TELEGRAM_BOT_TOKEN (Lost & Found
+# bot) and SMTP_PASSWORD (overdue emails). This chart never creates Secrets.
 existingSecret: stash-secrets
 
 # Stash's access config (roles, permissions, OIDC group bindings).
@@ -246,6 +247,34 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
+  # Lost & Found Telegram bot (TELEGRAM_BOT_TOKEN): the backend long-polls
+  # https://api.telegram.org. Cilium (gateway.cilium: true): a toFQDNs rule
+  # in the CiliumNetworkPolicy "stash-backend-external". Other CNIs: ipBlock
+  # rules for cidrs, Telegram's published ranges
+  # (https://core.telegram.org/resources/cidr.txt; check them when you
+  # upgrade). Harmless without a token: the backend then never calls out.
+  telegram:
+    enabled: true
+    fqdns: ["api.telegram.org"]
+    cidrs:
+      - 91.108.4.0/22
+      - 91.108.8.0/22
+      - 91.108.12.0/22
+      - 91.108.16.0/22
+      - 91.108.20.0/22
+      - 91.108.56.0/22
+      - 149.154.160.0/20
+      - 185.76.151.0/24
+      - 91.105.192.0/23
+    port: 443
+  # SMTP server for overdue-return emails (host set in Stash's settings or
+  # Den's). Off by default; turn on and name the host (Cilium) or its
+  # addresses (other CNIs).
+  smtp:
+    enabled: false
+    fqdns: []  # e.g. ["smtp.example.org"]
+    cidrs: []  # e.g. ["203.0.113.25/32"]
+    ports: [587, 465]
   # Other module backends allowed to call Stash's backend (HR reads
   # GET /api/role-catalog).
   allowFromNamespaces:

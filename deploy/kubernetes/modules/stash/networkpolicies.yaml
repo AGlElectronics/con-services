@@ -5,6 +5,8 @@
 #   stash-backend      -> postgres:5432, s3:9000, den-backend:8080,
 #                         keycloak:8443 (OIDC: auth.<domain> resolves to
 #                         keycloak-public in conservices-identity)
+#   stash-backend      -> api.telegram.org:443 (Lost & Found bot;
+#                         CiliumNetworkPolicy at the end)
 #   everything         -> DNS
 # Every connection except DNS uses TLS (internal CA, base/pki).
 # No other module may reach Stash, and Stash may reach no other module.
@@ -152,3 +154,36 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+---
+# The Lost & Found Telegram bot long-polls https://api.telegram.org. Host
+# names need Cilium's toFQDNs (with a DNS rule so Cilium sees the lookups).
+# Harmless without TELEGRAM_BOT_TOKEN: the backend then never calls out.
+# Other CNIs: delete this object and allow Telegram's ranges
+# (https://core.telegram.org/resources/cidr.txt) on 443 in stash-backend.
+# For overdue emails, add your SMTP host here the same way (ports 587/465).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: stash-backend-external
+  namespace: conservices-stash
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: stash
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: "api.telegram.org"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

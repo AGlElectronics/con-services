@@ -113,6 +113,8 @@ belong to which.
 | module backend | `postgres` | 5432 | Kustomize | The module's own database. |
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
+| `stash-backend` | `api.telegram.org` (internet) | 443 | both (Kustomize: CiliumNetworkPolicy `stash-backend-external`; Helm: `networkPolicy.telegram`, default on) | The Lost & Found Telegram bot long-polls for guests' `/start` and `/stop` messages and sends notifications. Cilium: `toFQDNs`; other CNIs (Helm, `gateway.cilium: false`): `ipBlock` rules for Telegram's published ranges. Nothing is sent without `TELEGRAM_BOT_TOKEN`. |
+| `stash-backend` | your SMTP server | 587, 465 | Helm (`networkPolicy.smtp`, default off); Kustomize: add the host to `stash-backend-external` | Overdue-return emails. |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the

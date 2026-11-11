@@ -111,8 +111,72 @@ spec:
     {{- with (include "stash.oidcEgress" . | trim) }}
     {{- . | nindent 4 }}
     {{- end }}
+    {{- $cilium := ($np.gateway | default dict).cilium }}
+    {{- range $svc := list ($np.telegram | default dict) ($np.smtp | default dict) }}
+    {{- if and $svc.enabled (not $cilium) $svc.cidrs }}
+    # External service by address range ({{ if $svc.port }}Telegram{{ else }}SMTP{{ end }}).
+    - to:
+        {{- range $svc.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range (ternary (list $svc.port) $svc.ports (hasKey $svc "port")) }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+    {{- end }}
+    {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- include "stash.externalS3Policy" (dict "root" . "components" (list "backend")) }}
+{{- $tg := $np.telegram | default dict }}
+{{- $smtp := $np.smtp | default dict }}
+{{- if and ($np.gateway | default dict).cilium (or (and $tg.enabled $tg.fqdns) (and $smtp.enabled $smtp.fqdns)) }}
+---
+# Telegram Bot API and the SMTP server by host name (Cilium toFQDNs).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: stash-backend-external
+  namespace: {{ $ns }}
+  labels:
+    {{- include "stash.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: stash
+      app.kubernetes.io/component: backend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              - matchPattern: "*"
+    {{- if and $tg.enabled $tg.fqdns }}
+    - toFQDNs:
+        {{- range $tg.fqdns }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - { port: {{ $tg.port | default 443 | quote }}, protocol: TCP }
+    {{- end }}
+    {{- if and $smtp.enabled $smtp.fqdns }}
+    - toFQDNs:
+        {{- range $smtp.fqdns }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- range $smtp.ports }}
+            - { port: {{ . | quote }}, protocol: TCP }
+            {{- end }}
+    {{- end }}
+{{- end }}
 {{- end }}

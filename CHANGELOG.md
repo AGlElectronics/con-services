@@ -18,6 +18,17 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Stash on Kubernetes (Kustomize): the CiliumNetworkPolicy
+  `stash-backend-external` lets `stash-backend` reach `api.telegram.org` on
+  443 for Stash's Lost & Found Telegram bot; nothing is sent without
+  `TELEGRAM_BOT_TOKEN`. The example overlay's `stash-secrets` has the
+  optional keys `TELEGRAM_BOT_TOKEN` and `SMTP_PASSWORD` (empty, dev only).
+  See [Network policies](docs/operations/network-policies.md#every-allowed-flow)
+  and [Secrets](docs/operations/secrets.md#inventory).
+- Docker Compose: `stash-backend` reads `STASH_TELEGRAM_BOT_TOKEN` and
+  `STASH_SMTP_PASSWORD` from `.env` (both optional) and runs its background
+  jobs (`JOBS_ENABLED=true`). For overdue emails in development, point
+  Stash's SMTP settings at `mailpit:1025` with security `none`.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →

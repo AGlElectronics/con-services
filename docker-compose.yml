@@ -259,6 +259,13 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:3000,https://stash.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
+      JOBS_ENABLED: "true"
+      # Optional Lost & Found Telegram bot (dev: your own test bot from
+      # @BotFather); also turn it on in Stash's Settings.
+      TELEGRAM_BOT_TOKEN: ${STASH_TELEGRAM_BOT_TOKEN:-}
+      # Overdue emails: in Stash's Settings use host mailpit, port 1025,
+      # security "none"; mailpit needs no password (UI on localhost:8025).
+      SMTP_PASSWORD: ${STASH_SMTP_PASSWORD:-}
     volumes:
       - ./stash/infra/access-config.toml:/etc/stash/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
