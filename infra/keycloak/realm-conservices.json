@@ -40,6 +40,8 @@
     { "name": "den-member", "path": "/den-member" },
     { "name": "events-admin", "path": "/events-admin" },
     { "name": "hr-admin", "path": "/hr-admin" },
+    { "name": "hr-viewer", "path": "/hr-viewer" },
+    { "name": "hr-lead", "path": "/hr-lead" },
     { "name": "learn-admin", "path": "/learn-admin" },
     { "name": "learn-trainer", "path": "/learn-trainer" },
     { "name": "learn-coordinator", "path": "/learn-coordinator" },

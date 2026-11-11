@@ -374,6 +374,12 @@ services:
       # Modules told when a department is created or renamed (same format).
       # Tasks keeps one space per department (TASK-25).
       DEPARTMENT_HOOKS: http://tasks-backend:8080/api/internal/departments|tasks-service-dev-token
+      # Lets the wiki list departments and access groups (dev-only token).
+      HR_DIRECTORY_TOKEN: hr-directory-dev-token
+      # IdP groups for HR's roles (the defaults, spelled out).
+      HR_ADMIN_GROUPS: hr-admin
+      HR_VIEWER_GROUPS: hr-viewer
+      HR_LEAD_GROUPS: hr-lead
       CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
@@ -1167,6 +1173,10 @@ services:
       # internal API off. Matches OFFBOARD_HOOKS on hr-backend.
       WIKI_SERVICE_TOKEN: wiki-service-dev-token
       WIKI_OFFBOARD_GRACE_DAYS: "30"
+      # Share dialog: HR's departments and access groups while paired with
+      # Den. Dev-only token; matches HR_DIRECTORY_TOKEN on hr-backend.
+      HR_DIRECTORY_URL: http://hr-backend:8080
+      HR_DIRECTORY_TOKEN: hr-directory-dev-token
     volumes:
       - ./wiki/infra/access-config.toml:/etc/wiki/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro

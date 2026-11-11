@@ -18,6 +18,12 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Development: the `conservices` realm has the groups `hr-viewer` (read-only
+  HR) and `hr-lead` (department leads) next to `hr-admin`, and
+  `docker-compose.yml` lets the wiki list HR's departments and access groups
+  (`HR_DIRECTORY_URL`, and `HR_DIRECTORY_TOKEN` on both backends with the
+  dev-only value `hr-directory-dev-token`). An existing dev stack picks up
+  the new groups only after the realm is re-imported.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
