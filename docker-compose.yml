@@ -431,6 +431,8 @@ services:
         condition: service_healthy
       proxy-ca:
         condition: service_completed_successfully
+      s3:
+        condition: service_healthy
     environment:
       APP_ENV: development
       APP_BASE_URL: https://finance.conservices.test
@@ -450,7 +452,21 @@ services:
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: finance-spa
       OIDC_AUDIENCE: finance-spa
-      FINANCE_ACCESS_GROUPS: finance-admin
+      # Keycloak groups of the four Finance roles (realm-conservices.json).
+      FINANCE_ADMIN_GROUPS: finance_admin
+      FINANCE_APPROVER_GROUPS: finance_approver
+      FINANCE_BOOKKEEPER_GROUPS: finance_bookkeeper
+      FINANCE_READONLY_GROUPS: finance_read-only
+      # 0: every void, payment, expense, credit note and refund needs a
+      # second person. Raise it in .env to try things alone.
+      FINANCE_APPROVAL_THRESHOLD_CENTS: ${FINANCE_APPROVAL_THRESHOLD_CENTS:-0}
+      # Invoice and credit note PDFs. DEV ONLY key of the s3 service.
+      S3_ENDPOINT: http://s3:9000
+      S3_BUCKET: finance-data-dev
+      S3_ACCESS_KEY_ID: conservices
+      S3_SECRET_ACCESS_KEY: conservicesdev
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
       CORS_ALLOWED_ORIGINS: http://localhost:3006,https://finance.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
@@ -581,7 +597,7 @@ services:
       FILES_S3_ENDPOINT: http://s3:9000
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
-      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
+      FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev,finance-data-dev
 
   den-frontend:
     profiles: ["den"]
