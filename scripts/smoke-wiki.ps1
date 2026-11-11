@@ -12,9 +12,10 @@ $wiki = 'http://localhost:8140'
 # Live editing goes through the frontend nginx to exercise its websocket proxying.
 $liveBase = 'ws://localhost:3007'
 
-function Get-IdToken($user, $pass) {
+function Get-AccessToken($user, $pass) {
   $body = @{ grant_type = 'password'; client_id = 'wiki-spa'; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  # Token contract: Wiki's API takes access tokens (audience wiki-api), not ID tokens.
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 
 $adminTok = (Invoke-RestMethod -Method Post -Uri "$kcBase/realms/master/protocol/openid-connect/token" -Body @{
@@ -134,9 +135,9 @@ $editorUid = Ensure-SmokeUser 'smoke-wiki-editor' 'smoke-wiki-editor-pass' 'wiki
 $readerUid = Ensure-SmokeUser 'smoke-wiki-reader' 'smoke-wiki-reader-pass' $null
 $space = $null
 try {
-  $editor = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
-  $reader = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
-  $admin = @{ Authorization = "Bearer $(Get-IdToken 'admin' 'adminadmin')" }
+  $editor = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
+  $reader = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
+  $admin = @{ Authorization = "Bearer $(Get-AccessToken 'admin' 'adminadmin')" }
 
   $me = Call $editor 'Get' '/api/v1/me'
   if ($me.permissions -notcontains 'space.create') { throw 'smoke-wiki-editor is missing space.create (wiki-editor group not mapped?)' }
@@ -172,6 +173,7 @@ try {
   $readerId = $readerMe.id
   $people = (Call $editor 'Get' '/api/v1/users?q=smoke-wiki-reader').people
   if (-not ($people | Where-Object { $_.id -eq $readerId })) { throw 'reader not found in people search' }
+  if ($people | Where-Object { $_.email }) { throw 'a non-admin sees email addresses in the people picker' }
   Call $editor 'Put' "/api/v1/pages/$($secret.id)/grants" @{ principal_kind = 'user'; principal = $readerId; level = 'view' } | Out-Null
   $shared = (Call $reader 'Get' '/api/v1/spaces').shared
   if (-not ($shared | Where-Object { $_.id -eq $secret.id })) { throw 'Secret missing from the reader''s shared list' }
@@ -227,9 +229,9 @@ try {
   Write-Host 'live edits survive a restart: OK'
 
   # Refresh tokens: the restart check above can outlive short token lives.
-  $editor = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
-  $reader = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
-  $admin = @{ Authorization = "Bearer $(Get-IdToken 'admin' 'adminadmin')" }
+  $editor = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
+  $reader = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
+  $admin = @{ Authorization = "Bearer $(Get-AccessToken 'admin' 'adminadmin')" }
 
   # Uploads ride on page access: the editor uploads, the reader downloads
   # a shared page's file, and no access reads as 404.
@@ -246,10 +248,22 @@ try {
       $res.Content.ReadAsStringAsync().Result | ConvertFrom-Json
     } finally { $client.Dispose() }
   }
-  $file = Upload-File $editor $secret.id 'smoke.png' 'image/png' ([Text.Encoding]::UTF8.GetBytes("png-$stamp"))
-  $bytes = Invoke-RestMethod -Uri "$wiki$($file.url)" -Headers $reader
-  if ("$bytes" -ne "png-$stamp") { throw 'the reader downloaded different bytes' }
-  Write-Host 'file upload and access-checked download: OK'
+  $png = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + [Text.Encoding]::UTF8.GetBytes("png-$stamp")
+  $file = Upload-File $editor $secret.id 'smoke.png' 'image/png' $png
+  $res = Invoke-WebRequest -UseBasicParsing -Uri "$wiki$($file.url)" -Headers $reader
+  if ([Convert]::ToBase64String($res.Content) -ne [Convert]::ToBase64String($png)) { throw 'the reader downloaded different bytes' }
+  if ($res.Headers['Content-Disposition'] -notlike 'inline*' -or $res.Headers['Content-Security-Policy'] -ne 'sandbox') {
+    throw "a PNG should open inline in a sandbox: $($res.Headers['Content-Disposition']) / $($res.Headers['Content-Security-Policy'])"
+  }
+  # Active content never renders on the wiki's address.
+  $svg = Upload-File $editor $secret.id 'smoke.svg' 'image/svg+xml' ([Text.Encoding]::UTF8.GetBytes('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'))
+  $res = Invoke-WebRequest -UseBasicParsing -Uri "$wiki$($svg.url)" -Headers $reader
+  if ($res.Headers['Content-Disposition'] -notlike 'attachment*' -or $res.Headers['Content-Security-Policy'] -ne 'sandbox' -or $res.Headers['X-Content-Type-Options'] -ne 'nosniff') {
+    throw 'an SVG must download as a sandboxed attachment'
+  }
+  $fake = Upload-File $editor $secret.id 'fake.png' 'image/png' ([Text.Encoding]::UTF8.GetBytes('<html><script>alert(1)</script></html>'))
+  if ($fake.content_type -ne 'application/octet-stream') { throw "HTML claiming to be a PNG was stored as $($fake.content_type)" }
+  Write-Host 'file upload, access-checked download, sandboxed active content: OK'
 
   # Search finds by title, filtered by access.
   $needle = "pumpkin$stamp"
@@ -260,16 +274,22 @@ try {
   if ($readerHits.Count -ne 0) { throw 'search leaked a private page to the reader' }
   Write-Host 'search with access filtering: OK'
 
-  # Comments: the comment level writes, view only reads.
+  # Comments: editors anchor threads to text, the comment level starts
+  # page-level discussions and replies, view only reads.
   $body = @{ body = @(@{ type = 'paragraph'; content = 'does this look right?' }) }
   $thread = Call $editor 'Post' "/api/v1/pages/$($secret.id)/threads" $body
+  if (-not $thread.anchored) { throw 'an editor''s thread should be anchored' }
   Expect-Status 403 $reader 'Post' "/api/v1/threads/$($thread.id)/comments" $body 'view-only reader replies'
   Call $editor 'Put' "/api/v1/pages/$($secret.id)/grants" @{ principal_kind = 'user'; principal = $readerId; level = 'comment' } | Out-Null
   Call $reader 'Post' "/api/v1/threads/$($thread.id)/comments" @{ body = @(@{ type = 'paragraph'; content = 'yes' }) } | Out-Null
   $resolved = Call $reader 'Post' "/api/v1/threads/$($thread.id)/resolve" $null
   if (-not $resolved.resolved) { throw 'the thread should be resolved' }
+  Expect-Status 403 $reader 'Post' "/api/v1/pages/$($secret.id)/threads" $body 'comment level anchors a thread to text'
+  $discussion = Call $reader 'Post' "/api/v1/pages/$($secret.id)/threads" @{ body = $body.body; anchored = $false }
+  if ($discussion.anchored) { throw 'a page-level discussion should not be anchored' }
   Call $editor 'Delete' "/api/v1/threads/$($thread.id)" $null | Out-Null
-  Write-Host 'comments (threads, comment level, resolve): OK'
+  Call $editor 'Delete' "/api/v1/threads/$($discussion.id)" $null | Out-Null
+  Write-Host 'comments (inline for editors, page discussions for comment level, resolve): OK'
 
   # Duplicate (templates machinery): the copy carries the content.
   $copy = (Call $editor 'Post' "/api/v1/pages/$($secret.id)/duplicate" @{}).page
@@ -310,14 +330,14 @@ try {
   # exports what matters and may delete it right away.
   $victimUid = Ensure-SmokeUser 'smoke-wiki-victim' 'smoke-wiki-victim-pass' $null
   try {
-    $victim = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-victim' 'smoke-wiki-victim-pass')" }
+    $victim = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-victim' 'smoke-wiki-victim-pass')" }
     $victimPrivate = (Call $victim 'Get' '/api/v1/spaces').spaces | Where-Object kind -eq 'private'
     Call $victim 'Post' "/api/v1/spaces/$($victimPrivate.id)/pages" @{ title = 'Leaving notes' } | Out-Null
     Expect-Status 404 $admin 'Get' "/api/v1/spaces/$($victimPrivate.id)" $null 'admin reads a live private space'
     $hookToken = 'wiki-service-dev-token'
     Invoke-RestMethod -Method Post -Uri "$wiki/api/internal/offboarded" `
       -Headers @{ Authorization = "Bearer $hookToken" } -ContentType 'application/json' `
-      -Body (@{ subject = $victimUid; username = 'smoke-wiki-victim' } | ConvertTo-Json) | Out-Null
+      -Body (@{ issuer = 'https://auth.conservices.test/realms/conservices'; subject = $victimUid; username = 'smoke-wiki-victim' } | ConvertTo-Json) | Out-Null
     $orphanView = Call $admin 'Get' "/api/v1/spaces/$($victimPrivate.id)"
     if (-not $orphanView.orphaned_at) { throw 'the orphaned space has no stamp' }
     Call $admin 'Delete' "/api/v1/spaces/$($victimPrivate.id)" $null | Out-Null

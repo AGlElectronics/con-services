@@ -28,8 +28,13 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and WIKI_SERVICE_TOKEN. This chart never creates
-# Secrets.
+# S3_SECRET_ACCESS_KEY, WIKI_SERVICE_TOKEN and DEN_LINK_ENCRYPTION_KEY
+# (required: the backend refuses to start without it; openssl rand -base64 32),
+# optionally DEN_LINK_ENCRYPTION_KEY_PREVIOUS (key rotation) and
+# HR_SERVICE_TOKEN (lets HR read the role catalog), plus HR_DIRECTORY_TOKEN or
+# IDP_DIRECTORY_CLIENT_SECRET when the group picker uses HR or Keycloak
+# (config.HR_DIRECTORY_URL / config.IDP_DIRECTORY_URL). This chart never
+# creates Secrets.
 existingSecret: wiki-secrets
 
 # Wiki's access config (roles, permissions, OIDC group bindings).
@@ -52,7 +57,18 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: wiki-spa
-  OIDC_AUDIENCE: wiki-spa
+  # The web app sends access tokens for Wiki's API; Keycloak adds this
+  # audience with an audience mapper on wiki-spa. ID tokens are refused.
+  OIDC_AUDIENCE: wiki-api
+  # Groups come only from this claim ("roles" is never read); full: the
+  # whole group path must match, last: only the last segment; an optional
+  # parent group (e.g. /con2026) is removed before matching.
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  OIDC_GROUP_PREFIX: ""
+  # Hosts a pasted Den pairing URL may point at when DEN_INTERNAL_URL is
+  # empty, e.g. den.example.org.
+  DEN_ALLOWED_HOSTS: ""
   CORS_ALLOWED_ORIGINS: https://wiki.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -64,6 +80,21 @@ config:
   # Must match backend.buffer.mountPath.
   WIKI_BUFFER_DIR: /var/lib/wiki/buffer
   WIKI_OFFBOARD_GRACE_DAYS: "30"
+  # Page history: revisions older than this many days are deleted; "0"
+  # keeps every revision. Once paired, Den's module settings win.
+  WIKI_REVISION_RETENTION_DAYS: "0"
+  # Share dialog group picker; any group name can always be typed in.
+  # HR (used while paired with Den): HR's backend, e.g.
+  #   https://hr-backend.conservices-hr.svc.cluster.local:8080
+  # Needs HR_DIRECTORY_TOKEN in existingSecret and networkPolicy.hr.enabled.
+  HR_DIRECTORY_URL: ""
+  # Identity provider (used otherwise): Keycloak's address, e.g.
+  #   https://keycloak.conservices-identity.svc.cluster.local:8443
+  # Needs IDP_DIRECTORY_CLIENT_SECRET in existingSecret and
+  # networkPolicy.keycloakAdmin.enabled.
+  IDP_DIRECTORY_URL: ""
+  IDP_DIRECTORY_REALM: conservices
+  IDP_DIRECTORY_CLIENT_ID: ""
   # Standalone switch for public share links; once paired, Den's
   # wiki_public_links organisation setting wins.
   PUBLIC_LINKS_ENABLED: "false"
@@ -159,6 +190,17 @@ frontend:
   resources:
     requests: { cpu: 10m, memory: 16Mi }
     limits: { cpu: 200m, memory: 64Mi }
+  # Security headers of the web app (con-services shared/nginx snippets):
+  # Content Security Policy, X-Frame-Options, Referrer-Policy,
+  # Permissions-Policy. The CSP lets the browser talk to the sign-in server
+  # and, when set, Den. Origins are scheme + host (+ port), no path.
+  # /silent-callback.html uses the same origins with frame-ancestors 'self'.
+  securityHeaders:
+    # Empty: the scheme and host of config.OIDC_ISSUER_URL.
+    keycloakOrigin: ""
+    # Den's public address, e.g. https://den.conservices.test. Empty: the
+    # browser never talks to Den directly (brand assets come through Wiki).
+    denOrigin: ""
   # Web app settings, served to the browser as /config.json from the
   # ConfigMap <release>-frontend-config (mounted at /etc/conservices).
   # The image itself names no domain. Keys left out get these defaults:
@@ -281,7 +323,16 @@ networkPolicy:
   # a matching egress rule.
   allowFromNamespaces:
     - conservices-hr
-  # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
+  # HR's backend, for the group picker (config.HR_DIRECTORY_URL, GET
+  # /api/internal/directory/groups). HR's namespace also needs an ingress
+  # rule admitting Wiki (HR chart networkPolicy.allowFromNamespaces).
+  hr:
+    enabled: false
+    namespace: conservices-hr
+    port: 8080
+  # Keycloak admin API, for the group picker without HR
+  # (config.IDP_DIRECTORY_URL). Keycloak's namespace also needs an ingress
+  # rule admitting this backend.
   keycloakAdmin:
     enabled: false
     namespace: conservices-identity

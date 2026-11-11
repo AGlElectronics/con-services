@@ -108,6 +108,12 @@ spec:
       ports:
         - { protocol: TCP, port: {{ $np.den.port }} }
     {{- end }}
+    {{- with $np.hr }}
+    {{- if .enabled }}
+    # HR's backend: the group picker's directory.
+    {{- include "wiki.egressTo" (dict "namespace" .namespace "podSelector" (dict "app.kubernetes.io/name" "hr" "app.kubernetes.io/component" "backend") "port" (int .port)) | nindent 4 }}
+    {{- end }}
+    {{- end }}
     {{- with (include "wiki.oidcEgress" . | trim) }}
     {{- . | nindent 4 }}
     {{- end }}

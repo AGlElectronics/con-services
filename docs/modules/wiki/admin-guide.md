@@ -31,8 +31,8 @@ Everything in Wiki is shared at one of four levels:
 | Level | Can |
 | --- | --- |
 | **View** | Read the page and its files, see comments. |
-| **Comment** | View, plus write comments, resolve threads and react. |
-| **Edit** | Comment, plus change the page, upload files, create sub-pages, restore revisions. |
+| **Comment** | View, plus start page discussions, reply to any comment, resolve threads and react. |
+| **Edit** | Comment, plus change the page, comment on a piece of text, upload files, create sub-pages, restore revisions. |
 | **Full** | Edit, plus share, restrict, rename, trash and delete forever. |
 
 ## Spaces
@@ -47,10 +47,20 @@ Everything in Wiki is shared at one of four levels:
 
 Open a space or page and click **Share**. You can give a level to:
 
-- **a person** (search by name);
+- **a person** (search by name; only Wiki admins see and can search by
+  email addresses);
 - **a Keycloak group**, for example a department group such as
-  `dept-front-of-house` that HR maintains;
+  `dept-front-of-house` that HR maintains. The picker suggests HR's
+  departments and access groups (when Wiki is paired with Den), the sign-in
+  server's groups (standalone), or otherwise your own groups. You can
+  always type a group name that is not suggested
+  ([Group picker](configuration.md#group-picker));
 - **everyone signed in** (a space's or page's "everyone" level).
+
+Group names ignore upper and lower case and a leading `/`: a grant to
+`Dept-Front-of-House` matches the Keycloak group `/dept-front-of-house`.
+A nested group keeps its full path, so `/org/dept-x` is a different group
+from a top-level `dept-x`.
 
 Pages **inherit** the access of their parent page or space and can add
 grants of their own. Someone with a grant on one page in a space they
@@ -74,12 +84,34 @@ full access, or edit access on a page you created; the same goes for
 restoring. **Delete forever** needs full access and removes the page's
 content from storage.
 
+## Comments
+
+There are two kinds of comment:
+
+- **Comments on text.** Select text in the editor and comment on it. The
+  comment's anchor is stored in the page itself, so this needs **edit**
+  access.
+- **Page discussions**, in the **Discussion** section under the page, about
+  the page as a whole. Anyone with **comment** access can start one.
+
+Everyone with comment access can reply to both kinds, resolve and reopen
+them and add reactions. Authors edit their own comments; people with edit
+access can delete any comment and whole threads. Why comment access cannot
+comment on text: see
+[ADR 0003](https://github.com/AGlElectronics/wiki/blob/main/docs/adr/0003-inline-comments-need-edit.md).
+
 ## History
 
 Every page keeps automatic revisions, at most one per 10 minutes of
 editing. Open a page's history panel to preview a revision and restore it
 (needs edit access). People who have the page open are reloaded onto the
 restored version; the replaced state is kept as a revision too.
+
+Revisions are kept forever by default. To limit storage, set
+`WIKI_REVISION_RETENTION_DAYS` (for example `90`) or, once paired, the
+retention for Wiki in Den's module settings, which wins. An hourly job then
+deletes older revisions; the history panel shows the current rule. See
+[Revision retention](configuration.md#revision-retention).
 
 ## Public share links
 
@@ -106,13 +138,16 @@ working (and answers "not found") until it is switched back on.
 
 When HR deletes someone's account, it calls Wiki's offboarding hook (set up
 in [Setup, step 8](setup.md#option-1-kubernetes-platform-recommended)).
-Then:
+Wiki finds the person by their sign-in server (issuer) and their id there
+(subject). Then:
 
 1. The person's **private space is handed to the Wiki admins**: it appears
    in their sidebar under **Offboarded**.
 2. Admins can move or share anything worth keeping during the grace
    period (`WIKI_OFFBOARD_GRACE_DAYS`, 30 days by default).
-3. An hourly sweep then deletes the space and everything in it.
+3. An hourly sweep then deletes the space and everything in it, including
+   its content in object storage. If storage is unreachable at that
+   moment, the content is queued and deleted on a later run.
 
 Pages the person created in team spaces are not affected.
 
@@ -128,6 +163,12 @@ as `wiki_public_links`):
    Den's brand and settings immediately (otherwise every minute).
    **Disconnect** returns Wiki to its own settings and default look.
 
+If Den revokes Wiki's credential (or Wiki is removed in Den), the card
+says **Den rejected this module's credential** in red. Wiki keeps Den's
+last brand and settings but stops syncing, and it never pairs again by
+itself: create a new pairing URL in Den (step 1), paste it into the
+**Pair again** field and confirm.
+
 See [Pairing](../../concepts/pairing.md).
 
 ## Backups
@@ -141,8 +182,15 @@ yourself. See [Databases, backups and restore](../../operations/databases-and-ba
 
 **Someone cannot see a space they should.** Check the space's share dialog:
 is the person, one of their Keycloak groups, or "everyone signed in"
-listed? Group names must match the `groups` claim exactly. Then check for a
-restricted page above the one they want.
+listed? Group names are compared without case and a leading `/`, but a
+nested group must be granted by its full path (`/org/dept-x`). Then check
+for a restricted page above the one they want.
+
+**Someone with comment access cannot comment on a sentence.** By design:
+comments on text need edit access. They can start a page discussion under
+the page instead.
+
+**The people picker shows no email addresses.** Only Wiki admins see them.
 
 **An admin cannot see someone's private space.** By design; only
 offboarding hands it over.

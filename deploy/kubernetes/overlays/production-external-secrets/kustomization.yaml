@@ -64,7 +64,9 @@ configMapGenerator:
       # A different provider or account than the live data.
       - BACKUP_S3_ENDPOINT=https://s3.backup-provider.example
       - BACKUP_SAME_STORAGE_AS_DATA=false
-      # Add every installed module's bucket.
+      # Every installed module's bucket, e.g. den-data,stash-data,wiki-data.
+      # Only buckets that exist: a missing one fails the backup.
+      # Wiki's page bodies exist only in its bucket.
       - FILES_S3_BUCKETS=den-data
 
 # The HTTPRoutes attach to the Gateway "public" in conservices-gateway

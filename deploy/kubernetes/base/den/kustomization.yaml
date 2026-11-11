@@ -86,7 +86,9 @@ configMapGenerator:
       - FILES_S3_REGION=us-east-1
       - FILES_S3_USE_PATH_STYLE=true
       # Every module bucket that should be in the backups. Only buckets
-      # that exist: a missing one fails the backup.
+      # that exist: a missing one fails the backup. Add each module's
+      # bucket when you install it, e.g. den-data,stash-data,wiki-data.
+      # Wiki's page bodies exist only in its bucket.
       - FILES_S3_BUCKETS=den-data
   # Origins for the web app's Content-Security-Policy (shared nginx security
   # headers): the sign-in server. DEN_ORIGIN, S3_ORIGIN and

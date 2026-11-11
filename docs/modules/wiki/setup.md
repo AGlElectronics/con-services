@@ -69,8 +69,16 @@ You need Den up and checked first: see
     vault kv put secret/conservices/wiki/backend \
       DATABASE_URL='postgres://wiki:change-me@postgres.conservices-data.svc.cluster.local:5432/wiki?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
-      WIKI_SERVICE_TOKEN="$(openssl rand -hex 32)"
+      WIKI_SERVICE_TOKEN="$(openssl rand -hex 32)" \
+      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+      HR_SERVICE_TOKEN=change-me-same-as-hr
     ```
+
+    `DEN_LINK_ENCRYPTION_KEY` is required: it encrypts the Den credential
+    Wiki stores, and the backend refuses to start without it (see
+    [Secrets](../../operations/secrets.md#den-link-encryption-key) for
+    rotation). `HR_SERVICE_TOKEN` is the token HR sends to read Wiki's role
+    catalog; use HR's value, or leave it out when you do not run HR.
 
     ```yaml
     apiVersion: external-secrets.io/v1
@@ -87,7 +95,10 @@ You need Den up and checked first: see
     ```
 
     `WIKI_SERVICE_TOKEN` must be the same token HR uses in
-    `OFFBOARD_HOOKS` (step 8).
+    `OFFBOARD_HOOKS` (step 8). Optional, for the share dialog's group
+    picker: add `HR_DIRECTORY_TOKEN` (once HR serves the directory, step 8)
+    or `IDP_DIRECTORY_CLIENT_SECRET` (Keycloak, see
+    [Group picker](configuration.md#group-picker)) to the same entry.
 
 5. **Create the access config.** It maps Keycloak groups to Wiki roles.
    Start from `infra/access-config.toml` in the Wiki repository:
@@ -96,6 +107,11 @@ You need Den up and checked first: see
     kubectl create configmap wiki-access-config -n conservices-wiki \
       --from-file=access-config.toml=access-config.toml
     ```
+
+    In Keycloak, `wiki-spa` also needs the **audience mapper** that puts
+    `wiki-api` into its access tokens; see
+    [Keycloak audience for Wiki's API](#keycloak-audience-for-wikis-api).
+    The suite's realm file already has it.
 
 6. **Write your values and install the chart** (`deploy/charts/wiki` in the
    `con-services` repository):
@@ -138,22 +154,62 @@ You need Den up and checked first: see
     The cluster needs cert-manager, trust-manager and the platform's
     internal CA; see [Internal TLS](#internal-tls).
 
+    The web app's security headers allow the sign-in server from
+    `config.OIDC_ISSUER_URL`; set `frontend.securityHeaders.keycloakOrigin`
+    only when the browser reaches Keycloak on another address, and
+    `frontend.securityHeaders.denOrigin` to Den's public address if you want
+    it in the policy ([Web app security headers](configuration.md#web-app-security-headers)).
+
 7. **Pair Wiki with Den.** In Den: **Admin console → Modules → Pair** on the
    Wiki row; copy the URL (valid 15 minutes, single use). In Wiki, signed in
    as a `wiki-admin`: **Settings → Den connection**, paste it and confirm.
    Wiki shows Den's brand within a minute.
 
-8. **Connect HR** (only if you run HR). HR calls Wiki when an account is
-   deleted. In HR's settings:
+8. **Connect HR** (only if you run HR). HR reads Wiki's role catalog (so
+   the Wiki roles appear in HR's access picker) and calls Wiki when an
+   account is deleted. HR's chart already allows that call
+   (`networkPolicy.moduleEgressNamespaces` includes `conservices-wiki`).
+   Point HR at Wiki's catalog and upgrade HR:
+
+    ```yaml
+    # my-hr.yaml (HR chart deploy/charts/hr)
+    config:
+      ROLE_CATALOG_SOURCES: >-
+        stash=https://stash-backend.conservices-stash.svc.cluster.local:8080/api/role-catalog,wiki=https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/role-catalog
+    ```
+
+    Setting `ROLE_CATALOG_SOURCES` replaces the whole list, so name every
+    module whose roles should appear in HR.
+
+    And in HR's secret (`hr-secrets`), the hook with Wiki's service token:
 
     ```text
     OFFBOARD_HOOKS=https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded|<WIKI_SERVICE_TOKEN>
     ```
 
-    The Wiki chart already admits HR's backend (`networkPolicy.allowFromNamespaces`).
-    HR's namespace needs the matching **egress** rule to
-    `conservices-wiki` port 8080; see
-    [Network policies](../../operations/network-policies.md#calls-between-modules).
+    ```sh
+    helm upgrade hr deploy/charts/hr -n conservices-hr -f my-hr.yaml
+    ```
+
+    The Wiki chart already admits HR's backend
+    (`networkPolicy.allowFromNamespaces` lists `conservices-hr`). Check it:
+    in HR, **Access** for any person now lists the Wiki roles.
+    See [Network policies](../../operations/network-policies.md#calls-between-modules).
+
+    **Group picker from HR.** HR serves
+    `GET /api/internal/directory/groups` when `HR_DIRECTORY_TOKEN` is set
+    (contract on [Group picker](configuration.md#group-picker)). HR's chart
+    already admits Wiki (`networkPolicy.allowFromNamespaces` includes
+    `conservices-wiki`). Put the same token in `wiki-secrets`, then open
+    Wiki's egress to HR's backend in `conservices-hr` on port 8080:
+
+    ```yaml
+    # my-wiki.yaml
+    config:
+      HR_DIRECTORY_URL: https://hr-backend.conservices-hr.svc.cluster.local:8080
+    networkPolicy:
+      hr: { enabled: true }
+    ```
 
 9. **Verify.**
 
@@ -180,6 +236,36 @@ You need Den up and checked first: see
 
     Then open `https://wiki.<your-domain>`, create a page, and open it in a
     second browser: typing in one shows up in the other within a second.
+
+## Keycloak audience for Wiki's API
+
+The web app sends Keycloak **access tokens** to Wiki's API, and the backend
+accepts only tokens whose audience contains `wiki-api` (`OIDC_AUDIENCE`;
+the [token contract](../../concepts/authentication.md#tokens-the-10-contract)).
+Keycloak adds that audience with a mapper on the `wiki-spa` client. The
+suite's realm file (`infra/keycloak/realm-conservices.json`) and
+`infra/keycloak/apply-mvp.sh` already create it; for another realm:
+
+1. Keycloak admin console → realm `conservices` → **Clients → wiki-spa →
+   Client scopes → wiki-spa-dedicated → Add mapper → By configuration →
+   Audience**.
+2. Name `wiki-api audience`, **Included Custom Audience** `wiki-api`,
+   **Add to access token** on, **Add to ID token** off. Save.
+3. Check a token (development realm, password grant):
+
+    ```sh
+    curl -s https://auth.example.org/realms/conservices/protocol/openid-connect/token \
+      -d grant_type=password -d client_id=wiki-spa -d username=alice -d password=change-me \
+      | jq -r .access_token | cut -d. -f2 | base64 -d 2>/dev/null | jq .aud
+    ```
+
+    ```json
+    ["wiki-api", "account"]
+    ```
+
+The group mapper must put the groups into the **access token** as well
+("Add to access token" on), because Wiki reads groups from the token it
+receives (`OIDC_GROUPS_CLAIM`, default `groups`).
 
 ## Option 2: Standalone on Kubernetes
 
@@ -216,6 +302,12 @@ with these Wiki-specific values:
     ```
 
 - The backend still runs **one replica** with a buffer volume.
+- Optional: let the share dialog suggest your Keycloak groups. Create the
+  read-only client as in [Group picker](configuration.md#group-picker), add
+  `IDP_DIRECTORY_CLIENT_SECRET` to `wiki-secrets`, and set
+  `config.IDP_DIRECTORY_URL`, `config.IDP_DIRECTORY_CLIENT_ID` and an egress
+  rule to Keycloak (`networkPolicy.keycloakAdmin.enabled: true` in-cluster,
+  or an `extraEgress` rule for an external Keycloak).
 - Internal TLS stays on by default and needs cert-manager, trust-manager
   and an issuer in your cluster. Without them, turn it off or bring your
   own certificates ([Without cert-manager](#without-cert-manager)). For a
@@ -352,7 +444,8 @@ add Wiki next to Den:
       wiki-migrate: { condition: service_completed_successfully }
     stop_grace_period: 45s            # ships buffered edits on shutdown
     networks: [internal, egress]
-    env_file: /etc/conservices/wiki-backend.env   # DATABASE_URL, S3_*, WIKI_SERVICE_TOKEN
+    # DATABASE_URL, S3_*, WIKI_SERVICE_TOKEN, DEN_LINK_ENCRYPTION_KEY, HR_SERVICE_TOKEN
+    env_file: /etc/conservices/wiki-backend.env
     environment:
       APP_ENV: production
       APP_BASE_URL: https://wiki.con.example.org
@@ -360,7 +453,7 @@ add Wiki next to Den:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
       OIDC_CLIENT_ID: wiki-spa
-      OIDC_AUDIENCE: wiki-spa
+      OIDC_AUDIENCE: wiki-api
       ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
       CORS_ALLOWED_ORIGINS: https://wiki.con.example.org
       S3_ENDPOINT: https://fsn1.your-objectstorage.com
@@ -381,6 +474,11 @@ add Wiki next to Den:
       - ./wiki/nginx.stack.conf:/etc/nginx/conf.d/default.conf:ro
       # The web app's sign-in settings, served as /config.json.
       - ./wiki/config.json:/etc/conservices/config.json:ro
+      # Security headers with your Keycloak (and Den) origins. The second
+      # file is the same policy for /silent-callback.html only
+      # (frame-ancestors 'self'), so a reload can sign in again.
+      - ./wiki/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      - ./wiki/security-headers-frame-self.conf:/etc/nginx/snippets/security-headers-frame-self.conf:ro
 
 # volumes:
   wiki-buffer: {}
@@ -399,6 +497,18 @@ image names no domain. Keys: [Web app settings](configuration.md#web-app-setting
 
 - Never scale `wiki-backend`: one container only.
 - `nginx.stack.conf` is `infra/nginx.stack.conf` from the Wiki repository.
+- `security-headers.conf` is `shared/nginx/security-headers.conf` from
+  `con-services` with `KEYCLOAK_ORIGIN` replaced by
+  `https://auth.con.example.org` and `DEN_ORIGIN` by
+  `https://den.con.example.org` (or removed).
+  `security-headers-frame-self.conf` is
+  `shared/nginx/security-headers-frame-self.conf` with the same
+  replacements. The image's own copies only know the development
+  addresses, so without yours sign-in after a reload fails with a CSP
+  error. See
+  [Web app security headers](configuration.md#web-app-security-headers).
+- The Keycloak client needs the `wiki-api`
+  [audience mapper](#keycloak-audience-for-wikis-api).
 - Proxy block: `wiki.con.example.org { reverse_proxy wiki-frontend:8080 }`.
   Caddy passes websockets through without extra settings.
 - Add `example-wiki` to the operator's `FILES_S3_BUCKETS`.
@@ -532,9 +642,43 @@ your secret manager, then
 `kubectl rollout restart -n conservices-wiki deploy/wiki-backend`. For a
 managed database use `sslmode=verify-full&sslrootcert=<path to the provider's CA>`.
 
+**The backend restarts with `den link: DEN_LINK_ENCRYPTION_KEY is required
+unless APP_ENV=development`.** Add the key to `wiki-secrets` (step 4) and
+restart the backend.
+
+**Every request answers `401 invalid token` after the upgrade.** The access
+tokens lack the `wiki-api` audience: add the
+[audience mapper](#keycloak-audience-for-wikis-api) to `wiki-spa`.
+
+**Signed in, but a reload goes back to the sign-in page.** Tokens live only
+in memory; after a reload the web app signs in again silently through a
+hidden frame. That fails when the security headers do not allow the
+sign-in server (`frontend.securityHeaders.keycloakOrigin`), when
+`/silent-callback.html` is still sent with `frame-ancestors 'none'`
+(mount `security-headers-frame-self.conf` and include it from that exact
+location), or when the browser blocks Keycloak's cookies in frames (the
+sign-in server must share the site with Wiki, for example
+`auth.example.org` and `wiki.example.org`).
+
+**HR's access picker lists no Wiki roles.** Wiki's role catalog needs HR's
+`HR_SERVICE_TOKEN`: set the same value on Wiki (`wiki-secrets`) and HR.
+HR's log shows `401` for Wiki otherwise.
+
+**The Den connection says "Den rejected this module's credential".** Den
+revoked the credential or Wiki was removed in Den. Pair again (step 7);
+Wiki keeps Den's last brand and settings until then.
+
 **HR's offboarding fails with a timeout.** HR's namespace has no egress rule
-to `conservices-wiki`. With `401`, `WIKI_SERVICE_TOKEN` and the token in
+to `conservices-wiki` (add it to HR's `networkPolicy.moduleEgressNamespaces`,
+step 8). With `401`, `WIKI_SERVICE_TOKEN` and the token in
 `OFFBOARD_HOOKS` differ. With `404`, `WIKI_SERVICE_TOKEN` is empty on Wiki.
+
+**The Wiki roles are missing from HR's access picker.** HR's
+`ROLE_CATALOG_SOURCES` does not list `wiki=…/api/role-catalog`, or HR cannot
+reach Wiki (the same egress rule as above). See step 8.
+
+**The group picker only shows your own groups.** See
+[Configuration → Troubleshooting](configuration.md#troubleshooting).
 
 **Public share links answer `404`.** They are off until Den's organisation
 setting `wiki_public_links` (or `PUBLIC_LINKS_ENABLED` standalone) is on.

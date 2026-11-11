@@ -390,6 +390,10 @@ led by Den's MAJOR; see
   backend port, so Den can call `GET /api/portal/todos`. Den's egress to
   module backends is still added with Den's release. See
   [Calls between modules](docs/operations/network-policies.md#calls-between-modules).
+- Wiki's chart lets the web app frame `/silent-callback.html` only
+  (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`), using the same
+  `frontend.securityHeaders` origins as the rest of the page. Every other
+  response stays unframeable, so a reload can sign in again.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.
@@ -435,6 +439,13 @@ led by Den's MAJOR; see
   too). What to change on an
   existing installation is in
   [Stash's changelog](https://github.com/AGlElectronics/stash/blob/main/CHANGELOG.md).
+- Network policies: Wiki's egress to HR for the group directory is the
+  chart value `networkPolicy.hr` (namespace `conservices-hr`, HR's backend,
+  port 8080). It stays off until `networkPolicy.hr.enabled` is set, which
+  is what you do together with `HR_DIRECTORY_URL`. HR's chart already
+  admits `conservices-wiki`, and HR serves
+  `GET /api/internal/directory/groups` when `HR_DIRECTORY_TOKEN` is set.
+  The flow table records both sides.
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,
@@ -506,6 +517,32 @@ led by Den's MAJOR; see
   `401 invalid token`.
 - `scripts/smoke-finance.ps1` signs in with the access token instead of the
   ID token.
+- Kustomize: the Den operator's `FILES_S3_BUCKETS` in the base and the
+  overlays now says to add each installed module's bucket (for example
+  `wiki-data`; Wiki's page bodies exist only in its bucket).
+- Root `docker-compose.yml`: `wiki-backend` sets
+  `WIKI_REVISION_RETENTION_DAYS` and the (empty) group-picker settings
+  `HR_DIRECTORY_URL` and `HR_DIRECTORY_TOKEN`.
+- Network policies: the flow table and *Calls between modules* list HR →
+  Wiki (role catalog and offboarding hook, with the HR chart values to add),
+  Wiki → HR (group picker directory, opt-in) and Wiki → Keycloak admin API
+  (group picker when standalone, opt-in). The secrets inventory lists
+  Wiki's optional `HR_DIRECTORY_TOKEN` and `IDP_DIRECTORY_CLIENT_SECRET`.
+- `scripts/smoke-wiki.ps1` also checks that SVG uploads download as
+  sandboxed attachments, that comment-level people start page discussions
+  but cannot anchor threads to text, that the people picker hides email
+  addresses from non-admins, and sends the issuer to the offboarding hook.
+- Keycloak realm (`infra/keycloak/realm-conservices.json`): `wiki-spa` gets
+  an audience mapper that adds `wiki-api` to its access tokens (token
+  contract). `infra/keycloak/apply-mvp.sh` has a reusable, idempotent
+  `api_audience <client> <audience>` helper and calls it for Wiki.
+- Root `docker-compose.yml`: `wiki-backend` checks access tokens for
+  `OIDC_AUDIENCE=wiki-api`, sets `OIDC_GROUPS_CLAIM` and `OIDC_GROUP_MATCH`,
+  and has a dev-only `HR_SERVICE_TOKEN`. Until HR sends that token, HR's
+  access picker in the Compose stack shows no Wiki roles (Wiki's catalog now
+  needs it).
+- Module settings contract: Wiki's key `wiki.revision_retention_days`
+  (revision history retention).
 
 ### Security
 

@@ -109,7 +109,7 @@ Printed on Finance's receipts and invoices.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `wiki.revision_retention_days` | `0` (keep every revision) | Days a page's older revisions are kept. Replaces Wiki's `WIKI_REVISION_RETENTION_DAYS` when Den sets it. |
+| `wiki.revision_retention_days` | `0` (keep every revision) | Days a page's older revisions are kept; older ones are deleted hourly. A whole number, `0` or more. Replaces Wiki's `WIKI_REVISION_RETENTION_DAYS` when Den sets it. Read by Wiki from 1.0.0 ([Wiki configuration](../modules/wiki/configuration.md#revision-retention)). |
 
 ### Tasks: retention and reminders
 

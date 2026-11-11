@@ -1371,8 +1371,13 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: wiki-spa
-      OIDC_AUDIENCE: wiki-spa
+      # Token contract: the web app sends access tokens for Wiki's API; the
+      # realm's audience mapper on wiki-spa adds wiki-api.
+      OIDC_AUDIENCE: wiki-api
+      OIDC_GROUPS_CLAIM: groups
+      OIDC_GROUP_MATCH: full
       # DEV ONLY. The token HR sends to read this module's role catalog.
+      # Same value on every module; at least 32 characters.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
       ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3007,https://wiki.conservices.test
@@ -1389,8 +1394,11 @@ services:
       # internal API off. Matches OFFBOARD_HOOKS on hr-backend.
       WIKI_SERVICE_TOKEN: wiki-service-dev-token
       WIKI_OFFBOARD_GRACE_DAYS: "30"
+      # Revisions older than this many days are deleted; 0 keeps them all.
+      WIKI_REVISION_RETENTION_DAYS: "0"
       # Share dialog: HR's departments and access groups while paired with
       # Den. Dev-only token; matches HR_DIRECTORY_TOKEN on hr-backend.
+      # See docs/modules/wiki/configuration.md.
       HR_DIRECTORY_URL: http://hr-backend:8080
       HR_DIRECTORY_TOKEN: hr-directory-dev-token
     volumes:

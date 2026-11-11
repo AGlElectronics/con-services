@@ -25,7 +25,7 @@ manager creates (see [Secrets](../../operations/secrets.md)). The chart sets
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` | Everything below marked "no" in the Secret column. |
-| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`. |
+| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY`; optionally `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN`, and `HR_DIRECTORY_TOKEN` or `IDP_DIRECTORY_CLIENT_SECRET` for the [group picker](#group-picker). |
 | ConfigMap `wiki-access-config` | The access config file (roles and group bindings). |
 | Secrets `wiki-backend-tls`, `wiki-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -40,22 +40,26 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. `development` makes logs human-readable. |
+| `APP_ENV` | `production` | no | no | Only `development` relaxes the rules: it allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to development hosts, and makes logs human-readable. Anything else counts as production. Local setups (`.env.example`, Docker Compose) set `development` explicitly. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address of Wiki, for example `https://wiki.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | no | Address the backend listens on inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL connection URL, for example `postgres://wiki:change-me@db.example.org:5432/wiki?sslmode=require`. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests to finish. Give the pod at least 30 s on top for live editing. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3007` | no | no | Comma-separated browser origins allowed to call the API, for example `https://wiki.example.org`. |
-| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
+| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses and is read right to left; `X-Real-IP` and `True-Client-IP` are never read. The resulting client IP is what rate limits count and what the request log shows. Add a proxy that sits outside the private ranges; `none` trusts no proxy. An invalid entry stops the backend at start-up. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 
 ### Sign-in
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | no | `oidc` checks real sign-in tokens. `dev` trusts the `X-Dev-User` and `X-Dev-Groups` headers: **local development only**, anyone can claim to be anyone. |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` checks real sign-in tokens. `dev` trusts the `X-Dev-User` and `X-Dev-Groups` headers (anyone can claim to be anyone) and **stops the backend unless `APP_ENV=development`**. Outside dev mode those headers are removed from every request and not allowed through CORS. See [Authentication → Defaults](../../concepts/authentication.md#defaults-auth_mode-and-app_env). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | The sign-in server's issuer, for example `https://auth.example.org/realms/conservices`. The backend must reach it (OIDC discovery). |
-| `OIDC_CLIENT_ID` | none | with `oidc` | no | Client the tokens are issued for: `wiki-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Expected token audience, normally `wiki-spa`. |
+| `OIDC_CLIENT_ID` | none | with `oidc` | no | The web app's client: `wiki-spa`. |
+| `OIDC_AUDIENCE` | `wiki-api` | no | no | The audience the **access token** must carry ([token contract](../../concepts/authentication.md#tokens-the-10-contract)). Keycloak adds it with an audience mapper on `wiki-spa` ([Setup](setup.md#keycloak-audience-for-wikis-api)). ID tokens and tokens for other APIs are refused. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | no | The token claim holding the person's groups. `roles` is never read in addition. A dotted name such as `realm_access.roles` is followed into nested objects. |
+| `OIDC_GROUP_MATCH` | `full` | no | no | `full`: the whole group path must match (`/org/dept-x` is not `dept-x`). `last`: only the last segment is compared. Applies to role bindings and to space and page grants. See [How groups are matched](../../concepts/authentication.md#how-groups-are-matched). |
+| `OIDC_GROUP_PREFIX` | none | no | no | A parent group such as `/con2026` removed from group names before matching. |
+| `HR_SERVICE_TOKEN` | none | no | **yes** | Lets HR's backend read `GET /api/role-catalog` without a sign-in ([role catalog contract](../../concepts/role-catalog.md)). Must equal HR's `HR_SERVICE_TOKEN`. Empty: only signed-in staff can read the catalog. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the access config file (roles and Keycloak group bindings), for example `/etc/wiki/access-config.toml`. Without it the built-in catalog is used. The Helm chart sets it. |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only: user when no `X-Dev-User` header is sent. |
 | `DEV_DEFAULT_GROUPS` | `wiki-admin` | no | no | `dev` mode only: comma-separated groups when no `X-Dev-Groups` header is sent. |
@@ -66,6 +70,9 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | no | Den's address as the backend reaches it, on the platform `https://den-backend.conservices-den.svc.cluster.local:8080`. Replaces the host of a pasted pairing URL. Empty without Den. See [Pairing](../../concepts/pairing.md). |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_ALLOWED_HOSTS` | none | when `DEN_INTERNAL_URL` is empty | no | Comma-separated hosts a pasted pairing URL may point at, for example `den.example.org` or `*.example.org`. With `APP_ENV=development`, `localhost` and `*.conservices.test` are always allowed; outside development the URL must use `https://`. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | **yes**, unless `APP_ENV=development` | **yes** | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts the stored Den credential (AES-256-GCM). Without it outside development the backend refuses to start. A credential stored in plain text is encrypted on the first read. One key per module; see [Secrets](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The old key during a rotation; values sealed with it are re-encrypted with the current key on the next read. |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` used while Wiki is not paired. Once paired, Den's brand wins. |
 
 ### Storage and live editing
@@ -79,6 +86,7 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | `S3_REGION` | `us-east-1` | no | no | Region of the bucket. |
 | `S3_USE_PATH_STYLE` | `true` | no | no | `true` for the local S3 server (SeaweedFS) and most self-hosted S3; `false` for AWS virtual-hosted addresses. |
 | `WIKI_BUFFER_DIR` | `./data/buffer` | no | no | Directory for the last few seconds of live edits before they are shipped to S3. Put it on a volume; the images use `/var/lib/wiki/buffer`. One backend replica owns it. |
+| `WIKI_REVISION_RETENTION_DAYS` | `0` | no | no | Page history: revisions older than this many days are deleted, every hour, from S3 and the database. `0` keeps every revision. Once paired, Den's module settings override it; see [Revision retention](#revision-retention). A negative number stops the backend at start. |
 
 ### Sharing and offboarding
 
@@ -87,6 +95,171 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | `PUBLIC_LINKS_ENABLED` | `false` | no | no | Allows public share links while Wiki is **not paired**. Once paired, Den's organisation setting `wiki_public_links` decides. |
 | `WIKI_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `POST /api/internal/offboarded`. **Empty turns that endpoint off** (it answers `404`). Must equal the token in HR's `OFFBOARD_HOOKS`. Generate with `openssl rand -hex 32`. |
 | `WIKI_OFFBOARD_GRACE_DAYS` | `30` | no | no | Days an offboarded person's private space stays (visible to Wiki admins) before an hourly sweep deletes it. |
+| `HR_DIRECTORY_URL` | none | no | no | HR's backend address, for example `https://hr-backend.conservices-hr.svc.cluster.local:8080`. While Wiki is paired with Den, the group picker lists HR's departments and access groups from it. See [Group picker](#group-picker). |
+| `HR_DIRECTORY_TOKEN` | none | with `HR_DIRECTORY_URL` | **yes** | Bearer token Wiki sends to HR's `GET /api/internal/directory/groups`. Must equal the token HR accepts there. Generate with `openssl rand -hex 32`. |
+| `IDP_DIRECTORY_URL` | none | no | no | Keycloak's address as the backend reaches it, for example `https://keycloak.conservices-identity.svc.cluster.local:8443`. Used by the group picker when HR is not used. |
+| `IDP_DIRECTORY_REALM` | `conservices` | no | no | Realm whose groups are listed. |
+| `IDP_DIRECTORY_CLIENT_ID` | none | with `IDP_DIRECTORY_URL` | no | Confidential Keycloak client (client credentials) that may read groups, for example `wiki-directory`. |
+| `IDP_DIRECTORY_CLIENT_SECRET` | none | with `IDP_DIRECTORY_URL` | **yes** | That client's secret. |
+
+### Group picker
+
+The share dialog's **group picker** suggests group names while you type.
+You can always type any group name yourself; the picker only saves you from
+remembering exact names. The backend picks one source per request:
+
+1. **HR**, when Wiki is paired with Den and `HR_DIRECTORY_URL` is set: HR's
+   departments (the group behind each department) and access groups (the
+   groups behind module roles).
+2. **The identity provider**, when `IDP_DIRECTORY_URL` is set: every group in
+   the realm, read through Keycloak's admin API. A top-level group is offered
+   by its name (`dept-security`), a nested one by its full path
+   (`/org/dept-x`).
+3. Otherwise **your own groups**, from your sign-in token.
+
+Answers from HR or Keycloak are cached for 5 minutes. If the source fails,
+the picker falls back to your own groups and shows a short warning; the
+backend logs `group directory unavailable`.
+
+**What HR exposes.** When `HR_DIRECTORY_TOKEN` is set, HR answers exactly
+this. Wiki sends that same token. While the token is unset, HR answers
+`404` and the picker cannot use HR:
+
+```text
+GET /api/internal/directory/groups
+Authorization: Bearer <HR_DIRECTORY_TOKEN>
+```
+
+```json
+{
+  "groups": [
+    { "name": "dept-security", "display_name": "Security", "kind": "department" },
+    { "name": "wiki-editor", "display_name": "Wiki editors", "kind": "access" }
+  ]
+}
+```
+
+- `name` is the identity provider group exactly as it appears in tokens.
+- `display_name` is what people read (the department's name).
+- `kind` is `department` or `access`; anything else is treated as `access`.
+- A wrong token answers `401`. Leave `HR_DIRECTORY_URL` empty to keep using
+  the identity provider, or the person's own groups.
+- On Kubernetes, set `networkPolicy.hr.enabled: true`. That is Wiki's
+  egress to HR's backend in `conservices-hr` on port 8080. HR's chart
+  already admits Wiki (`networkPolicy.allowFromNamespaces` includes
+  `conservices-wiki`).
+
+**Keycloak client for the identity provider source.** Create it once in the
+Keycloak admin console:
+
+1. **Clients → Create client**, client ID `wiki-directory`, **Client
+   authentication** on, only **Service accounts roles** ticked.
+2. **Service account roles → Assign role → Filter by clients**, pick
+   `realm-management` `query-groups` and `view-users`.
+3. **Credentials** shows the secret. Put it in your secret manager as
+   `IDP_DIRECTORY_CLIENT_SECRET` (see [Secrets](../../operations/secrets.md)).
+4. Set `IDP_DIRECTORY_URL` and `IDP_DIRECTORY_CLIENT_ID=wiki-directory`,
+   restart the backend. On Kubernetes also set
+   `networkPolicy.keycloakAdmin.enabled: true` in the chart.
+
+Check it as any signed-in person:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" https://wiki.example.org/api/v1/groups
+```
+
+```json
+{"groups":[{"name":"dept-security","display_name":"dept-security","kind":"idp"},{"name":"/org/dept-x","display_name":"dept-x","kind":"idp"}],"source":"idp"}
+```
+
+`"source":"token"` with a `warning` means the directory failed; see
+Troubleshooting below.
+
+### Revision retention
+
+By default every revision is kept, so the bucket grows with every page's
+history. `WIKI_REVISION_RETENTION_DAYS=90` deletes revisions older than 90
+days once an hour: first the S3 object, then its database row, so a failed
+delete is retried on the next run. The current page is never affected,
+only its history. The history panel tells people how long revisions are
+kept.
+
+Once Wiki is paired, Den can set the retention for Wiki on its **Module
+settings** page; Den's value wins. Den sends it in the integration bundle
+(`GET /api/v1/integrations/bundle`) under `module_settings`, as the
+[module settings contract](../../concepts/module-settings.md#wiki-revision-history)
+describes, and Wiki stores the bundle with its pairing:
+
+```json
+{
+  "brand": { "...": "..." },
+  "settings": { "data": {} },
+  "module_settings": {
+    "updated_at": "2026-11-11T09:30:00Z",
+    "data": { "wiki": { "revision_retention_days": 90 } }
+  }
+}
+```
+
+`wiki.revision_retention_days` must be a whole number, `0` or more (`0` keeps everything).
+Anything else, or no value at all, means "use
+`WIKI_REVISION_RETENTION_DAYS`". Wiki reads the value from the bundle it
+keeps with the pairing, so after a restart Den's value applies straight
+away, before Wiki reaches Den again. A bundle from an older Den, with
+`wiki` directly under `module_settings` instead of under `data`, is read
+too. Until Den offers the setting on its Module settings page, the local
+setting applies. While Den's credential is
+[revoked](admin-guide.md#settings-den-connection), Wiki keeps using the
+last value it received.
+
+To see which value is in force, list a page's history:
+
+```sh
+curl -s $WIKI/api/v1/pages/$PAGE/revisions -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"revisions":[],"retention_days":90,"retention_source":"den"}
+```
+
+`retention_source` is `den` when Den's value applies and `config` when
+`WIKI_REVISION_RETENTION_DAYS` does.
+
+### Troubleshooting
+
+- **The group picker only shows my own groups.** No directory is set, Wiki
+  is not paired (HR is only used while paired), or the directory failed:
+  `GET /api/v1/groups` then has a `warning` and the backend log shows
+  `group directory unavailable` with the reason. `401` from HR: the tokens
+  differ. `401` from Keycloak: wrong client secret. `403` from Keycloak: the
+  client lacks `query-groups`. A timeout on Kubernetes: Wiki's egress is
+  off (`networkPolicy.hr.enabled` for HR,
+  `networkPolicy.keycloakAdmin.enabled` for Keycloak). HR's chart already
+  admits Wiki; Keycloak's ingress rule is the platform's.
+- **The backend does not start: `HR_DIRECTORY_TOKEN is required when
+  HR_DIRECTORY_URL is set`** (or the same for `IDP_DIRECTORY_*`). Add the
+  secret, or empty the URL.
+- **The backend stops with `AUTH_MODE=dev lets anyone sign in as anyone
+  and is only allowed with APP_ENV=development`.** Remove `AUTH_MODE` (the
+  default is `oidc`), or for local work also set `APP_ENV=development`.
+- **The backend stops with `DEN_LINK_ENCRYPTION_KEY is required unless
+  APP_ENV=development`.** Generate a key (`openssl rand -base64 32`), add it
+  to `wiki-secrets` and restart. `must be 32 bytes after base64 decoding`
+  means the value is not such a key.
+- **Every API call answers `401 invalid token` after an upgrade.** The
+  access token lacks the `wiki-api` audience: add the audience mapper to
+  `wiki-spa` ([Setup](setup.md#keycloak-audience-for-wikis-api)), or set
+  `OIDC_AUDIENCE` to the audience your identity provider sends. An old web
+  app that still sends ID tokens is refused too; reload it.
+- **Someone lost access after the upgrade although they are in the group.**
+  Groups are read only from `OIDC_GROUPS_CLAIM` (default `groups`); a group
+  that only came through the `roles` claim no longer counts. Put the group
+  mapper on the client, or point `OIDC_GROUPS_CLAIM` at the right claim.
+- **Revisions are not deleted.** `GET /api/v1/pages/<id>/revisions` shows
+  `retention_days` and `retention_source`; `0` keeps everything. With
+  `source` `den`, the value comes from Den and overrides the local one. A
+  failing S3 delete is logged as `could not remove an expired revision` and
+  retried next hour.
 
 ### Internal TLS
 
@@ -209,6 +382,64 @@ cache-control: no-store
 - **An old value still shows**: something in front of nginx caches the file.
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
+
+## Web app security headers
+
+The web app's nginx sends the suite's shared security headers
+(`shared/nginx/security-headers.conf`, see
+[Shared code](../../concepts/shared-code.md#nginx-security-headers)): a
+Content Security Policy that allows scripts, styles and fonts from Wiki
+itself and connections to the sign-in server (and Den, if set),
+`X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and
+`Permissions-Policy`. The API's own responses carry the backend's stricter
+headers instead, and file downloads keep `Content-Security-Policy: sandbox`.
+
+`/silent-callback.html` is the one exception. A reload signs in again by
+loading that page in a hidden frame of Wiki itself, which `frame-ancestors
+'none'` would block. That exact location uses
+`security-headers-frame-self.conf`: the same policy with `frame-ancestors
+'self'` and `X-Frame-Options: SAMEORIGIN`. Every other page stays
+unframeable. See
+[Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
+
+| Where | How the origins are set |
+| --- | --- |
+| Helm chart | `frontend.securityHeaders.keycloakOrigin` (default: scheme and host of `config.OIDC_ISSUER_URL`) and `frontend.securityHeaders.denOrigin` (default empty). The chart renders both snippets into `<release>-frontend-nginx` and mounts them at `/etc/nginx/snippets/security-headers.conf` and `security-headers-frame-self.conf`. |
+| Image (Docker Compose) | The image ships `infra/security-headers.conf` and `infra/security-headers-frame-self.conf` with the development origins (`https://auth.conservices.test`, `http://localhost:8085`, `https://den.conservices.test`). |
+| Production on Docker | Mount your own copies, with the same origins, over `/etc/nginx/snippets/security-headers.conf` and `/etc/nginx/snippets/security-headers-frame-self.conf`; see [Setup, option 3](setup.md#option-3-production-on-docker). |
+
+Check them:
+
+```sh
+curl -sI https://wiki.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; … connect-src 'self' https://auth.example.org; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; …
+x-frame-options: DENY
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+If sign-in hangs after a reload, the browser console shows a CSP error for
+the sign-in server's address: `keycloakOrigin` does not match the
+issuer's host. If it says framing `/silent-callback.html` violated
+`frame-ancestors 'none'`, that location is still using
+`security-headers.conf`. It must include `security-headers-frame-self.conf`.
+
+Check the silent sign-in page on its own. `frame-ancestors` is `'self'`
+and `X-Frame-Options` is `SAMEORIGIN`. The home page still says `'none'`
+and `DENY`.
+
+```sh
+curl -sI https://wiki.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: … frame-ancestors 'self'; …
+x-frame-options: SAMEORIGIN
+```
 
 ## Frontend build settings
 

@@ -48,13 +48,15 @@ Concretely, Wiki aims to:
   other's cursors, using a block editor (BlockNote). People with view
   access see the page read-only.
 - **Files.** Image and file blocks (25 MB images, 50 MB files), downloaded
-  through the backend after the page access check.
+  through the backend after the page access check. Only PNG, JPEG, GIF and
+  WebP open in the browser; everything else downloads.
 - **History.** Automatic revisions (at most one per 10 minutes of editing),
-  read-only preview and restore.
+  read-only preview and restore, kept forever or for a number of days you
+  choose ([Revision retention](configuration.md#revision-retention)).
 - **Search and links.** Ctrl+K search over titles and page text, `@person`
   and `@page` mentions, backlinks, favourites.
-- **Comments.** Inline discussion threads with replies, resolve and emoji
-  reactions.
+- **Comments.** Comments on a piece of text (edit access) and page
+  discussions (comment access), with replies, resolve and emoji reactions.
 - **Public share links.** A read-only page (optionally with its sub-pages)
   for anyone with the link, if the organisation allows it (Den setting
   `wiki_public_links`).
