@@ -209,6 +209,15 @@ led by Den's MAJOR; see
   HR → Tasks department hook (ingress in the Tasks chart; HR's egress needs
   `conservices-tasks`) and the Tasks backend's egress to the mail server;
   [Secrets](docs/operations/secrets.md) lists Tasks' optional SMTP login.
+- Docker stack: the Tasks backends check the access-token audience
+  `tasks-api` (`OIDC_AUDIENCE`; `OIDC_CLIENT_ID` is gone), `tasks-backend`
+  has a dev-only `HR_SERVICE_TOKEN` for the role catalog, and both Tasks web
+  apps set `KEYCLOAK_ORIGIN=https://auth.conservices.test` for their
+  Content-Security-Policy. Recreate the Tasks containers to pick it up.
+- Docs: [Secrets](docs/operations/secrets.md) lists Tasks'
+  `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN`; the HR → Tasks row on
+  [Network policies](docs/operations/network-policies.md) names the token
+  for the role catalog.
 
 ### Changed
 

@@ -56,8 +56,16 @@ Den must be running and checked first: see
     vault kv put secret/conservices/tasks/backend \
       DATABASE_URL='postgres://tasks:change-me@postgres.conservices-data.svc.cluster.local:5432/tasks?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
       S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
-      TASKS_SERVICE_TOKEN="$(openssl rand -hex 32)"
+      TASKS_SERVICE_TOKEN="$(openssl rand -hex 32)" \
+      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+      HR_SERVICE_TOKEN='<the installation-wide HR_SERVICE_TOKEN>'
     ```
+
+    `DEN_LINK_ENCRYPTION_KEY` encrypts the credential Den gives Tasks when
+    it is paired; without it the backend pod does not start
+    (`CreateContainerConfigError`). Losing the key means pairing again.
+    `HR_SERVICE_TOKEN` is the one token HR uses to read every module's
+    role catalog; leave it out if you do not run HR.
 
     If Tasks sends email through its own mail server (not one Den
     provides), add `SMTP_USERNAME=change-me SMTP_PASSWORD=change-me` to the
@@ -138,6 +146,10 @@ Den must be running and checked first: see
     ```text
     DEPARTMENT_HOOKS=https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments|<TASKS_SERVICE_TOKEN>
     ```
+
+    HR also reads Tasks' role catalog (`GET /api/role-catalog`) with
+    `HR_SERVICE_TOKEN`, which must be the same value in HR and in
+    `tasks-secrets` (step 4).
 
     The Tasks chart already admits HR's backend; HR's namespace needs the
     matching egress rule to `conservices-tasks` port 8080 (see
@@ -267,6 +279,7 @@ in `not_after`.
 | `internalTLS.ingressNginxAnnotations` | `false` | Legacy, only with `ingress.enabled: true`: adds the ingress-nginx annotations for HTTPS to the web app (`backend-protocol: HTTPS`, `proxy-ssl-verify`). The Gateway API route uses a `BackendTLSPolicy` instead. ingress-nginx is no longer maintained; do not use it. |
 | `route.enabled`, `route.host`, `route.parentRefs`, `route.timeout` | `true`, `tasks.conservices.test`, Gateway `public` in `conservices-gateway` (listener `https`), `60s` | Exposes the web app through the Gateway API: an `HTTPRoute` and, with internal TLS, a `BackendTLSPolicy` that makes the gateway check `tasks-frontend`'s certificate. See [Exposing the web app](../../operations/helm.md#exposing-the-web-app-gateway-api). |
 | `frontend.config` | `{}` | The web app's `/config.json` (sign-in address, client id; see [Web app settings](configuration.md#web-app-settings-configjson)), written to the ConfigMap `<release>-frontend-config`. Keys left out come from `config.AUTH_MODE`, `config.OIDC_ISSUER_URL` and `config.OIDC_CLIENT_ID` (else `tasks-spa`). |
+| `frontend.securityHeaders.keycloakOrigin`, `.denOrigin`, `.s3Origin`, `.extraConnectSrc` | `""` each | Origins the web app's Content-Security-Policy allows besides the app itself, passed to the container as `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN`, `EXTRA_CONNECT_SRC`. An empty `keycloakOrigin` becomes the origin of the issuer (`frontend.config.oidcAuthority` or `config.OIDC_ISSUER_URL`). Tasks needs no Den or S3 origin: brand and attachments go through its API. See [nginx security headers](../../concepts/shared-code.md#nginx-security-headers). |
 | `ingress.enabled` | `false` | Plain `Ingress` for another controller instead of the route. |
 | `ha.podDisruptionBudget`, `ha.topologySpread`, `priorityClassName` | `true`, `true`, `""` | PodDisruptionBudget and spreading over nodes for the web app (two replicas); see [High availability](../../operations/helm.md#high-availability). |
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
@@ -337,15 +350,15 @@ first, then add Tasks next to Den:
     depends_on:
       tasks-migrate: { condition: service_completed_successfully }
     networks: [internal, egress]
-    env_file: /etc/conservices/tasks-backend.env   # DATABASE_URL, S3_*, TASKS_SERVICE_TOKEN
+    # DATABASE_URL, S3_*, TASKS_SERVICE_TOKEN, DEN_LINK_ENCRYPTION_KEY, HR_SERVICE_TOKEN
+    env_file: /etc/conservices/tasks-backend.env
     environment:
       APP_ENV: production
       APP_BASE_URL: https://tasks.con.example.org
       HTTP_ADDR: ":8080"
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
-      OIDC_CLIENT_ID: tasks-spa
-      OIDC_AUDIENCE: tasks-spa
+      OIDC_AUDIENCE: tasks-api
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: https://tasks.con.example.org
       S3_ENDPOINT: https://fsn1.your-objectstorage.com
@@ -359,6 +372,9 @@ first, then add Tasks next to Den:
     image: ghcr.io/aglelectronics/tasks-frontend:1.0.0-1
     restart: unless-stopped
     networks: [internal]
+    environment:
+      # The sign-in server, allowed by the web app's Content-Security-Policy.
+      KEYCLOAK_ORIGIN: https://auth.con.example.org
     volumes:
       # infra/nginx.stack.conf from the Tasks repository: forwards /api/ to tasks-backend:8080.
       - ./tasks/nginx.stack.conf:/etc/nginx/conf.d/default.conf:ro
@@ -437,8 +453,45 @@ paired yet; pair it, then save the department in HR again.
 
 **The backend exits with `OIDC_ISSUER_URL is required when AUTH_MODE=oidc`.**
 Without `APP_ENV` and `AUTH_MODE` the backend starts as production with
-OIDC. Set `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID`; on a developer machine set
+OIDC. Set `OIDC_ISSUER_URL`; on a developer machine set
 `APP_ENV=development` and `AUTH_MODE=dev` explicitly instead.
+
+**The backend exits with `AUTH_MODE=dev lets anyone sign in as anyone and is only allowed with APP_ENV=development`.**
+Dev sign-in trusts any `X-Dev-User` header, so it is refused anywhere but
+a developer machine. Set `AUTH_MODE=oidc`, or `APP_ENV=development` on
+your own machine.
+
+**The backend exits with `DEN_LINK_ENCRYPTION_KEY is required unless APP_ENV=development`.**
+Add the key to `tasks-secrets` (or the env file):
+`openssl rand -base64 32`. With the chart the pod shows
+`CreateContainerConfigError` instead, naming the missing key.
+
+**After a key change the log says *the stored Den credential cannot be decrypted*.**
+`DEN_LINK_ENCRYPTION_KEY` was replaced without putting the old value in
+`DEN_LINK_ENCRYPTION_KEY_PREVIOUS`. Put it back there, or pair again.
+
+**Every API request answers `401` after sign-in.** The access token lacks
+the `tasks-api` audience. Check that the Keycloak client `tasks-spa` has
+the audience mapper *audience tasks-api* (the platform realm has it) and
+that `OIDC_AUDIENCE` is `tasks-api`.
+
+**Sign-in or silent renewal fails; the browser console says *Refused to
+connect* or *Refused to frame* `https://auth.…`.** The web app's
+Content-Security-Policy does not list the sign-in server. Set
+`KEYCLOAK_ORIGIN` on the web app container (with the chart:
+`frontend.securityHeaders.keycloakOrigin`, which defaults to the issuer's
+origin) and restart it.
+
+**Settings say *Den rejected this module's credential*.** The pairing was
+revoked or Tasks was removed in Den. Create a new pairing URL in Den
+(*Admin → Modules → Pair*) and paste it in *Settings → Den connection*.
+
+**HR shows no Tasks roles; HR's log says `401` for Tasks' catalog.**
+`HR_SERVICE_TOKEN` differs between HR and Tasks, or is missing on one side.
+
+**Pairing fails with *pairing with Den at … is not allowed here*.** Add
+Den's host to `DEN_ALLOWED_HOSTS`, or set `DEN_INTERNAL_URL` (the chart
+sets it for the platform).
 
 **Boards only update every 15 seconds.** The live-update stream
 (`/api/v1/stream`) does not get through. With the chart, keep

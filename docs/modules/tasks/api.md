@@ -44,12 +44,15 @@ TOKEN=...   # see "Getting a token" below
 
 ### Authentication
 
-- **Production (`AUTH_MODE=oidc`).** Send a Keycloak access token:
-  `Authorization: Bearer <token>`. Tasks creates the person on their first
-  request and reads their roles from the token's `groups` claim **on every
+- **Production (`AUTH_MODE=oidc`).** Send a Keycloak **access token**
+  whose audience includes `tasks-api` (`OIDC_AUDIENCE`):
+  `Authorization: Bearer <token>`. ID tokens are refused with `401`.
+  Tasks creates the person on their first request and reads their groups
+  from the token's `groups` claim (`OIDC_GROUPS_CLAIM`) **on every
   request**. See [Authentication](../../concepts/authentication.md).
-- **Development only (`AUTH_MODE=dev`).** Send `X-Dev-User: alice` and
-  optionally `X-Dev-Groups: tasks-admin`. Never on a reachable server.
+- **Development only (`AUTH_MODE=dev` with `APP_ENV=development`).** Send
+  `X-Dev-User: alice` and optionally `X-Dev-Groups: tasks-admin`. In any
+  other mode the backend removes these headers before reading a request.
 
 **Roles** (granted through Keycloak groups; see
 [Configuration](configuration.md)):
@@ -89,8 +92,8 @@ to another space.
 
 | Limit | Value |
 | --- | --- |
-| Rate limit | About 20 requests a second per person, bursts of 100. Above: `429`, `Retry-After: 1`. Applies to `/api/v1/*` after sign-in. |
-| Request body | 1 MB; attachment uploads 25 MB plus 1 MB of form overhead; imports 11 MB (a 5 MB file, JSON-escaped). |
+| Rate limit | About 20 requests a second per person, bursts of 100. Above: `429 rate_limited` with `Retry-After`. Applies to `/api/v1/*` after sign-in. |
+| Request body | 1 MB; attachment uploads 25 MB plus 1 MB of form overhead; imports 11 MB (a 5 MB file, JSON-escaped). A larger body answers `413 request_too_large`. |
 | Request time | 60 seconds, except the live-update stream (`GET /api/v1/stream`), which stays open up to 30 minutes. |
 | Live-update streams | 5 open streams per person; the 6th is `429`. |
 | Task title / description / comment | 500 / 100,000 / 20,000 characters. |
@@ -231,27 +234,88 @@ belongs to (set by the [department hook](#department-hook-hr)).
 | `GET /livez` | anyone | `{"status":"ok"}` while the process runs. |
 | `GET /readyz` | anyone | `200 {"status":"ok","database":"ok"}`, or `503` with `"database":"down"`. |
 | `GET /api/health` | anyone | `{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5231}` |
-| `GET /api/role-catalog` | anyone | Roles HR can grant, with their groups and permissions. |
+| `GET /api/role-catalog` | HR (`HR_SERVICE_TOKEN`) or signed in | Roles HR can grant, with their groups and permissions. See [Role catalog](#role-catalog). |
 | `GET /api/v1/brand`, `GET /api/v1/brand/{role}` | anyone | Brand from Den once paired (`"source":"den"`), else `"standalone"`; `{role}` streams a logo or login background. |
 
+### Role catalog
+
+`GET /api/role-catalog` lists the roles HR can give people in Tasks, one
+entry per Keycloak group bound to a role in the
+[access config](configuration.md#access-config-file). It follows the
+[role catalog contract](../../concepts/role-catalog.md).
+
+**Who may call it:** HR's backend with `Authorization: Bearer
+<HR_SERVICE_TOKEN>` (compared in constant time with Tasks' own
+`HR_SERVICE_TOKEN`; the token allows nothing else), or anyone signed in
+with their usual access token. The path stays open while Tasks waits for
+Den (`DEN_MODE=required`).
+
+**Request body:** none. Send `If-None-Match` with the last `ETag` to get
+`304 Not Modified` while nothing changed.
+
+**Response:** `200`, with `ETag: "<revision>"` and `Cache-Control:
+private, no-cache`.
+
+| Field | Meaning |
+| --- | --- |
+| `module`, `display_name`, `description` | `tasks`, `Tasks`, and a one-line description for HR's access picker. |
+| `revision` | Changes whenever the catalog changes (a hash of it; the access config is read at start-up). Also the `ETag`. |
+| `roles[].key` | `organization_admin` or `space_creator` (or a role of your own access config). Tasks has no dynamic roles. |
+| `roles[].label`, `roles[].description` | Human-readable. |
+| `roles[].group` | The Keycloak group that grants the role, normalised (no leading `/`, lower case). |
+| `roles[].group_display` | The group as written in the access config. |
+| `roles[].assignable` | Always `true`. |
+| `roles[].default` | Always `false`: HR gives no Tasks role to new people by default. |
+| `roles[].scope` | `organization`. |
+| `roles[].privileged` | `true` for roles with `space.manage` or `settings.manage` (they see every space or change settings and the Den pairing). |
+| `roles[].dynamic` | Always `false`. |
+| `roles[].permissions` | What the role allows, sorted. |
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `401` | `unauthorized` | No token, a wrong service token, or an invalid or expired sign-in token. |
+
 ```sh
-curl -s $TASKS/api/role-catalog
+curl -s https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN"
 ```
 
 ```json
 {
-  "module": "tasks", "display_name": "Tasks",
+  "module": "tasks",
+  "display_name": "Tasks",
+  "description": "Projects, lists, boards and tasks.",
+  "revision": "5f0c2a9d41be7e13",
   "roles": [
     {"key": "organization_admin", "label": "Organization Admin",
      "description": "Manages every space, its lists and statuses, and the module settings.",
-     "group": "tasks-admin", "assignable": true, "scope": "organization:demo-org",
+     "group": "tasks-admin", "group_display": "tasks-admin",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": true, "dynamic": false,
      "permissions": ["settings.manage", "space.create", "space.manage"]},
     {"key": "space_creator", "label": "Space Creator",
      "description": "Creates new spaces and manages the spaces they created.",
-     "group": "tasks-creator", "assignable": true, "scope": "organization:demo-org",
+     "group": "tasks-creator", "group_display": "tasks-creator",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": false, "dynamic": false,
      "permissions": ["space.create"]}
   ]
 }
+```
+
+Without a token:
+
+```sh
+curl -s -i $TASKS/api/role-catalog
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+
+{"error":{"code":"unauthorized","message":"missing bearer token"}}
 ```
 
 ---
@@ -1390,10 +1454,37 @@ every module; see [Pairing](../../concepts/pairing.md).
 
 | Method and path | Result |
 | --- | --- |
-| `GET /api/v1/den` | `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at"}`, or `{"paired": false}`. |
-| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`; `422 pairing_failed` with the reason. |
+| `GET /api/v1/den` | `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at", "last_error", "revoked": false}`, or `{"paired": false, "revoked": false}`. |
+| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`; `422 pairing_failed` with the reason. The URL's host must be in `DEN_ALLOWED_HOSTS` unless `DEN_INTERNAL_URL` is set (see [Configuration](configuration.md)). Pairing again also clears a revoked state. |
 | `POST /api/v1/den/sync` | Fetch Den's brand and settings now; `409` when not paired, `502` when Den fails. |
 | `DELETE /api/v1/den/pair` | Unpair, `204`. |
+
+**Revoked credential.** When Den answers a sync with `401` (the pairing
+was revoked or the module removed in Den), Tasks marks the link revoked
+and keeps using the last brand and settings it got from Den. It never pairs
+again by itself. `GET /api/v1/den` then says:
+
+```sh
+curl -s $TASKS/api/v1/den -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "paired": true,
+  "den_base_url": "https://den.example.org",
+  "module_id": "3c1f6a2e-8d4b-4f0a-9b7e-2a5d6c8e1f00",
+  "paired_at": "2026-11-02T09:14:03Z",
+  "synced_at": "2026-11-11T15:58:41Z",
+  "last_error": "Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair",
+  "revoked": true,
+  "revoked_at": "2026-11-11T15:59:41Z"
+}
+```
+
+The public `GET /api/den/state` reports `{"mode":"required","paired":true,"revoked":true}`.
+The web app shows *Den rejected this module's credential* on *Settings →
+Den connection* and in a banner for admins; to fix it, create a new
+pairing URL in Den (*Admin → Modules → Pair*) and paste it there.
 
 ---
 
@@ -1402,7 +1493,7 @@ every module; see [Pairing](../../concepts/pairing.md).
 | Method | Path | Who |
 | --- | --- | --- |
 | GET | `/livez`, `/readyz`, `/api/health` | anyone |
-| GET | `/api/role-catalog` | anyone |
+| GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or signed in |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | anyone |
 | POST | `/api/internal/departments` | `TASKS_SERVICE_TOKEN` |
 | GET | `/api/v1/me` | signed in |

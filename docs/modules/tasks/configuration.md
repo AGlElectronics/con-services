@@ -13,7 +13,7 @@ every problem.
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` (from `values.yaml` `config:`) | Every setting below that is not a secret. The chart adds `ACCESS_CONFIG_PATH`. |
-| Secret `tasks-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `TASKS_SERVICE_TOKEN`, and `SMTP_USERNAME`, `SMTP_PASSWORD` when Tasks uses its own mail server. |
+| Secret `tasks-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `TASKS_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY` (the backend pod does not start without it), and optionally `HR_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, and `SMTP_USERNAME`, `SMTP_PASSWORD` when Tasks uses its own mail server. |
 | ConfigMap `tasks-access-config` | The access config file. |
 | Secrets `tasks-backend-tls`, `tasks-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -31,14 +31,20 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests to finish. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3009` | no | no | Comma-separated browser origins allowed to call the API. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
-| `AUTH_MODE` | `oidc` | no | no | `oidc` signs people in through the identity provider (then `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID` are required). `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers: **local development only**, and only accepted with `APP_ENV=development`. With neither variable set the backend is production with OIDC and refuses to start until OIDC is configured (it fails closed). |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` signs people in through the identity provider (then `OIDC_ISSUER_URL` is required). `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers: **local development only**, and only accepted with `APP_ENV=development`; anywhere else the backend refuses to start. Outside dev mode the backend drops both headers from every request and leaves them out of CORS. With neither variable set the backend is production with OIDC and refuses to start until OIDC is configured (it fails closed). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer, for example `https://auth.example.org/realms/conservices`. |
-| `OIDC_CLIENT_ID` | none | with `oidc` | no | `tasks-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Expected token audience, normally `tasks-spa`. |
+| `OIDC_AUDIENCE` | `tasks-api` | no | no | The audience (`aud`) every access token must carry. The Keycloak audience mapper on the `tasks-spa` client adds `tasks-api` to access tokens; ID tokens are refused. See [Token contract](../../concepts/authentication.md). The backend no longer reads `OIDC_CLIENT_ID`. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | no | The token claim that holds the person's groups. Groups come only from this claim; Keycloak realm roles are not merged in. |
+| `OIDC_GROUP_MATCH` | `full` | no | no | How groups match access-config bindings and group grants: `full` (the whole path, `/departments/ops` matches `departments/ops` but not `ops`) or `last` (only the last path segment). See [How groups are matched](../../concepts/authentication.md#how-groups-are-matched). |
+| `OIDC_GROUP_PREFIX` | none | no | no | A parent group removed before matching, for example `/con2026`, so `/con2026/departments/ops` matches a grant to `departments/ops`. Stored grants do not change when you set it. |
+| `HR_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR's backend sends to read [`GET /api/role-catalog`](api.md#role-catalog); one value per installation, the same in HR and every module. Empty: only signed-in people can read the catalog. Generate with `openssl rand -hex 32`. See [Secrets](../../operations/secrets.md). |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the [access config file](#access-config-file). Without it the built-in catalog is used. |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only: user when no header is sent. |
 | `DEV_DEFAULT_GROUPS` | `tasks-admin` | no | no | `dev` mode only: groups when no header is sent. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address, on the platform `https://den-backend.conservices-den.svc.cluster.local:8080`; replaces the host of pasted pairing URLs. Empty without Den. |
+| `DEN_ALLOWED_HOSTS` | none | no | no | Comma-separated hosts a pasted pairing URL may point at (`den.example.org`, `*.example.org`). Not needed while `DEN_INTERNAL_URL` is set. With neither set, pairing is refused outside development; in development `localhost`, `127.0.0.1`, `::1` and `*.conservices.test` are always allowed. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | **yes**, unless `APP_ENV=development` | **yes** | Encrypts the credential Den issues to Tasks before it is stored in the database: base64 of 32 random bytes (`openssl rand -base64 32`). Without it the backend refuses to start outside development. Losing it means pairing again. See [Secrets](../../operations/secrets.md). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The old key during a rotation: Tasks still reads a credential sealed with it and re-seals it with `DEN_LINK_ENCRYPTION_KEY` the first time it uses the link. Remove it once the backend log shows `den link: re-encrypted the stored credential with the current key`. A credential stored before encryption existed is re-sealed the same way. |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` while not paired. |
 | `TASKS_SERVICE_TOKEN` | none | for HR | **yes** | Bearer token HR uses for `POST /api/internal/departments`. **Empty turns the endpoint off** (`404`). Must equal the token in HR's `DEPARTMENT_HOOKS`. Generate with `openssl rand -hex 32`. |
@@ -274,6 +280,51 @@ cache-control: no-store
 - **An old value still shows**: something in front of nginx caches the file.
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
+
+### Sign-in tokens
+
+The web app keeps its tokens **in memory only** (the
+[token contract](../../concepts/authentication.md)): nothing is written to
+`localStorage` or `sessionStorage`. After a reload or in a new tab it signs
+in again silently through the Keycloak session, in a hidden frame
+(`/silent-callback.html`), so people are not asked to log in again while
+their Keycloak session lasts. It sends the **access token** to the API;
+the backend accepts it only with the audience `tasks-api`. Tabs tell each
+other who is signed in over a `BroadcastChannel` that carries only the user
+id: signing out in one tab signs out every tab.
+
+## Web app security headers
+
+nginx in the `tasks-frontend` image sends the shared Con Services browser
+security headers (Content-Security-Policy, `X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`) on the
+pages and files of the web app. `/api/` responses come from the backend,
+which sets its own stricter headers. The image fills in the origins the
+browser may reach from these variables of the **web app container** when it
+starts:
+
+| Variable | Default | Required | What it does |
+| --- | --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | none | with OIDC sign-in | The sign-in server's origin, for example `https://auth.example.org` (scheme, host, optional port; no path). Without it sign-in and silent renewal are blocked. The Helm chart sets it from `frontend.securityHeaders.keycloakOrigin`, else from the issuer URL. |
+| `DEN_ORIGIN` | none | no | Den's origin, only if the browser calls Den itself. Tasks serves Den's brand through its own API, so leave it empty. |
+| `S3_ORIGIN` | none | no | Only for direct browser uploads to S3. Tasks uploads through its backend, so leave it empty. |
+| `EXTRA_CONNECT_SRC` | none | no | Any other origin the browser must call. |
+
+Check the result:
+
+```sh
+curl -sI https://tasks.example.org/ | grep -i -E 'content-security|x-frame|permissions'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+x-frame-options: DENY
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+The live-update stream (`/api/v1/stream`) is proxied without these headers
+and without buffering, as before. Details and troubleshooting:
+[nginx security headers](../../concepts/shared-code.md#nginx-security-headers).
 
 ## Frontend build settings
 

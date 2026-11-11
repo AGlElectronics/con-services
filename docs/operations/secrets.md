@@ -181,7 +181,7 @@ with each module's docs):
 | HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, SMTP password if any | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
-| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN`, `SMTP_USERNAME` and `SMTP_PASSWORD` if Tasks uses its own mail server | `conservices-tasks` |
+| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY` (required; the chart stops the pod without it), `HR_SERVICE_TOKEN` if HR reads the role catalog, `SMTP_USERNAME` and `SMTP_PASSWORD` if Tasks uses its own mail server | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL` | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
@@ -212,7 +212,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | Planned with the [role catalog contract](../concepts/role-catalog.md); not used by any release yet. Same value on every side; allows only catalog reads. |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | The [role catalog contract](../concepts/role-catalog.md). Tasks checks it from its 1.0.0 release (`GET /api/role-catalog`); HR sends it once HR adopts the contract. Same value on every side; allows only catalog reads. Generate with `openssl rand -hex 32`; to rotate, change it in the secret manager and restart HR and every module at the same time (catalog reads fail with `401` in between). |
 
 ### Den link encryption key
 
