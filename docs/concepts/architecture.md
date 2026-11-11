@@ -173,8 +173,9 @@ flowchart LR
 
 Den's API server **never** changes its own database structure. Only the
 `migrate` initContainer does, and the API process only starts after it
-finished successfully. Den's backend runs as a single replica with the
-`Recreate` strategy, so two migrations can never run at once (see
+finished successfully. When several Den backend pods start at once, their
+migrate containers wait on a PostgreSQL advisory lock, so two migrations
+can never run at the same time (see
 [Running on Kubernetes](../operations/running.md#scaling)).
 
 ## How modules talk to each other
@@ -287,8 +288,9 @@ module:
   by every app;
 - **backups** of the whole suite, through the operator.
 
-Den also pushes the brand into Keycloak, so the sign-in page looks like the
-rest of the suite. See
+The Keycloak sign-in page looks like the rest of the suite too: its
+`conservices` theme fetches Den's public brand in the browser, so Den needs
+no write access to the realm. See
 [Keycloak sync](../modules/den/admin-guide.md#keycloak-sync).
 
 For the data model behind all this, see Den's

@@ -220,9 +220,15 @@ and its own database backups. Then:
 - **Configure real SMTP** on the realm; the test realm points at Mailpit,
   which does not exist on Kubernetes.
 - **Install the `conservices` login theme** if you want Den's branding on the
-  sign-in page, and give the `den-keycloak` service account the
+  sign-in page, and set `DEN_PUBLIC_URL` on Keycloak to Den's public
+  address; the theme fetches the brand from there. Den needs no access to
+  the realm for this. Only if Keycloak's own e-mails should use the
+  organisation name, give the `den-keycloak` service account the
   `realm-management` role `manage-realm`. That role can change every realm
-  setting, so keep its secret as safe as an admin password.
+  setting, so keep its secret as safe as an admin password, or leave the
+  client out.
+- **Put the operations staff into `den-ops`** (or your `DEN_OPS_GROUPS`):
+  only they can run and download backups and delete module databases.
 - Decide on **session lengths**. The test realm uses 5-minute access tokens,
   a 10-hour idle session and a 24-hour maximum.
 

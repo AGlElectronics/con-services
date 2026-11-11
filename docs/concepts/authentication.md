@@ -1,3 +1,5 @@
+
+
 # Authentication
 
 This page explains how people sign in to Con Services, how Den and the
@@ -96,9 +98,10 @@ With `"authMode": "oidc"` there, it:
 
 It sends the **ID token**, not the access token, to Den's API. The ID token's
 audience (`aud`) is always the app's own client id, which is what Den checks;
-Keycloak access tokens often carry a different audience. Den's portal also
-sends the same ID token to paired modules when it collects
-[portal to-dos](../modules/den/admin-guide.md#portal-to-dos).
+Keycloak access tokens often carry a different audience. The token is only
+ever sent to Den: for [portal to-dos](../modules/den/admin-guide.md#portal-to-dos)
+Den's backend calls the modules itself, with each module's pairing
+credential and the person's issuer and subject.
 This changes with the [token contract](#tokens-the-10-contract) below.
 
 ### Tokens: the 1.0 contract

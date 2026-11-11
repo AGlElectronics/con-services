@@ -342,7 +342,7 @@ A pod or a node dying must not take a module down. What the charts do:
 
 | Component | Replicas | Why |
 | --- | --- | --- |
-| `den-backend` | exactly 1 | Backup download links live in process memory; two `migrate` initContainers must never run at once. |
+| `den-backend` | 1 or more | Stateless: download links are in PostgreSQL and migrate initContainers wait on an advisory lock. Rate limits count per replica. |
 | `den-operator` | exactly 1 | Backup scheduler and its lock live in the process. |
 | `stash-backend` | exactly 1 | Migrates in-process at start-up. |
 | `wiki-backend` | exactly 1 | Live-editing state and the edit buffer live in one process. |

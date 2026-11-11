@@ -197,8 +197,9 @@ What the hardening does:
   `restricted` Pod Security. The operator needs its `/tmp` (a `tmpfs` here)
   to be large enough for database dumps; give it a volume instead if your
   databases are big.
-- **One Den backend container only**: backup download links live in its
-  memory, and migrations run in `den-migrate` before it starts.
+- **Migrations run in `den-migrate`** before the Den backend starts. The
+  backend keeps no state of its own (backup download links are in the
+  database), so you may run more than one container behind a load balancer.
 - **The published frontend image works for any domain.** Two files next to
   the compose file make it yours:
 
