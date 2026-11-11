@@ -224,6 +224,19 @@ led by Den's MAJOR; see
   sees is unchanged: the API `message` field and `last_error` on the Den
   connection page still say "Den rejected…", "Den refused the pairing URL"
   and "Den returned …" (`denlink.UserMessage`).
+- **BREAKING:** Stash's Helm chart (still `1.0.0`; there is no chart
+  release tag yet), Kustomize manifests and Docker Compose follow the
+  token contract. `OIDC_AUDIENCE` is `stash-api`. `stash-secrets` must
+  include `DEN_LINK_ENCRYPTION_KEY` or the backend pod does not start,
+  unless `APP_ENV` is `development`. The web app container needs
+  `KEYCLOAK_ORIGIN` (the chart takes it from the sign-in address when
+  `frontend.securityHeaders.keycloakOrigin` is empty).
+  `scripts/smoke-stash.ps1` sends access tokens, and its role-catalog
+  call is signed in. The OpenBao guide lists `modules/stash/telegram`,
+  `modules/stash/smtp` (both optional) and `modules/hr/service-token`
+  (generated when HR and Stash are both enabled). What to change on an
+  existing installation is in
+  [Stash's changelog](https://github.com/AGlElectronics/stash/blob/main/CHANGELOG.md).
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,

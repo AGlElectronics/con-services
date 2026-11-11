@@ -21,9 +21,10 @@ $ErrorActionPreference = 'Stop'
 $stash = $BaseUrl.TrimEnd('/')
 $kc = "$KeycloakUrl/realms/conservices/protocol/openid-connect/token"
 
-function Get-IdToken($user, $pass) {
+function Get-AccessToken($user, $pass) {
+  # Access token (audience stash-api). The API refuses the ID token.
   $body = @{ grant_type = 'password'; client_id = 'stash-spa'; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 
 # Keycloak admin (dev stack only; the dev default is admin/admin).
@@ -101,8 +102,8 @@ if ($Auth -eq 'oidc') {
   Connect-KeycloakAdmin
   $adminUid = Ensure-SmokeUser 'smoke-stash-admin' 'smoke-stash-admin-pass' 'stash-admin'
   $roUid = Ensure-SmokeUser 'smoke-stash-ro' 'smoke-stash-ro-pass' 'stash-readonly'
-  $admin = @{ Authorization = "Bearer $(Get-IdToken 'smoke-stash-admin' 'smoke-stash-admin-pass')" }
-  $ro = @{ Authorization = "Bearer $(Get-IdToken 'smoke-stash-ro' 'smoke-stash-ro-pass')" }
+  $admin = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-stash-admin' 'smoke-stash-admin-pass')" }
+  $ro = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-stash-ro' 'smoke-stash-ro-pass')" }
 } else {
   $admin = @{ 'X-Dev-User' = 'smoke-stash-admin' }
   $ro = @{ 'X-Dev-User' = 'smoke-stash-ro:readonly' }
@@ -113,9 +114,16 @@ $item = $null; $report = $null
 try {
   Invoke-RestMethod "$stash/api/health" | Out-Null
 
-  # Role catalog: every role once, as stash_<role>.
-  $catalog = Invoke-RestMethod -Uri "$stash/api/role-catalog"
+  # Role catalog: staff sign-in (or HR_SERVICE_TOKEN); every role once, as stash_<role>.
+  Expect-Status 401 @{} 'Get' '/api/role-catalog' $null 'role catalog without a token'
+  $catalog = Call $admin 'Get' '/api/role-catalog'
   if ($catalog.module -ne 'stash') { throw 'role catalog module mismatch' }
+  if (-not $catalog.revision) { throw 'role catalog has no revision' }
+  $adminRole = @($catalog.roles | Where-Object { $_.key -eq 'stash_admin' })[0]
+  $volunteer = @($catalog.roles | Where-Object { $_.key -eq 'stash_volunteer' })[0]
+  if (-not $adminRole.privileged -or -not $adminRole.group_display) { throw 'stash_admin is missing privileged or group_display' }
+  if ($volunteer.privileged) { throw 'stash_volunteer should not be privileged' }
+  if ($adminRole.scope -ne 'organization') { throw "role scope is $($adminRole.scope), expected organization" }
   $keys = @($catalog.roles | ForEach-Object key)
   if ($keys | Where-Object { $_ -notlike 'stash_*' }) { throw "role keys without stash_ prefix: $($keys -join ',')" }
   foreach ($k in 'stash_admin', 'stash_volunteer', 'stash_readonly', 'stash_frontdesk') {

@@ -273,16 +273,18 @@ Each reminder is audited as `signout.overdue_reminder`.
 
 **Someone has the wrong permissions.** Call `GET /api/me` with their token:
 `roles` and `permissions` show what Stash computed. Compare their token's
-`groups` claim with the `[[bindings]]` and the `stash_<role>` names; group
-names must match exactly (`/stash-admin` from a Keycloak full-path mapper is
-not `stash-admin`).
+`groups` claim (not `roles`) with the `[[bindings]]` and the `stash_<role>`
+names. Matching ignores case and one leading `/`, so `/Stash-Admin` is
+`stash-admin`. With `OIDC_GROUP_MATCH=last`, only the last path segment
+counts. A parent in `OIDC_GROUP_PREFIX` is removed first.
 
 **The backend does not start: "department_id is not supported; roles are
 global".** Remove the `department_id` line from that binding in
 `access-config.toml`.
 
-**"is managed in Den (Admin → Organisation)" when saving settings.** Stash
-is paired and Den sets that key; change it in Den, or remove the key there.
+**"is managed in Den (Admin → Module settings)" when saving settings.** Stash
+is paired and Den sets that key; change it in Den → Admin → Module settings,
+or remove the key there. The last day of the convention stays in Stash.
 
 **Den connection shows "Den rejected this module's credential".** The module
 was removed or its credential revoked in Den. Create a new pairing URL in

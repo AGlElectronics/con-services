@@ -24,7 +24,7 @@ ConfigMap in the Kustomize manifests).
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | ConfigMap | `development` turns on human-readable console logs; use `production` everywhere else (JSON logs). |
+| `APP_ENV` | `production` | no | ConfigMap | `production` (the default, also when unset) writes JSON logs and refuses dev sign-in and an unencrypted Den credential. `development` turns on human-readable console logs and is the only value that allows `AUTH_MODE=dev`. Set it explicitly in development. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | ConfigMap | Public address of Stash, for example `https://stash.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | ConfigMap | Address the API listens on inside the container. Keep `:8080`; the manifests and nginx configs expect it. |
 | `DATABASE_URL` | none | **yes** | **Secret** | PostgreSQL connection URL, for example `postgres://stash:change-me@db:5432/stash?sslmode=require`. On the platform, Den shows it once when it creates the database; it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt` because the platform's PostgreSQL accepts only TLS connections. |
@@ -73,13 +73,17 @@ the bucket on first start if it does not exist and the keys allow it.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | ConfigMap | `oidc` verifies bearer tokens from your identity provider. `dev` trusts an `X-Dev-User` header and must never be used outside local development. |
+| `AUTH_MODE` | `oidc` | no | ConfigMap | `oidc` (the default) verifies access tokens from your identity provider. `dev` trusts an `X-Dev-User` header and is refused unless `APP_ENV=development`. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | ConfigMap | Issuer of staff tokens, for example `https://auth.example.org/realms/conservices`. Must match the tokens' `iss` exactly. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | ConfigMap | Keycloak client of the web app (`stash-spa` on the platform). |
-| `OIDC_AUDIENCE` | none | no | ConfigMap | Expected token audience if it differs from the client id. |
+| `OIDC_AUDIENCE` | `stash-api` | no | ConfigMap | Audience an access token must carry (`aud`). The realm's audience mapper on `stash-spa` adds `stash-api`. ID tokens are refused. See [Audiences per API](../../concepts/authentication.md#audiences-per-api). |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | ConfigMap | Token claim that holds the person's groups. The `roles` claim is never merged in. |
+| `OIDC_GROUP_MATCH` | `full` | no | ConfigMap | `full` compares the whole group path. `last` compares only the last segment, so `/teams/stash_volunteer` grants `volunteer`. Anything else stops the backend at start. |
+| `OIDC_GROUP_PREFIX` | none | no | ConfigMap | A parent group removed before matching, for example `/con2026`. Empty: no prefix. Names that do not start with it are compared as they are. |
+| `HR_SERVICE_TOKEN` | none | no | **Secret** | Lets HR read `GET /api/role-catalog` with `Authorization: Bearer` (32 characters or more; a shorter value stops the backend at start). The same value as HR's. Empty: only signed-in staff can read the catalog. |
 | `ACCESS_CONFIG_PATH` | none | with `oidc` | ConfigMap | Path to the access config TOML file (roles, permissions, group bindings), for example `/etc/stash/access-config.toml`. The file itself is mounted from a ConfigMap. See [The access config file](#the-access-config-file). |
 | `OIDC_BINDINGS_PATH` | none | no | ConfigMap | Old name of `ACCESS_CONFIG_PATH`, still read when the new name is not set. |
-| `DEV_DEFAULT_USER` | `dev-admin` | no | ConfigMap | User assumed in `dev` mode when no `X-Dev-User` header is sent. A plain name (`dev-admin`) is an admin; `name:role` or `name:role1,role2` (for example `bob:volunteer`) signs in with only those roles. The same syntax works in the `X-Dev-User` header. An unknown role answers `403 unknown dev role`. |
+| `DEV_DEFAULT_USER` | `dev-admin` | no | ConfigMap | User assumed in `dev` mode when no `X-Dev-User` header is sent. A plain name (`dev-admin`) is an admin; `name:role` or `name:role1,role2` (for example `bob:volunteer`) signs in with only those roles. The same syntax works in the `X-Dev-User` header. An unknown role answers `403 unknown dev role`. Outside dev sign-in the backend drops `X-Dev-User` and `X-Dev-Groups`, and CORS allows those headers only in dev sign-in. |
 
 ## Background jobs and notifications
 
@@ -108,27 +112,26 @@ restart: see [Settings](admin-guide.md#settings).
 ## Settings that Den can manage
 
 Some of Stash's settings can come from Den, so one person sets them for all
-modules. While Stash is paired, Den's organisation settings (Den → Admin →
-Organisation) override these keys, and Stash shows them read-only with
+modules. While Stash is paired, Den's module settings (Den → Admin →
+Module settings) override these keys, and Stash shows them read-only with
 *Managed in Den*. Unpaired, or when Den does not set a key, Stash's own
-value applies.
+value applies. Stash reads them from the bundle through the shared Den
+client (`ModuleSettings`), not from organisation settings.
 
-| Den organisation setting | Stash setting | Example |
+| Den module setting | Stash setting | Example |
 | --- | --- | --- |
-| `organization_name` | `organization_name` | `"Example Con"` |
-| `stash_con_end_date` | `con_end_date` | `"2026-08-16"` |
-| `stash_lostfound_retention_mode` | `lostfound_retention_mode` | `"after_con"` or `"after_close"` or `"off"` |
-| `stash_lostfound_retention_days` | `lostfound_retention_days` | `30` |
-| `stash_lostfound_retention_hours` | `lostfound_retention_hours` | `720` |
-| `stash_smtp_host` | `smtp_host` | `"smtp.example.org"` |
-| `stash_smtp_port` | `smtp_port` | `587` |
-| `stash_smtp_username` | `smtp_username` | `"stash@example.org"` |
-| `stash_smtp_from` | `smtp_from` | `"Stash <stash@example.org>"` |
-| `stash_smtp_tls` | `smtp_tls` | `"starttls"`, `"tls"` or `"none"` |
+| organisation name on the bundle | `organization_name` | `"Example Con"` |
+| `stash.lost_found` mode `kept_after_con`, with `days` (default 30) | `lostfound_retention_mode` `after_con`, `lostfound_retention_days` | `{"mode":"kept_after_con","days":14}` |
+| `stash.lost_found` mode `deleted_after_closing`, with `hours` (default 48) | `lostfound_retention_mode` `after_close`, `lostfound_retention_hours` | `{"mode":"deleted_after_closing","hours":72}` |
+| `retention.inactive_users_days` | `user_inactive_days` | `180` |
+| `smtp.host`, `smtp.port`, `smtp.username`, `smtp.security` | `smtp_host`, `smtp_port`, `smtp_username`, `smtp_tls` | host `smtp.example.org`, port `587`, security `starttls` |
+| `smtp.from` and `smtp.from_name` | `smtp_from` | `"Stash <stash@example.org>"` |
 
-A value Stash does not accept (for example `"stash_smtp_port": "abc"`) is
-ignored and Stash keeps its own. The SMTP password never comes from Den; it
-is always `SMTP_PASSWORD`.
+The last day of the convention (`con_end_date`) stays a Stash setting; Den
+does not have a key for it. A value Stash does not accept (for example a
+retention of 0 days, or `"smtp.port": "abc"`) is ignored and Stash keeps
+its own. The SMTP password never comes from Den (the bundle only says
+whether one is set); it is always `SMTP_PASSWORD`.
 
 ## The access config file
 
@@ -145,10 +148,15 @@ remove the line`.
 A person gets a role in two ways:
 
 1. a `[[bindings]]` entry maps one of their groups to the role, or
-2. they are in a group named exactly like the role's key, `stash_<role>`
+2. they are in the role's global group `stash_<role>`
    (for example `stash_volunteer`), with no binding needed.
 
-Group names are compared exactly (case and a leading `/` matter).
+Group names are compared with the shared rule (`OIDC_GROUP_MATCH`,
+`OIDC_GROUP_PREFIX`): case does not matter, one leading `/` is ignored, and
+a configured parent group is removed first. Stash stores each binding's
+group both normalised (for matching) and as written in the file (for
+display). Two bindings that normalise to the same group and role are
+duplicates and stop the backend at start.
 
 ```toml
 # Listing a role replaces its built-in permissions completely.
@@ -162,8 +170,10 @@ role = "admin"
 ```
 
 `GET /api/role-catalog` lists every role once with key `stash_<role>`, scope
-`global`, its permissions and the group HR adds people to: the first group
-bound to the role, otherwise the key itself.
+`organization`, its permissions and the group HR adds people to: the first
+group bound to the role, otherwise `stash_<role>`. `group` is the stored
+form and `group_display` the form in the file. See the
+[API reference](api.md#get-apirole-catalog).
 
 | Permission | Allows |
 | --- | --- |
@@ -188,6 +198,9 @@ bound to the role, otherwise the key itself.
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces scheme and host of a pasted Den pairing URL, for when the backend reaches Den at a different address than browsers (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty for standalone installs. |
 | `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_ALLOWED_HOSTS` | none | no | ConfigMap | Hosts a pasted pairing URL may point at when `DEN_INTERNAL_URL` is empty (comma-separated; `*.example.org` for subdomains). In development, `localhost` and `*.conservices.test` are always allowed. Pairing URLs use `https://` outside development. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **Secret** | Encrypts the stored Den credential: 32 random bytes, base64 (`openssl rand -base64 32`). One key per installation. Outside `APP_ENV=development` the backend refuses to start without it. See [Den link encryption key](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **Secret** | The previous key during a rotation. Credentials sealed with it are re-encrypted with the current key on the next read. Remove it after that restart. |
 | `PUBLIC_LOSTFOUND_CLAIM_ENABLED` | `false` | no | ConfigMap | Turns on the guest Lost & Found lookup (`/api/public/lostfound`, no sign-in). Leave off until guest kiosks are ready. Pair with `publicClaimEnabled` in the web app's `/config.json` (the Helm chart derives it from this setting). |
 
 ## Other variables
@@ -306,6 +319,11 @@ cache-control: no-store
   `/config.json` at all, usually because the network dropped. Reload.
 - **Sign-in fails with "invalid redirect_uri" or "client not found"**:
   `oidcClientId` does not exist in the realm `oidcAuthority` points at.
+- **The browser blocks sign-in (a Content Security Policy error)**:
+  `KEYCLOAK_ORIGIN` on the web app container does not match the sign-in
+  server. The Helm chart sets it from `frontend.securityHeaders.keycloakOrigin`,
+  or from the sign-in address when that is empty. Restart the web app after
+  changing it. See [Nginx security headers](../../concepts/shared-code.md#nginx-security-headers).
 - **An old value still shows**: something in front of nginx caches the file.
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
@@ -338,7 +356,9 @@ The chart in `deploy/charts/stash` maps its values onto the variables above:
 | Value | Becomes |
 | --- | --- |
 | `config.*` | One entry each in the ConfigMap `<release>-config`. |
-| `existingSecret` | Name of the Secret loaded with `envFrom` (`DATABASE_URL`, `S3_*` keys, and optionally `TELEGRAM_BOT_TOKEN` and `SMTP_PASSWORD`). |
+| `existingSecret` | Name of the Secret loaded with `envFrom`. Required keys: `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `DEN_LINK_ENCRYPTION_KEY` (the pod does not start without that key, unless `config.APP_ENV` is `development`). Optional keys: `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SMTP_PASSWORD`. |
+| `frontend.securityHeaders.keycloakOrigin` | Origin the Content Security Policy allows for the sign-in server (scheme and host, no path). Empty: scheme and host of `oidcAuthority`. |
+| `frontend.securityHeaders.denOrigin`, `s3Origin`, `extraConnectSrc` | Extra origins the browser may contact. Empty is usual: Stash's browser does not call Den or S3 itself. Several values in `extraConnectSrc` are separated by spaces. |
 | `networkPolicy.telegramEgress` (default `false`), `networkPolicy.smtpEgress` (default `false`, ports `[587, 465]`) | Let the backend reach `api.telegram.org` and your SMTP server on port 443 / the SMTP ports. Turn them on with the Telegram bot and overdue emails. |
 | `accessConfig.existingConfigMap`, `mountPath`, `fileName` | The mounted access config and `ACCESS_CONFIG_PATH`. |
 | `backend.extraEnv`, `extraVolumes`, `extraVolumeMounts` | Extra settings, for example another CA volume (then set `SSL_CERT_DIR` in `config:` to both folders, separated by `:`). |

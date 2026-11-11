@@ -465,7 +465,8 @@ Paths are shown with the default `openbao.kvPath: conservices`.
 symbols, so the values fit into database URLs unescaped). Never write these
 yourself on a new installation. **You** means you enter it (step 4). The
 **Application** column is the Argo CD Application that stays `Degraded`
-while the entry is missing.
+while the entry is missing. Optional entries are the exception: the
+application runs without them and the feature stays off.
 
 | Path | Keys | Value | Created by | Application | Needed when |
 | --- | --- | --- | --- | --- | --- |
@@ -473,11 +474,15 @@ while the entry is missing.
 | `conservices/infra/postgres/roles/<role>` | `password` | password of a PostgreSQL login: `den`, `keycloak`, and one per enabled module (`stash`, `hr`, `events` for Rally, `finance`, `learn`, `wiki`, `desk`, `tasks`) | generated | `postgres` and the application | always (`den`, `keycloak`); per enabled module |
 | `conservices/modules/den/operator-token` | `token` | token between Den's backend and its operator | generated | `den` | always |
 | `conservices/modules/<module>/service-token` | `token` | token HR uses to call `learn`, `wiki`, `tasks` | generated | that module, `hr` | that module enabled |
+| `conservices/modules/hr/service-token` | `token` | `HR_SERVICE_TOKEN`: the same value in `hr-secrets` and `stash-secrets`, so HR can read Stash's role catalog. It allows only that read | generated | `hr`, `stash` | HR and Stash both enabled |
+| `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY`: 43 letters and digits, which is 32 bytes as unpadded base64. Encrypts the Den credential that module stores. One per module, never shared | generated | that module | that module enabled |
 | `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |
 | `conservices/modules/den/s3` | `access_key`, `secret_key` | S3 access key ID and secret key, read and write on bucket `<prefix>-conservices-den` only | you | `den` | always |
-| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/stash/telegram` | `token` | Lost & Found bot token from [@BotFather](https://t.me/BotFather), like `123456789:AA…`. Do not share the bot with another module | you, optional | none | Stash enabled. Missing: Telegram stays off |
+| `conservices/modules/stash/smtp` | `password` | Password of the SMTP server in Stash's settings | you, optional | none | Stash enabled. Missing: mail is sent without a login |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | S3 key with **read only** access to all module buckets (Den copies files into its backups) | you | `den` | always |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-den-backups` only | you | `den` | always |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-pg-backups` only (CloudNativePG) | you | `postgres` | always |
@@ -485,10 +490,13 @@ while the entry is missing.
 | `conservices/infra/cloudflare` | `api-token` | Cloudflare API token with Zone:DNS:Edit and Zone:Zone:Read on your zone only: 40 characters (older tokens) or 53 starting with `cfut_` or `cfat_` | you | `letsencrypt` | `acme.dns01.provider: cloudflare` (default) |
 | `conservices/infra/ghcr` | `username`, `token` | GitHub user and a classic token (`ghp_...`) with only `read:packages` | you | `den` and every module | `images.pullSecret.enabled` |
 
-With every module enabled that is 18 generated entries (20 values) and 11
-entries you enter (12 with `images.pullSecret.enabled`), each S3 entry with
-its own key. Which buckets the S3 keys are for, and how to create them, is
-on [Data](data.md). Who reads which entry is on
+With every module enabled that is 27 generated entries (29 values: the
+Keycloak client entry holds three) and 14 entries you enter (15 with
+`images.pullSecret.enabled`), each S3 entry with its own key. The two
+Stash entries `modules/stash/telegram` and `modules/stash/smtp` are
+optional. `modules/hr/service-token` exists only when HR and Stash are
+both enabled. Which buckets the S3 keys are for, and how to create them,
+is on [Data](data.md). Who reads which entry is on
 [Secrets](../operations/secrets.md#inventory).
 
 ## Without the setup Job

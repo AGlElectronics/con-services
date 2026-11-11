@@ -96,7 +96,9 @@ TOKEN=$(curl -s https://auth.example.org/realms/conservices/protocol/openid-conn
 | 403 | `forbidden` | Signed in, but missing the permission. |
 | 404 | `not_found` | No such object. |
 | 409 | `conflict` | The state does not allow it: not enough stock for a sign-out, confirming a returned sign-out, retiring a retired item, editing a setting Den manages, a duplicate name or barcode. |
+| 413 | `request_too_large` | JSON body larger than 1 MiB, or a settings body larger than 64 KiB. Uploads keep their own limit (`payload_too_large`). |
 | 422 | `validation_failed` | Field problems; sometimes with `details`. |
+| 429 | `rate_limited` | Too many requests from this client address. `Retry-After` says how many seconds to wait. Used by the role catalog and the public Lost & Found lookup. |
 | 500 | `internal` | Server error; the log line has the same `X-Request-ID` as the response header. |
 
 Requests time out after 60 seconds.
@@ -177,15 +179,27 @@ database is unreachable.
 
 ### `GET /api/role-catalog`
 
-Who may call: anyone. HR reads it to offer Stash roles when onboarding
-someone. It lists every role once, with key `stash_<role>`, scope `global`
-(roles are never limited to a department), its permissions, and the group
-that grants it: the first group bound to the role in `access-config.toml`,
-otherwise the key itself (a group named `stash_<role>` always grants the
-role).
+Who may call: HR's backend, with `Authorization: Bearer` set to
+`HR_SERVICE_TOKEN` (32 characters or more; checked in constant time), or
+any signed-in staff member. Without a configured token, only staff can
+read it. A missing or wrong token is `401 unauthorized`. The path stays
+open while Stash waits for Den. It is rate limited per client address
+(one request a second, a burst of 20): over that, `429 rate_limited` with
+`Retry-After`.
+
+It lists every role once, with key `stash_<role>` and scope `organization`
+(roles are never limited to a department). `group` is the group HR adds
+people to, normalised; `group_display` is the form in `access-config.toml`.
+That group is the first binding for the role, otherwise `stash_<role>`
+itself (a group of that name always grants the role). `privileged` is
+true for roles that can manage access or people, or export data (`admin`,
+`inventory_manager`, `dept_lead`, `conops_lead`). `dynamic` is false:
+Stash's roles come from the file, not from things created at run time.
+`revision` changes when the list does, and is also the `ETag`. Send it
+back as `If-None-Match` to get `304` with an empty body.
 
 ```sh
-curl -s $STASH/api/role-catalog
+curl -s $STASH/api/role-catalog -H "Authorization: Bearer $TOKEN"
 ```
 
 ```json
@@ -193,17 +207,36 @@ curl -s $STASH/api/role-catalog
   "module": "stash",
   "display_name": "Stash",
   "description": "Inventory, sign-outs and Lost & Found.",
+  "revision": "a1b2c3d4e5f60718",
   "roles": [
     {"key": "stash_admin", "label": "Admin",
      "description": "Everything in Stash, including access and settings.",
-     "group": "stash-admin", "assignable": true, "scope": "global",
-     "permissions": ["access.manage", "audit.view", "category.manage", "..."]},
-    {"key": "stash_readonly", "label": "Readonly",
-     "description": "Read-only view of inventory, sign-outs and the audit log.",
-     "group": "stash-readonly", "assignable": true, "scope": "global",
-     "permissions": ["audit.view", "item.view", "signout.view"]}
+     "group": "stash-admin", "group_display": "stash-admin",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": true, "dynamic": false,
+     "permissions": ["access.manage", "audit.view", "category.manage"]},
+    {"key": "stash_volunteer", "label": "Volunteer",
+     "description": "Look up items, run sign-outs and ask for gear.",
+     "group": "stash_volunteer", "group_display": "stash_volunteer",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": false, "dynamic": false,
+     "permissions": ["item.view", "signout.view", "signout.create"]}
   ]
 }
+```
+
+The same call with HR's token (no staff sign-in):
+
+```sh
+curl -si $STASH/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN" \
+  -H 'If-None-Match: "a1b2c3d4e5f60718"'
+```
+
+```text
+HTTP/1.1 304 Not Modified
+ETag: "a1b2c3d4e5f60718"
+Cache-Control: private, no-cache
 ```
 
 ### `GET /api/brand`, `GET /api/brand/{role}`
@@ -236,7 +269,7 @@ describing the item at the desk.
 
 | Method and path | Returns |
 | --- | --- |
-| `GET /api/public/lostfound/?q=&limit=&offset=` | `{"items":[…],"total":N}`; `q` matches the item name only; `limit` default 20, max 50; newest first. |
+| `GET /api/public/lostfound/?q=&limit=&offset=` | `{"items":[…],"total":N}`; `q` matches the item name only; `limit` default 20, max 50; newest first. Rate limited per client address (one request a second, a burst of 20); over that, `429 rate_limited` with `Retry-After`. |
 | `GET /api/public/lostfound/{reportNumber}` | One report, or `404`. |
 
 ```sh
@@ -314,15 +347,15 @@ stored values before and after.
 | `default_currency` | `EUR` | Three capital letters (ISO 4217). |
 | `barcode_prefix`, `barcode_width` | `ST`, `6` | Generated asset tags (`ST000042`): prefix up to 8 letters, digits or `-`; width 3 to 12. |
 | `preserve_sacred_lostfound` | `false` | Easter egg: report `LF-0001` can no longer be edited or removed, and retention skips it. |
-| `con_end_date` | `""` | Last day of the convention, `YYYY-MM-DD`. Den: `stash_con_end_date`. |
-| `lostfound_retention_mode` | `after_close` | `after_close`, `after_con` or `off` ([Retention](admin-guide.md#lost-found-retention)). Den: `stash_lostfound_retention_mode`. |
-| `lostfound_retention_hours` | `720` | 1 to 87600. Den: `stash_lostfound_retention_hours`. |
-| `lostfound_retention_days` | `30` | 1 to 3650. Den: `stash_lostfound_retention_days`. |
-| `user_inactive_days` | `0` | Anonymise people who have not signed in for this many days; 0 = never. |
+| `con_end_date` | `""` | Last day of the convention, `YYYY-MM-DD`. A Stash setting; Den does not override it. |
+| `lostfound_retention_mode` | `after_close` | `after_close`, `after_con` or `off` ([Retention](admin-guide.md#lost-found-retention)). Den: `stash.lost_found.mode` (`deleted_after_closing` or `kept_after_con`). |
+| `lostfound_retention_hours` | `720` | 1 to 87600. Den: `stash.lost_found.hours` when the mode is `deleted_after_closing` (Den's own default is 48 when it omits the count). |
+| `lostfound_retention_days` | `30` | 1 to 3650. Den: `stash.lost_found.days` when the mode is `kept_after_con` (default 30). |
+| `user_inactive_days` | `0` | Anonymise people who have not signed in for this many days; 0 = never. Den: `retention.inactive_users_days`. |
 | `telegram_enabled` | `false` | The Lost & Found Telegram bot (also needs `TELEGRAM_BOT_TOKEN`). |
 | `overdue_email_enabled` | `false` | Daily overdue-return emails. |
 | `overdue_notify_emails` | `""` | Comma-separated addresses for the daily digest, at most 20. |
-| `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_tls` | `""`, `587`, `""`, `""`, `starttls` | Email server; `smtp_tls` is `starttls`, `tls` or `none`. Den: `stash_smtp_*`. The password is `SMTP_PASSWORD`. |
+| `smtp_host`, `smtp_port`, `smtp_username`, `smtp_from`, `smtp_tls` | `""`, `587`, `""`, `""`, `starttls` | Email server; `smtp_tls` is `starttls`, `tls` or `none`. Den: `smtp.host`, `port`, `username`, `security`, `from` and `from_name`. The password is `SMTP_PASSWORD`. |
 | `managed_by`, `managed_keys` | | Read-only: `"den"` and the keys Den controls, while paired. Ignored in `PATCH`. |
 
 ```sh
@@ -333,7 +366,7 @@ curl -s -X PATCH $STASH/api/settings -H "Authorization: Bearer $TOKEN" \
 
 Response `200`: the full effective settings.
 
-Errors: `400` the body is not a JSON object or is larger than 64 KiB; `403`
+Errors: `400` the body is not a JSON object; `413 request_too_large` when it is larger than 64 KiB; `403`
 without `access.manage`; `422 validation_failed` with one message per key in
 `details`, for unknown keys, wrong values and keys managed in Den:
 
@@ -1135,15 +1168,32 @@ curl -s -X POST $STASH/api/den/pair -H "Authorization: Bearer $TOKEN" \
   "den_base_url": "https://den-backend.conservices-den.svc.cluster.local:8080",
   "module_id": "3d1f9b7e-4c2a-4e8b-a1f0-6b5c4d3e2a10",
   "paired_at": "2026-11-06T10:05:00Z",
-  "synced_at": "2026-11-06T10:05:01Z"
+  "synced_at": "2026-11-06T10:05:01Z",
+  "revoked": false
 }
 ```
 
+`GET /api/den/state` needs no sign-in (the login screen reads it). It
+answers `{"mode","paired","revoked"}`.
+
+```sh
+curl -s $STASH/api/den/state
+```
+
+```json
+{"mode":"required","paired":true,"revoked":false}
+```
+
+When Den rejects the credential, `revoked` is true on both routes and
+Stash keeps the link. Pairing again clears it. Stash does not pair again
+by itself.
+
 | Request | Result |
 | --- | --- |
-| `GET /api/den/` | Status as above; `{"paired": false}` when standalone. |
-| `POST /api/den/pair` | Pair. **422** `pairing_failed` with the reason (expired token, Den unreachable). |
-| `POST /api/den/sync` | Sync now. **409** when not paired, **502** when Den fails. |
+| `GET /api/den/` | Status as above, including `revoked`; `{"paired": false}` when standalone. |
+| `GET /api/den/state` | `{"mode","paired","revoked"}`. No sign-in. |
+| `POST /api/den/pair` | Pair. **422** `pairing_failed` with the reason (expired token, Den unreachable, a host that is not allowed). |
+| `POST /api/den/sync` | Sync now. **409** `sync_failed` when not paired, **409** `den_credential_revoked` when Den has rejected the credential, **502** `sync_failed` when Den fails. |
 | `DELETE /api/den/pair` | Unpair, **204**. Stash returns to its own settings. |
 
 ---
@@ -1157,9 +1207,15 @@ Every permission is global: roles are not limited to a department.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/health` | |
-| GET | `/api/role-catalog` | |
 | GET | `/api/brand`, `/api/brand/{role}` | |
-| GET | `/api/public/lostfound/`, `/{reportNumber}` | Only with `PUBLIC_LOSTFOUND_CLAIM_ENABLED=true`. |
+| GET | `/api/den/state` | `mode`, `paired`, `revoked`. |
+| GET | `/api/public/lostfound/`, `/{reportNumber}` | Only with `PUBLIC_LOSTFOUND_CLAIM_ENABLED=true`. Rate limited. |
+
+### Role catalog
+
+| Method | Path | Who |
+| --- | --- | --- |
+| GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or any signed-in staff member. `304` when `If-None-Match` matches `revision`. Rate limited. |
 
 ### Signed in
 
