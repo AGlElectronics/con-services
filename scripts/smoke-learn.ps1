@@ -14,9 +14,10 @@ $kcBase = 'http://localhost:8085'
 $kc = "$kcBase/realms/conservices/protocol/openid-connect/token"
 $learn = 'http://localhost:8120'
 
-function Get-IdToken($user, $pass) {
+function Get-AccessToken($user, $pass) {
+  # The API accepts access tokens (audience learn-api) and refuses ID tokens.
   $body = @{ grant_type = 'password'; client_id = 'learn-spa'; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 
 # Throwaway users via the Keycloak admin API (the dev realm drifts: the
@@ -68,17 +69,17 @@ function Expect-Status($expected, $headers, $method, $path, $body, $what) {
   }
 }
 
-$trainer = @{ Authorization = "Bearer $(Get-IdToken 'smoke-trainer' 'smoke-trainer-pass')" }
-$learner = @{ Authorization = "Bearer $(Get-IdToken 'smoke-learner' 'smoke-learner-pass')" }
-$admin = @{ Authorization = "Bearer $(Get-IdToken 'admin' 'adminadmin')" }
+$trainer = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-trainer' 'smoke-trainer-pass')" }
+$learner = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-learner' 'smoke-learner-pass')" }
+$admin = @{ Authorization = "Bearer $(Get-AccessToken 'admin' 'adminadmin')" }
 
 # Permissions come through the groups -> access-config bindings.
 $me = Call $trainer 'Get' '/api/v1/me'
 Write-Host "trainer /me: $($me.display_name) perms=$($me.permissions -join ',')"
 if ($me.permissions -notcontains 'course.teach') { throw 'smoke-trainer is missing course.teach (learn-trainer group not mapped?)' }
 
-# Public role catalog (what HR aggregates).
-$catalog = Invoke-RestMethod -Uri "$learn/api/role-catalog"
+# Role catalog (HR's service token, or a staff sign-in).
+$catalog = Call $trainer 'Get' '/api/role-catalog' $null
 if ($catalog.module -ne 'learn') { throw 'role catalog module mismatch' }
 Write-Host "role catalog: $(($catalog.roles | ForEach-Object key) -join ',')"
 

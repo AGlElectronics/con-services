@@ -18,6 +18,12 @@ led by Den's MAJOR; see
 
 ### Added
 
+- The development Keycloak realms send **full group paths**. Every web
+  app client's groups mapper in `infra/keycloak/realm-conservices.json`
+  has `full.path` true, and `infra/keycloak/apply-mvp.sh` sets the same
+  on realms that were imported earlier. A top-level group still matches
+  its short name (the leading `/` is stripped). Nested groups such as
+  `/learn/demo-cohort` match only by full path.
 - Learn in the shared Docker stack: `GROUP_DIRECTORY`
   (`LEARN_GROUP_DIRECTORY`, default `keycloak`), `LEARN_LINKABLE_GROUPS`
   (default `/learn/*`) and a dev-only `LEARN_FEEDBACK_PEPPER`. The dev

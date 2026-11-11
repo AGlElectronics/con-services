@@ -96,7 +96,7 @@ if [ -z "$LEARN_SPA" ]; then
     -s name=groups \
     -s protocol=openid-connect \
     -s protocolMapper=oidc-group-membership-mapper \
-    -s 'config."full.path"=false' \
+    -s 'config."full.path"=true' \
     -s 'config."id.token.claim"=true' \
     -s 'config."access.token.claim"=true' \
     -s 'config."claim.name"=groups' \
@@ -167,7 +167,7 @@ if [ -z "$FINANCE_SPA" ]; then
     -s name=groups \
     -s protocol=openid-connect \
     -s protocolMapper=oidc-group-membership-mapper \
-    -s 'config."full.path"=false' \
+    -s 'config."full.path"=true' \
     -s 'config."id.token.claim"=true' \
     -s 'config."access.token.claim"=true' \
     -s 'config."claim.name"=groups' \
@@ -198,7 +198,7 @@ module_spa() {
       -s name=groups \
       -s protocol=openid-connect \
       -s protocolMapper=oidc-group-membership-mapper \
-      -s 'config."full.path"=false' \
+      -s 'config."full.path"=true' \
       -s 'config."id.token.claim"=true' \
       -s 'config."access.token.claim"=true' \
       -s 'config."claim.name"=groups' \
@@ -270,6 +270,23 @@ audience_mapper conservices desk-spa desk-api
 audience_mapper conservices tasks-spa tasks-api
 audience_mapper conservices wiki-spa wiki-api
 audience_mapper attendees rally-submit events-public-api
+
+# Full group paths on every web app's groups mapper, including realms
+# imported before this (those mappers were created with full.path false).
+# A top-level group still matches its short name (the leading "/" is
+# stripped); a nested group such as /learn/demo-cohort matches only by path.
+# Idempotent. rally-submit has no groups mapper.
+full_group_paths() {
+  local realm=$1 client=$2 id mid
+  id=$($KC get clients -r "$realm" -q clientId="$client" --fields id --format csv --noquotes 2>/dev/null | tail -n1 || true)
+  [ -n "$id" ] || return 0
+  mid=$($KC get "clients/$id/protocol-mappers/models" -r "$realm" --fields id,name --format csv --noquotes | grep ',groups$' | head -n1 | cut -d, -f1 || true)
+  [ -n "$mid" ] || return 0
+  $KC update "clients/$id/protocol-mappers/models/$mid" -r "$realm" -s 'config."full.path"=true'
+}
+for client in den-spa hr-spa stash-spa events-spa learn-spa finance-spa desk-spa tasks-spa wiki-spa; do
+  full_group_paths conservices "$client"
+done
 
 # Declare the attributes HR mirrors (undeclared attributes are dropped).
 $KC update users/profile -r conservices -f /opt/keycloak/data/profile/user-profile.json

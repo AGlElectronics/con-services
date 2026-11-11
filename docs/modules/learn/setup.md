@@ -144,10 +144,12 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
 
    Two things about groups:
 
-    - Learn links groups by **full path**. In Keycloak, open **Clients →
-      learn-spa → Client scopes → learn-spa-dedicated → groups** (or your
-      groups mapper) and turn **Full group path** on, so tokens carry
-      `/learn/cohort-a` rather than `cohort-a`.
+    - Learn links groups by **full path**. The development realm already
+      sends full paths (`infra/keycloak`). On your own realm, open
+      **Clients → learn-spa → Client scopes → learn-spa-dedicated →
+      groups** (or your groups mapper) and turn **Full group path** on,
+      so tokens carry `/learn/cohort-a` rather than `cohort-a`. A
+      top-level group (`learn-admin`) matches either way.
     - Trainers may only link groups under `LEARN_LINKABLE_GROUPS` (default
       `/learn/*`). Create the groups trainers should use below a `/learn`
       parent group, or set the value to your own parents:

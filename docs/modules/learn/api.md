@@ -151,7 +151,7 @@ the section tables.
 | GET | `/livez` | anyone |
 | GET | `/readyz` | anyone |
 | GET | `/api/health` | anyone |
-| GET | `/api/role-catalog` | anyone |
+| GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or a staff sign-in |
 | GET | `/api/qualification-catalog` | anyone |
 | GET | `/api/internal/holdings?subjects=` | `LEARN_SERVICE_TOKEN` |
 | GET | `/api/public/verify/{code}` | anyone, 30 a minute per address |
@@ -173,14 +173,36 @@ curl -s $LEARN/api/health
 
 ### `GET /api/role-catalog`
 
-Anyone; HR reads it for its access picker. One entry per role and group
-binding.
+**Who may call it:** HR's backend with `Authorization: Bearer <HR_SERVICE_TOKEN>`
+(the same value as on HR, compared in constant time; it allows nothing but
+this read), or a person signed in to Learn. Without a token the answer is
+`401` `unauthorized`. The path stays open while Learn waits for Den.
+
+The response includes `revision`, also sent as the `ETag`. Send that value
+back as `If-None-Match` to get `304` when the list has not changed. `group`
+is the normalised group; `group_display` is the group as written in the
+access config. `privileged` is true for roles that change settings, see
+other people's results or grant access. `dynamic` is false: Learn's roles
+are fixed, not created at run time. A role with no group binding has scope
+`course` (assigned per course inside Learn) and is not assignable from HR.
+
+```sh
+curl -s --cacert /etc/conservices-internal-ca/ca.crt \
+  https://learn-backend.conservices-learn.svc.cluster.local:8080/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN"
+```
 
 ```json
 {"module":"learn","display_name":"Learn","description":"Courses, enrolments and training progress.",
+ "revision":"a1b2c3d4e5f60718",
  "roles":[{"key":"trainer","label":"Trainer","description":"Creates courses and runs the courses they teach.",
-           "group":"learn-trainer","assignable":true,"scope":"organization:demo-org",
+           "group":"learn-trainer","group_display":"learn-trainer","assignable":true,"default":false,
+           "scope":"organization","privileged":false,"dynamic":false,
            "permissions":["course.teach","enrol.manage"]}]}
+```
+
+```json
+{"error":{"code":"unauthorized","message":"missing bearer token"}}
 ```
 
 ### `GET /api/qualification-catalog`

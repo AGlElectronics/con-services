@@ -99,8 +99,16 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Values.existingSecret }}
-          {{- with .Values.backend.extraEnv }}
           env:
+            # Named on its own so a Secret without the key stops the pod
+            # (CreateContainerConfigError) instead of the backend at start-up.
+            - name: DEN_LINK_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: DEN_LINK_ENCRYPTION_KEY
+                  optional: {{ eq (lower (trim (toString .Values.config.APP_ENV))) "development" }}
+          {{- with .Values.backend.extraEnv }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
@@ -210,6 +218,18 @@ spec:
         - name: frontend
           image: {{ include "learn.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          # Filled into the security headers by the image's entrypoint
+          # (/etc/nginx/templates -> /etc/nginx/snippets) at start-up.
+          {{- $sh := .Values.frontend.securityHeaders | default dict }}
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ include "learn.keycloakOrigin" . | quote }}
+            - name: DEN_ORIGIN
+              value: {{ $sh.denOrigin | default "" | quote }}
+            - name: S3_ORIGIN
+              value: {{ include "learn.s3Origin" . | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ $sh.extraConnectSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -259,7 +279,12 @@ spec:
             # nginx-unprivileged: nginx.pid and temporary files
             - name: tmp
               mountPath: /tmp
+            # The security headers written at start-up (read-only root file system).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
       volumes:
+        - name: nginx-snippets
+          emptyDir: {}
         - name: nginx-conf
           configMap:
             name: {{ .Release.Name }}-frontend-nginx
