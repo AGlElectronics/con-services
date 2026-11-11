@@ -161,11 +161,17 @@ Den and those modules together in one change; see
 ## How tags, images and charts relate
 
 ```mermaid
-flowchart LR
-  A["Module repository<br/>tag v1.12.1"] -->|CI builds and publishes| B["Images<br/>hr-backend:1.12.1-1<br/>hr-frontend:1.12.1-1<br/>hr-migrate:1.12.1-1"]
-  C["con-services<br/>tag hr/v1.12.1"] -->|chart at that tag| D["deploy/charts/hr<br/>version 1.12.1"]
-  E["cluster.yaml<br/>modules.hr.version: 1.12.1-1"] --> B
-  E --> D
+flowchart TB
+  subgraph release["Release (maintainers, in this order)"]
+    direction LR
+    A["1. hr repository<br/>tag v1.12.1"] -->|CI builds and publishes| B["2. Images in ghcr.io<br/>hr-backend:1.12.1-1<br/>hr-frontend:1.12.1-1<br/>hr-migrate:1.12.1-1"]
+    B -->|Chart release checks<br/>the images exist| C["3. con-services<br/>tag hr/v1.12.1<br/>deploy/charts/hr<br/>version 1.12.1"]
+  end
+  subgraph install["Your installation"]
+    E["cluster.yaml<br/>modules.hr.version: 1.12.1-1"] --> F["Argo CD"]
+  end
+  F -->|"chart from tag hr/v1.12.1"| C
+  F -->|"images with tag 1.12.1-1"| B
 ```
 
 | What | Where | Example | Created by |
