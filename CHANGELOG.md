@@ -218,6 +218,11 @@ led by Den's MAJOR; see
   `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN`; the HR → Tasks row on
   [Network policies](docs/operations/network-policies.md) names the token
   for the role catalog.
+- Tasks serves `GET /api/portal/todos` for Den's portal. The Tasks chart
+  admits `den-backend` on the backend port (`networkPolicy.den`), and the
+  Den chart's `networkPolicy.allowToModules` (default on) lets
+  `den-backend` reach module backends on 8080. The same egress is in
+  `deploy/kubernetes/base/den`.
 
 ### Changed
 

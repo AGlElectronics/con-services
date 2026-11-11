@@ -264,6 +264,8 @@ networkPolicy:
       app: keycloak
     port: 8443
   den:
+    # Egress to Den (the bundle) and ingress from den-backend
+    # (GET /api/portal/todos). Both use this namespace and port.
     enabled: true
     namespace: conservices-den
     port: 8080

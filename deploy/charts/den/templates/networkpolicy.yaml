@@ -118,6 +118,19 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- if $np.allowToModules }}
+    # Paired modules: portal to-dos and role catalogs. Each module chart
+    # also needs an ingress rule for den-backend.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - { protocol: TCP, port: 8080 }
+    {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

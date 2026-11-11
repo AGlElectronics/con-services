@@ -4,7 +4,8 @@
 #   module backends    -> den-backend:8080   (pairing, bundle, preferences)
 #   den-backend        -> postgres:5432, s3:9000, den-operator:8080,
 #                         keycloak:8443 (admin API, and OIDC discovery and
-#                         keys: auth.<domain> resolves to keycloak-public)
+#                         keys: auth.<domain> resolves to keycloak-public),
+#                         module backends:8080 (portal to-dos, role catalogs)
 #   den-operator       -> postgres:5432, s3:9000
 #   everything         -> DNS
 # Every connection except DNS uses TLS (internal CA, ../pki).
@@ -131,6 +132,17 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
+    # Portal to-dos and role catalogs. The module must admit den-backend.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              conservices.io/tier: module
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

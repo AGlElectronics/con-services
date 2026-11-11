@@ -315,6 +315,10 @@ networkPolicy:
   # namespaces labelled conservices.io/tier: module) may call den-backend:
   # pairing, the bundle, user preferences.
   allowFromModules: true
+  # den-backend may call those same module backends, on port 8080:
+  # GET /api/portal/todos and role catalogs. The module chart must admit
+  # den-backend on its side (Tasks does, via networkPolicy.den).
+  allowToModules: true
   # PostgreSQL and S3 in conservices-data, for the backend and the
   # operator. Defaults: CloudNativePG cluster conservices-pg and Garage (S3
   # API through its TLS sidecar). For the Kustomize local-trial postgres/s3 use
