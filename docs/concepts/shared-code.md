@@ -261,6 +261,19 @@ defaults to `AUTH_MODE=oidc` and `APP_ENV=production`; the module's
 explicitly), mount `StripDevHeaders` and `SecurityHeaders` first on the API
 router, and use `DecodeJSON` for request bodies.
 
+**Frontend lint (every module)**: the shared module CI runs
+`npm run --if-present lint` in the frontend folder, so a module whose
+`package.json` has a `lint` script must also have an ESLint configuration
+(`eslint.config.js`, the flat config of ESLint 9). Without one the job
+stops with `ESLint couldn't find an eslint.config.(js|mjs|cjs) file`.
+Check it locally before pushing:
+
+```sh
+cd frontend
+npm ci
+npm run lint
+```
+
 **gworkspace**: mount the key file from a Secret, add the three settings,
 and add a NetworkPolicy egress rule to `oauth2.googleapis.com`,
 `admin.googleapis.com` and `gmail.googleapis.com` on port 443 (with a row on

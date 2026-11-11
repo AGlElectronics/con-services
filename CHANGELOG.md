@@ -178,6 +178,9 @@ led by Den's MAJOR; see
 - CI *Chart versions*: a changed chart needs a higher version only once
   its app has a chart release tag `<app>/v*`; before the first release a
   chart may change while staying at its first version.
+- [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
+  notes that a module needs an ESLint configuration when its frontend has a
+  `lint` script, because the module CI runs `npm run lint`.
 
 ### Security
 
