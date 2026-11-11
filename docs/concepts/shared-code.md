@@ -85,6 +85,9 @@ handlers and `RequirePaired`), plus:
 | `Config.HostAllowed(host)` | Whether a pasted pairing URL may point at that host. |
 | `denlink.Schema`, `denlink.SchemaUpgrade` | The `den_link` table for a new module, and the migration an existing one needs (adds `revoked_at`). |
 | `client.ModuleSettings() *ModuleSettings`, `Bundle.ModuleSettings` | Den's [module settings](module-settings.md) for this module, from the stored bundle (so they survive a restart); `nil` when standalone. Methods, all safe on `nil`: `Lookup(key)`, `Section(name)`, `Decode(key, &dst)`, `String`, `Bool`, `Int`, `Days(key)` (whole number, 0 or more), `Retention()`, `SMTP()` (only when `smtp.host` is set; port `587` and `starttls` by default), `FinanceSeller()`. Keys are dotted: `wiki.revision_retention_days`, `finance.seller`. |
+| `client.ModuleSettingSecret(ctx, key) (string, error)`, `client.SMTPPassword(ctx) (string, error)` | A secret Den keeps out of the bundle. `SMTPPassword` is the key `smtp.password`. An empty string and a nil error means Den holds none. `ErrNotPaired` when standalone, `ErrRevoked` when Den rejected the credential. Kept in memory for `SecretCacheTTL` (one minute), never in the database. A response over 64 KiB is refused. See [Fetching the SMTP password](module-settings.md#fetching-the-smtp-password). |
+| `client.RequireDen(next) http.HandlerFunc`, `PortalCallerFrom(ctx)`, `CredentialMatches(ctx, token)`, `BearerToken(header)`, `UserFromDen(r)` | Check a call Den makes into the module (`GET /api/portal/todos`). See [Portal to-dos](#portal-to-dos). |
+| `denlink.UserMessage(err) string` | The sentence an admin sees: the API `message` field and `den_link.last_error`. `Error()` is the Go error string (lowercase, no trailing punctuation). |
 
 The pairing (`POST …/den/pair`) and preferences (`PUT …/me/preferences`)
 handlers accept a body of at most 64 KiB and answer like
@@ -92,9 +95,94 @@ handlers accept a body of at most 64 KiB and answer like
 bad_request` when it is not exactly one JSON value. `denlink` keeps its own
 small copy of that decoder instead of calling `authbase`, because a module
 may copy `denlink` without `authbase` and the shared packages never import
-each other.
+each other. A secrets response from Den is capped at the same 64 KiB and
+is not cached when it is larger.
 
 What changes in the module's API is on [Pairing](pairing.md#the-den-connection-api-in-each-module).
+
+#### Fetching a module-setting secret
+
+`SMTP()` on the bundle tells the module the mail server and whether Den
+holds a password (`password_set`). The password itself is fetched when
+the module sends mail:
+
+```go
+password, err := den.SMTPPassword(ctx)
+```
+
+The call, the cache and the errors (`ErrNotPaired`, `ErrRevoked`, an empty
+password) are written out on
+[Module settings](module-settings.md#fetching-the-smtp-password).
+`ModuleSettingSecret(ctx, "smtp.password")` is the same method for a
+dotted key. The answer stays in the process for at most a minute
+(`SecretCacheTTL`); a successful sync, a new pairing, unpairing, or a
+rejected credential drops it immediately. It is never written to
+`den_link`.
+
+#### Portal to-dos
+
+Den's portal lists what the signed-in person should do. Den's **backend**
+calls each paired module itself:
+
+```text
+GET https://tasks.example.org/api/portal/todos
+Authorization: Bearer <the module's pairing credential>
+X-Den-User-Issuer: https://auth.example.org/realms/conservices
+X-Den-User-Subject: 8f0c2a1e-1b3d-4e5f-9a6b-7c8d9e0f1a2b
+```
+
+The person's token never leaves Den. Den does not pass the person in the
+query string; `UserFromDen` reads only `X-Den-User-Issuer` and
+`X-Den-User-Subject` (`HeaderUserIssuer`, `HeaderUserSubject`).
+
+`RequireDen` checks that request and puts the person on the context.
+Mount it on `GET /api/portal/todos` (behind `RequirePaired`, like the
+rest of the API). A revoked credential still passes `RequirePaired` — the
+module keeps its last bundle — and then fails here.
+
+```go
+r.Get("/api/portal/todos", den.RequireDen(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    caller, _ := denlink.PortalCallerFrom(r.Context())
+    items := todosFor(r.Context(), caller.Issuer, caller.Subject)
+    w.Header().Set("Content-Type", "application/json")
+    _ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+})))
+```
+
+Den keeps an item only when it has an `id`, a `title` and an `http` or
+`https` `url`. `severity` is `info`, `warning` or `danger` (anything else
+counts as `info`). `due_at` is RFC3339 or `null`. `detail` is optional.
+Den gives up after five seconds and skips a module that answers with an
+error or `404`.
+
+| Result | Status | Code | Message |
+| --- | --- | --- | --- |
+| Credential matches and both headers name the person | the handler runs | | `PortalCallerFrom` returns issuer and subject |
+| No credential, the wrong one, not paired, revoked, or the database read failed | `401` | `unauthorized` | `invalid or revoked credential` |
+| A header is missing, blank, or longer than 512 bytes | `400` | `bad_request` | `issuer and subject are required` |
+
+The `401` is the same in every failure so the route does not say whether
+the module is paired. `CredentialMatches(ctx, token)` is the check on its
+own: it compares the **decrypted** pairing credential, and it hashes both
+sides before comparing so a shorter token does not return at the first
+different byte. `BearerToken` takes the token out of an `Authorization`
+header (`Bearer` is case-insensitive). A module that writes its own status
+codes calls those two and `UserFromDen` instead of `RequireDen`.
+
+What you should see: with a pairing, `curl` as below answers `200` and a
+JSON object `{"items":[…]}`. The same call with no `Authorization` header
+answers `401`.
+
+```sh
+curl -s -H "Authorization: Bearer $MODULE_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.example.org/realms/conservices" \
+  -H "X-Den-User-Subject: 8f0c2a1e-1b3d-4e5f-9a6b-7c8d9e0f1a2b" \
+  https://tasks.example.org/api/portal/todos
+```
+
+```json
+{"items":[{"id":"task-18","title":"Pack radios","url":"https://tasks.example.org/t/task-18","severity":"warning","due_at":"2026-11-14T10:00:00Z"}]}
+```
 
 ### authbase
 
@@ -326,6 +414,11 @@ longer exists in `shared/go` is deleted.
    such queries (Wiki's revision retention, Finance's seller details).
 8. Tests that call `Restore` or `Pair` set `APP_ENV=development` (see
    [Testing](#testing-a-module-that-uses-authbase-or-denlink)).
+9. When Den sets `smtp.password_set`, fetch the password with
+   `client.SMTPPassword` instead of the module's `SMTP_PASSWORD`. See
+   [Fetching the SMTP password](module-settings.md#fetching-the-smtp-password).
+10. Serve `GET /api/portal/todos` with `client.RequireDen` so Den's portal
+    can list the person's to-dos. See [Portal to-dos](#portal-to-dos).
 
 **groupmatch**: replace the module's own group comparison, store grants with
 `NewGrant` (a migration normalising existing grants), stop merging `roles`

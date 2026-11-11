@@ -150,6 +150,17 @@ led by Den's MAJOR; see
   restarted module has them before it reaches Den, and bundles stored by an
   older Den still load. Modules no longer need their own SQL on
   `den_link.bundle`.
+- Shared Go code: a paired module fetches a module-setting secret from Den
+  with `ModuleSettingSecret` / `SMTPPassword` (the SMTP password). The
+  value stays in memory for at most one minute, is dropped on sync, unpair
+  or a rejected credential, and is never written to the module database.
+  See [Fetching the SMTP password](docs/concepts/module-settings.md#fetching-the-smtp-password).
+- Shared Go code: `RequireDen` checks a call Den makes into a module on
+  `GET /api/portal/todos`. It compares the pairing credential in constant
+  time and reads the person from `X-Den-User-Issuer` and
+  `X-Den-User-Subject`. A missing or wrong credential answers `401`;
+  missing identity headers answer `400`. See
+  [Portal to-dos](docs/concepts/shared-code.md#portal-to-dos).
 - Shared Go code: `authbase` can find the real client behind the Gateway
   from `TRUSTED_PROXY_CIDRS` (the same variable and default every module
   already uses; `X-Forwarded-For` is read only from trusted proxies, right
@@ -166,6 +177,12 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Shared Go code: `denlink` error strings now follow Go's convention
+  (`ErrRevoked`, `den refused the pairing URL`, `den returned …` — a
+  lowercase first letter, no trailing punctuation). The sentence an admin
+  sees is unchanged: the API `message` field and `last_error` on the Den
+  connection page still say "Den rejected…", "Den refused the pairing URL"
+  and "Den returned …" (`denlink.UserMessage`).
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,

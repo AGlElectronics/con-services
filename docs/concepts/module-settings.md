@@ -30,8 +30,8 @@ keeps its current settings and environment variables.
    with the same names, limits and defaults, on its own settings page.
 5. Secrets never travel in the bundle (the module caches the bundle in its
    database). The bundle says `password_set: true`; the module fetches the
-   value when it needs it from `GET /api/v1/integrations/module-settings/secrets`
-   and keeps it in memory only.
+   value when it needs it with `client.SMTPPassword`
+   ([below](#fetching-the-smtp-password)) and keeps it in memory only.
 
 ## Key names
 
@@ -283,6 +283,65 @@ Den stores these values encrypted. They are secrets in the sense of
 provider, then save the new one on Den's Module settings page; modules pick
 it up on their next fetch.
 
+### Fetching the SMTP password
+
+A module that uses the shared package `denlink`
+([Shared code](shared-code.md#denlink)) does not call this endpoint
+itself. `SMTPPassword` is `ModuleSettingSecret(ctx, "smtp.password")`. It
+sends the stored pairing credential (`Authorization: Bearer …`), reads
+the string at that dotted key, and keeps Den's answer in memory for one
+minute (`denlink.SecretCacheTTL`). The password is never written to the
+module's database. A response larger than 64 KiB is refused and not
+remembered.
+
+`denlink.SMTP` has no password field (the bundle must not carry one). Copy
+the host and the rest into the module's own mail settings, and set the
+password only there, for the send:
+
+```go
+// mailSettings is the module's own SMTP configuration. Password is filled
+// only for this send.
+type mailSettings struct {
+    Host, Username, Password, Security, From string
+    Port                                     int
+}
+
+func effectiveSMTP(ctx context.Context, den *denlink.Client, own mailSettings) (mailSettings, error) {
+    smtp, ok := den.ModuleSettings().SMTP()
+    if !ok {
+        return own, nil // Den sets no mail server
+    }
+    password, err := den.SMTPPassword(ctx)
+    if errors.Is(err, denlink.ErrNotPaired) {
+        return own, nil // standalone: use SMTP_PASSWORD, already in own
+    }
+    if err != nil {
+        return mailSettings{}, err // ErrRevoked, or Den could not be reached
+    }
+    own.Host, own.Port = smtp.Host, smtp.Port
+    own.Username, own.Security, own.From = smtp.Username, smtp.Security, smtp.From
+    own.Password = password
+    return own, nil // Password is "" when Den holds none
+}
+```
+
+`ModuleSettingSecret(ctx, key)` is the same call for any dotted key Den
+returns. Today the only one is `smtp.password`. An empty string and a nil
+error means Den left the key out (or sent `null`). A value that is present
+but not a string is an error, so a wrong type is not treated as "no
+password".
+
+What you should see: the first mail after pairing logs in with the
+password saved in Den. Further mail in the same minute does not call Den
+again. A successful sync (the minute sync, or **Sync now** on the Den
+connection page) drops the copy, and so does unpairing or a rejected
+credential. A password you just changed in Den is used on the next send
+after that, or within a minute if nothing syncs.
+
+Den's portal to-dos are a different call, from Den into the module. How a
+module serves `GET /api/portal/todos` is on
+[Shared code](shared-code.md#portal-to-dos).
+
 ## Troubleshooting
 
 **A setting shows *Managed in Den* but the admin wants to change it in the module**
@@ -293,3 +352,8 @@ it up on their next fetch.
 : The module could not fetch the password (Den unreachable or the
   credential was revoked). The module's Den connection page shows the
   error; pair again if it says the credential was rejected.
+
+**Mail still uses the previous SMTP password**
+: The module keeps the password in memory for up to a minute. Wait a
+  minute, or open the module's Den connection page and choose **Sync
+  now**. The next message then fetches the password again.
