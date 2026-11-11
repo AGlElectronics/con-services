@@ -241,6 +241,9 @@ services:
       KEYCLOAK_CLIENT_SECRET: ${DEN_KEYCLOAK_CLIENT_SECRET}
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: ${OPERATOR_TOKEN:?set OPERATOR_TOKEN in .env}
+      # Password paired modules use to log in to the shared mail server.
+      # Empty: no login. Not stored in the database. Restart Den after a change.
+      DEN_SMTP_PASSWORD: ${DEN_SMTP_PASSWORD:-}
     healthcheck:
       test: ["CMD", "/den-server", "healthcheck"]
       interval: 15s

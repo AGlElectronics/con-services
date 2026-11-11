@@ -201,6 +201,9 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Production Compose passes optional `DEN_SMTP_PASSWORD` into
+  `den-backend` (empty when unset in `.env`). The shared SMTP password is
+  not stored in Den's database. Restart `den-backend` after changing it.
 - Shared Go code: `authbase` and `denlink` read `APP_ENV` the same way
   (trimmed, any case, `production` when unset), through the new
   `NormalizeAppEnv` in each package. `APP_ENV=Development` now counts as
