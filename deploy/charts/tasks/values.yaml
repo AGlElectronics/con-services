@@ -182,6 +182,7 @@ frontend:
   # Origins the browser may reach besides the web app, for its
   # Content-Security-Policy (shared nginx security headers). Scheme, host
   # and optional port, no path; several separated by spaces.
+  # extraFrameSrc is not an origin; Tasks leaves it empty.
   # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
   securityHeaders:
     # The sign-in server. Empty: the origin of frontend.config.oidcAuthority
@@ -194,6 +195,9 @@ frontend:
     # through its backend, so usually empty).
     s3Origin: ""
     extraConnectSrc: ""
+    # Extra frame-src tokens. Empty for Tasks. Not an origin: Desk sets
+    # about:srcdoc so a sandboxed mail frame can render. No other app sets it.
+    extraFrameSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the

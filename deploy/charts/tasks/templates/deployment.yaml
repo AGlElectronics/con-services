@@ -219,8 +219,9 @@ spec:
           image: {{ include "tasks.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           {{- $sh := .Values.frontend.securityHeaders | default dict }}
-          # Origins for the Content-Security-Policy; the image writes
-          # /etc/nginx/snippets/security-headers.conf from them at start-up.
+          # Origins for the Content-Security-Policy. The image writes both
+          # snippets under /etc/nginx/snippets from these at start-up.
+          # EXTRA_FRAME_SRC stays empty: Tasks does not frame sandboxed HTML.
           env:
             - name: KEYCLOAK_ORIGIN
               value: {{ include "tasks.keycloakOrigin" . | quote }}
@@ -230,6 +231,8 @@ spec:
               value: {{ $sh.s3Origin | default "" | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ $sh.extraConnectSrc | default "" | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ $sh.extraFrameSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
