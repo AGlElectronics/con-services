@@ -136,6 +136,15 @@ led by Den's MAJOR; see
   ([Secrets](docs/operations/secrets.md#den-link-encryption-key)). The Docker
   Compose module backends and the `example-stash` overlay carry public
   dev-only values of `DEN_LINK_ENCRYPTION_KEY`.
+- Secrets inventory: `HR_SERVICE_TOKEN` is now read by Rally, with how to
+  generate and rotate it ([HR service token](docs/operations/secrets.md#hr-service-token)).
+- Docker Compose (`events` profile): the Rally backend sets
+  `OIDC_AUDIENCE=events-api`, `ATTENDEE_OIDC_AUDIENCE=events-public-api`
+  and a public dev-only `HR_SERVICE_TOKEN`, and the Rally web apps set
+  `KEYCLOAK_ORIGIN` and `S3_ORIGIN` for their Content Security Policy.
+  Signing in to Rally in the stack needs audience mappers on `events-spa`
+  and `rally-submit` in the local realms, which the realm files do not
+  contain yet.
 - Proposal [Using the convention's existing identity provider](docs/proposals/existing-identity-provider.md)
   (agreed, not implemented yet): reuse a convention's attendee realm
   without moving accounts, staff modes `brokered` (our realm added next to
