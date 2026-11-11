@@ -120,7 +120,7 @@ gives you:
 
 **GitOps reference: OpenBao paths of the platform.** In
 [con-services-gitops](../deploy/index.md) every secret below is read from
-OpenBao (KV v2 mounted at `kv`) by External Secrets.
+OpenBao (its own KV v2 mount, `conservices/` by default) by External Secrets.
 External Secrets creates the random ones (PushSecrets, never replacing an
 existing value) and you enter the provider credentials, only for the
 modules and options enabled in `cluster.yaml`
@@ -139,6 +139,7 @@ Entries marked *rotatable* can be rotated by deleting them
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | Den backend, operator | generated; rotatable |
 | `conservices/modules/<module>/service-token` (`learn`, `wiki`, `tasks`) | `token` | the module's service token and HR's `LEARN_SERVICE_TOKEN`, `OFFBOARD_HOOKS`, `DEPARTMENT_HOOKS` | HR calling Learn, Wiki, Tasks | generated; rotatable |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | Desk | generated; **never rotate** (stored mailbox passwords become unreadable) |
+| `conservices/modules/<module>/den-link` (every enabled module) | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | the module's backend (shared `denlink`) | generated (43 letters and digits = 32 bytes as unpadded base64); rotate with the [two-step rotation](#den-link-encryption-key), never by deleting the entry alone |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` (user `temp-admin`) | `keycloak-bootstrap-admin` (`conservices-identity`) | Keycloak, first start only | generated; delete the user after the [first admin login](../deploy/identity.md#first-admin-login) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR, Learn | Keycloak, Den, HR, Learn | generated; to rotate, regenerate in Keycloak, then `bao kv patch` |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` | Keycloak e-mail | your mail provider; you enter it |
@@ -225,6 +226,12 @@ else is lost.
 2. Store it in the module's entry of your secret manager, for example
    `vault kv patch secret/conservices/stash/backend DEN_LINK_ENCRYPTION_KEY=<value>`,
    so it reaches `stash-secrets` (see [Add a module's secrets](#add-a-modules-secrets)).
+   The Argo CD template skips steps 1 and 2: it generates the key in
+   OpenBao (`conservices/modules/<module>/den-link`, property `key`) and
+   wires it into `<module>-secrets`. To rotate it there, write the current
+   value as `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` into the module's Secret
+   values (add it to the module's ExternalSecret in
+   `charts/module-extras`), then `bao kv patch` a new `key`.
 3. Restart the module. A credential stored before is encrypted on its
    first read; the log says `den link: re-encrypted the stored credential with the current key`.
 
@@ -311,6 +318,7 @@ that come from a provider. Both only for what `cluster.yaml` enables.
 | `conservices/modules/den/operator-token` | `token` | `OPERATOR_TOKEN` in `den-secrets` and `den-operator-secrets` | generated | delete the entry; restart both Den deployments |
 | `conservices/modules/learn/service-token`, `.../wiki/service-token`, `.../tasks/service-token` | `token` | `LEARN_SERVICE_TOKEN` (HR, Learn); `WIKI_SERVICE_TOKEN` and the token in HR's `OFFBOARD_HOOKS`; `TASKS_SERVICE_TOKEN` and the token in HR's `DEPARTMENT_HOOKS` | generated | delete the entry; restart HR and the module |
 | `conservices/modules/desk/secret-key` | `key` | `DESK_SECRET_KEY` in `desk-secrets` | generated | **never** (stored mailbox passwords become unreadable) |
+| `conservices/modules/<module>/den-link` | `key` | `DEN_LINK_ENCRYPTION_KEY` in `<module>-secrets` | generated | two steps, see [Den link encryption key](#den-link-encryption-key); deleting the entry alone makes the module pair again |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | `keycloak-bootstrap-admin` (`conservices-identity`) | generated | not needed: used once, then the user is deleted ([First admin login](../deploy/identity.md#first-admin-login)) |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | `keycloak-realm-secrets` (first realm import); `KEYCLOAK_CLIENT_SECRET` of Den, HR and Learn | generated | regenerate in the Keycloak admin console, then `bao kv patch conservices/infra/keycloak/clients <client>=-` and restart the module |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | `keycloak-realm-secrets` (first realm import only) | your mail provider | at the provider, then in Keycloak: **Realm settings → Email** |

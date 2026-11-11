@@ -151,6 +151,19 @@ led by Den's MAJOR; see
   and `tasks-data-dev`). `.env.example` documents `COMPOSE_PROFILES`,
   `DEN_MODE` and `TELEGRAM_BOT_TOKEN`
   ([Local development](docs/contributing/local-development.md#how-the-stack-protects-your-computer)).
+- Docs: [Production](docs/operations/production.md#secrets) lists every
+  public test value (database logins, S3 keys, Keycloak admin and client
+  secrets, service tokens, `DESK_SECRET_KEY`, `DEN_LINK_ENCRYPTION_KEY`,
+  the age key, ...) with its replacement and where the Argo CD template
+  generates it; the Keycloak section and
+  [Identity](docs/deploy/identity.md#den-and-the-realm) describe brute-force
+  protection, the password policy, `den-keycloak` reduced to
+  `manage-realm` (or nothing) and how to change a running realm.
+  [Databases and backups](docs/operations/databases-and-backups.md#where-backups-go)
+  documents the warning for backups on the same S3 service and the
+  `BACKUP_SAME_STORAGE_AS_DATA` flag Den's operator gets (the dev stack
+  sets it to `true`). The secrets inventory lists each module's generated
+  `conservices/modules/<module>/den-link` entry in OpenBao.
 
 ### Security
 

@@ -824,7 +824,7 @@ block has the form `{ requests: { cpu, memory }, limits: { cpu, memory } }`;
 | `acme.dns01.provider` | `cloudflare` | `cloudflare` (token in OpenBao `conservices/infra/cloudflare`) or `custom` |
 | `acme.dns01.solvers` | `[]` | With `custom`: cert-manager ACME solvers ([format](https://cert-manager.io/docs/configuration/acme/dns01/)) |
 | `s3.pathStyle` | `true` | `true`: `https://<endpoint>/<bucket>`; `false`: `https://<bucket>.<endpoint>` |
-| `s3.backup.endpoint`, `s3.backup.region` | empty (same as `s3.*`) | Separate S3 service for PostgreSQL and Den backups (recommended: another region) |
+| `s3.backup.endpoint`, `s3.backup.region` | empty (same as `s3.*`) | Separate S3 service for PostgreSQL and Den backups (recommended: another provider or account). Empty or equal to `s3.endpoint`: allowed, but the `den` Application shows a warning ([Where backups go](../operations/databases-and-backups.md#where-backups-go)) |
 | `s3.backup.pathStyle` | empty (same as `s3.pathStyle`) | Addressing style of the backup service |
 | `s3.backup.fqdns` | `[]` | Host names of the backup endpoint; required when it differs |
 
@@ -944,6 +944,9 @@ charts installed with default names.
 | `keycloak.instances` | empty (`2`; `1` with `profile: small`) | Keycloak pods |
 | `keycloak.resources` | 250m/1Gi to 2/2Gi | Each Keycloak pod |
 | `keycloak.smtp.enabled` | `true` | Realms send mail through OpenBao `conservices/infra/keycloak/smtp` |
+| `keycloak.realm.bruteForce.*` | on; `failureFactor` 10, `waitIncrementSeconds` 60, `maxFailureWaitSeconds` 900, `maxDeltaTimeSeconds` 43200, `permanentLockout` `false` | Brute-force protection of both realms, first import only ([Sign-in protection settings](identity.md#sign-in-protection-settings)) |
+| `keycloak.realm.passwordPolicy.*` | `minLength` 12 (8 or more), `notUsername` and `notEmail` `true`, `extra` empty | Password policy of both realms, first import only |
+| `keycloak.realm.denDisplayNameSync` | `true` | `den-keycloak` gets `manage-realm` so Den keeps the realm display name in line; `false`: no realm rights, Den's sync off ([Den and the realm](identity.md#den-and-the-realm)) |
 
 ## Troubleshooting
 

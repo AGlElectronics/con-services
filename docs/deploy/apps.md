@@ -133,6 +133,7 @@ S3_SECRET_ACCESS_KEY: "{{ .s3SecretKey }}"
 | Module | OpenBao entries it reads |
 | --- | --- |
 | Den | `infra/postgres/roles/den`, `modules/den/s3`, `infra/keycloak/clients` (`den-keycloak`), `modules/den/operator-token`; operator: `infra/postgres/superuser`, `modules/den/backup-s3`, `modules/den/files-s3` |
+| Every module | `modules/<module>/den-link` (`DEN_LINK_ENCRYPTION_KEY`), plus the entries below |
 | Stash, Rally, Wiki, Tasks, Learn | `infra/postgres/roles/<role>`, `modules/<module>/s3`; Wiki, Tasks and Learn also `modules/<module>/service-token` |
 | HR | `infra/postgres/roles/hr`, `infra/keycloak/clients` (`hr-provisioner`), and `modules/learn/service-token`, `modules/wiki/service-token`, `modules/tasks/service-token` for the ones enabled |
 | Learn | also `infra/keycloak/clients` (`learn-provisioner`) |
