@@ -69,16 +69,23 @@ data:
             proxy_send_timeout 120s;
             proxy_buffering off;
         }
+        # Browser security headers (CSP and friends, from con-services
+        # shared/nginx, camera=(self) for barcode scanning) in every location
+        # that serves the app, never on /api/: the backend sends its own
+        # stricter headers there.
         location = /sw.js {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache, no-store, must-revalidate" always;
             try_files $uri =404;
         }
         location = /manifest.webmanifest {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             types {} default_type "application/manifest+json";
             try_files $uri =404;
         }
         location = /brand.json {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             try_files $uri =404;
         }
@@ -86,18 +93,20 @@ data:
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
         location /static/ {
+            include /etc/nginx/snippets/security-headers.conf;
             expires 1y;
             add_header Cache-Control "public, immutable" always;
             try_files $uri =404;
         }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
-            add_header Permissions-Policy "camera=(self)" always;
         }
     }
   {{- if $tls }}

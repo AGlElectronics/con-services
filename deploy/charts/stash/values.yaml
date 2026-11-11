@@ -23,8 +23,13 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and, optionally, TELEGRAM_BOT_TOKEN (Lost & Found
-# bot) and SMTP_PASSWORD (overdue emails). This chart never creates Secrets.
+# S3_SECRET_ACCESS_KEY and DEN_LINK_ENCRYPTION_KEY (32 random bytes, base64;
+# encrypts the stored Den credential; the backend pod does not start without
+# it unless config.APP_ENV is development). Optional keys:
+# DEN_LINK_ENCRYPTION_KEY_PREVIOUS (only during a key rotation),
+# HR_SERVICE_TOKEN (lets HR read the role catalog), TELEGRAM_BOT_TOKEN
+# (Lost & Found bot) and SMTP_PASSWORD (overdue emails). This chart never
+# creates Secrets. Docs: https://aglelectronics.github.io/con-services/operations/secrets/
 existingSecret: stash-secrets
 
 # Stash's access config (roles, permissions, OIDC group bindings).
@@ -46,7 +51,15 @@ config:
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: stash-spa
-  OIDC_AUDIENCE: stash-spa
+  # Access tokens must carry this audience (the realm's audience mapper on
+  # stash-spa adds it); ID tokens are refused.
+  OIDC_AUDIENCE: stash-api
+  # The token claim with the person's groups (roles is never merged in),
+  # full or last (compare only the last path segment), and a parent group
+  # removed before matching (e.g. /con2026; empty: none).
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  OIDC_GROUP_PREFIX: ""
   CORS_ALLOWED_ORIGINS: https://stash.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -146,6 +159,15 @@ frontend:
   #   publicClaimEnabled  config.PUBLIC_LOSTFOUND_CLAIM_ENABLED == "true"
   # Docs: https://aglelectronics.github.io/con-services/modules/stash/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may contact besides the app, for the Content Security
+  # Policy nginx sends (scheme + host, no path; several separated by spaces).
+  # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # Empty: scheme and host of the web app's sign-in address (oidcAuthority).
+    keycloakOrigin: ""
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the

@@ -49,6 +49,14 @@ spec:
                 name: stash-config
             - secretRef:
                 name: stash-secrets
+          env:
+            # Named on its own so a Secret without the key stops the pod
+            # (CreateContainerConfigError) instead of the backend at start-up.
+            - name: DEN_LINK_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stash-secrets
+                  key: DEN_LINK_ENCRYPTION_KEY
           ports:
             - name: https
               containerPort: 8080
