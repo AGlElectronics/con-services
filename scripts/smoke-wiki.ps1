@@ -12,9 +12,10 @@ $wiki = 'http://localhost:8140'
 # Live editing goes through the frontend nginx to exercise its websocket proxying.
 $liveBase = 'ws://localhost:3007'
 
-function Get-IdToken($user, $pass) {
+function Get-AccessToken($user, $pass) {
   $body = @{ grant_type = 'password'; client_id = 'wiki-spa'; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  # Token contract: Wiki's API takes access tokens (audience wiki-api), not ID tokens.
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 
 $adminTok = (Invoke-RestMethod -Method Post -Uri "$kcBase/realms/master/protocol/openid-connect/token" -Body @{
@@ -134,9 +135,9 @@ $editorUid = Ensure-SmokeUser 'smoke-wiki-editor' 'smoke-wiki-editor-pass' 'wiki
 $readerUid = Ensure-SmokeUser 'smoke-wiki-reader' 'smoke-wiki-reader-pass' $null
 $space = $null
 try {
-  $editor = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
-  $reader = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
-  $admin = @{ Authorization = "Bearer $(Get-IdToken 'admin' 'adminadmin')" }
+  $editor = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
+  $reader = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
+  $admin = @{ Authorization = "Bearer $(Get-AccessToken 'admin' 'adminadmin')" }
 
   $me = Call $editor 'Get' '/api/v1/me'
   if ($me.permissions -notcontains 'space.create') { throw 'smoke-wiki-editor is missing space.create (wiki-editor group not mapped?)' }
@@ -228,9 +229,9 @@ try {
   Write-Host 'live edits survive a restart: OK'
 
   # Refresh tokens: the restart check above can outlive short token lives.
-  $editor = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
-  $reader = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
-  $admin = @{ Authorization = "Bearer $(Get-IdToken 'admin' 'adminadmin')" }
+  $editor = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-editor' 'smoke-wiki-editor-pass')" }
+  $reader = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-reader' 'smoke-wiki-reader-pass')" }
+  $admin = @{ Authorization = "Bearer $(Get-AccessToken 'admin' 'adminadmin')" }
 
   # Uploads ride on page access: the editor uploads, the reader downloads
   # a shared page's file, and no access reads as 404.
@@ -329,7 +330,7 @@ try {
   # exports what matters and may delete it right away.
   $victimUid = Ensure-SmokeUser 'smoke-wiki-victim' 'smoke-wiki-victim-pass' $null
   try {
-    $victim = @{ Authorization = "Bearer $(Get-IdToken 'smoke-wiki-victim' 'smoke-wiki-victim-pass')" }
+    $victim = @{ Authorization = "Bearer $(Get-AccessToken 'smoke-wiki-victim' 'smoke-wiki-victim-pass')" }
     $victimPrivate = (Call $victim 'Get' '/api/v1/spaces').spaces | Where-Object kind -eq 'private'
     Call $victim 'Post' "/api/v1/spaces/$($victimPrivate.id)/pages" @{ title = 'Leaving notes' } | Out-Null
     Expect-Status 404 $admin 'Get' "/api/v1/spaces/$($victimPrivate.id)" $null 'admin reads a live private space'
