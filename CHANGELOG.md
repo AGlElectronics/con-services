@@ -151,6 +151,11 @@ led by Den's MAJOR; see
   `NormalizeAppEnv` in each package. `APP_ENV=Development` now counts as
   development in `denlink` too, and `denlink.FromEnv` reports an unset
   `APP_ENV` as `production` instead of an empty value.
+- Shared Go code: the `authbase` rate limiter counts IPv6 clients per
+  `/64` network (`authbase.ClientIP` returns keys such as
+  `ip:2001:db8:1:2::/64`), so a client cannot dodge the limit by switching
+  addresses inside its own network. IPv4 clients are still counted per
+  address.
 
 ### Security
 

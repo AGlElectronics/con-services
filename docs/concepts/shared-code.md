@@ -96,7 +96,7 @@ What changes in the module's API is on [Pairing](pairing.md#the-den-connection-a
 | `cfg.AllowedHeaders(extra...)`, `cfg.CORS(CORSOptions)` | CORS: `X-Dev-User` and `X-Dev-Groups` are allowed only in dev mode. |
 | `cfg.StripDevHeaders(next)` | Middleware that deletes the dev headers from every request outside dev mode. |
 | `authbase.DecodeJSON(w, r, &dst, DecodeOptions{MaxBytes, DisallowUnknownFields, RequireJSONContentType})` | Decode a request body with `http.MaxBytesReader` (default 1 MiB). Errors are `413 request_too_large`, `415 unsupported_media_type` or `400 bad_request`; write them with `authbase.WriteDecodeError`. |
-| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. |
+| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`: each IPv4 address on its own, IPv6 addresses per `/64` network, since one home or phone usually holds a whole `/64`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. |
 | `authbase.SecurityHeaders(next)` | `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` on every API response. |
 | `authbase.UserKey{Issuer, Subject}` | A person's identity across Con Services (`iss` + `sub`), with `String`, `ParseUserKey` and `IsZero`. |
 
