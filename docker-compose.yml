@@ -954,6 +954,8 @@ services:
     environment:
       APP_ENV: development
       APP_BASE_URL: https://tasks.conservices.test
+      # Links in notification emails.
+      TASKS_PUBLIC_URL: https://tasks.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
       # DEV ONLY (public value): encrypts the Den credential this backend stores
       # (shared denlink). Production: one random key per module from a secret manager.
@@ -981,6 +983,13 @@ services:
       S3_SECRET_ACCESS_KEY: conservicesdev
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
+      # Email notifications. Dev: Mailpit (plain SMTP, no login; dev-only).
+      # Den's SMTP settings win once Tasks is paired and Den sends them.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: none
+      SMTP_FROM: tasks@conservices.local
+      SMTP_FROM_NAME: Con Services Tasks
     volumes:
       - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
@@ -1045,6 +1054,7 @@ services:
     environment:
       APP_ENV: development
       APP_BASE_URL: http://localhost:3010
+      TASKS_PUBLIC_URL: http://localhost:3010
       DEN_INTERNAL_URL: http://den-backend:8080
       # DEV ONLY (public value): encrypts the Den credential this backend stores
       # (shared denlink). Production: one random key per module from a secret manager.
@@ -1072,6 +1082,13 @@ services:
       S3_SECRET_ACCESS_KEY: conservicesdev
       S3_REGION: us-east-1
       S3_USE_PATH_STYLE: "true"
+      # Email notifications. Dev: Mailpit (plain SMTP, no login; dev-only).
+      # Den's SMTP settings win once Tasks is paired and Den sends them.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: none
+      SMTP_FROM: tasks@conservices.local
+      SMTP_FROM_NAME: Con Services Tasks
     volumes:
       - ./tasks/infra/access-config.toml:/etc/tasks/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
