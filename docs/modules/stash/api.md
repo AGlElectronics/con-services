@@ -93,7 +93,7 @@ TOKEN=$(curl -s https://auth.example.org/realms/conservices/protocol/openid-conn
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, an **unknown JSON field** (bodies are decoded strictly), a bad id or date format. |
 | 401 | `unauthorized` | Missing or invalid token. |
-| 403 | `forbidden` | Signed in, but missing the permission (globally or in the item's department). |
+| 403 | `forbidden` | Signed in, but missing the permission. |
 | 404 | `not_found` | No such object. |
 | 409 | `conflict` | The state does not allow it: not enough stock for a sign-out, confirming a returned sign-out, retiring a retired item, editing a setting Den manages, a duplicate name or barcode. |
 | 422 | `validation_failed` | Field problems; sometimes with `details`. |
@@ -631,7 +631,7 @@ curl -s -X POST $STASH/api/items/6f1c2a4e-0b7d-4a7e-9a51-2f7e9c1d0a11/damage \
 
 | Status | When |
 | --- | --- |
-| `403` | Missing the permission globally and in the item's department. |
+| `403` | Missing the permission. |
 | `404` | Unknown item. |
 | `409` | `"item is already retired"`, `"item is not retired"`. |
 | `422` | `"quantity must be > 0"`, `"delta must be non-zero"`, `"damaged quantity would exceed available units"`, `"repair quantity exceeds damaged units"`, `"lost quantity exceeds owned units"`, `"found quantity exceeds lost units"`, `"adjustment would result in negative quantity_owned"`. |
