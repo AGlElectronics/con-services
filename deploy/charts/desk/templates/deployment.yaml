@@ -241,6 +241,8 @@ spec:
               value: {{ $csp.s3Origin | default "" | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ $csp.extraConnectSrc | default "" | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ $csp.extraFrameSrc | default "about:srcdoc" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}

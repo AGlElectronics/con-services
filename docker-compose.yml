@@ -924,6 +924,9 @@ services:
         NGINX_CONF: nginx.stack.conf
         DESK_VERSION: dev
     container_name: conservices-desk-frontend
+    environment:
+      # Sandboxed customer mail is an srcdoc iframe. Not an origin: the token.
+      EXTRA_FRAME_SRC: "about:srcdoc"
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/desk.json:/etc/conservices/config.json:ro

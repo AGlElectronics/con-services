@@ -125,6 +125,16 @@ the message again (duplicates are skipped by `Message-ID`).
     Click **Authorize**. Changes can take a few minutes, rarely up to 24
     hours, to apply.
 
+    If this client ID is already authorised, edit it and add exactly:
+
+    ```text
+    https://www.googleapis.com/auth/gmail.settings.sharing
+    ```
+
+    Leave every scope that is already there. `gmail.modify` does not include
+    this one. Without it Desk cannot add or remove the send-as address, so
+    creating or suspending a group mailbox fails.
+
 5. **Pick the admin Desk acts as.** The Admin SDK calls run as a Workspace
    admin (`GOOGLE_WORKSPACE_ADMIN_EMAIL`). Use a dedicated user, for example
    `desk-admin@example.org`, with an admin role that can manage users and
@@ -272,8 +282,11 @@ post** to **Anyone on the web** in the Admin console, or check that
 `apps.groups.settings` is in the delegation scopes.
 
 **Replies from a group mailbox fail with `the shared account may not send
-as this address`.** The send-as address is missing on the shared account.
-**Create in Google again** on the mailbox card adds it.
+as this address`, or creating a group mailbox fails the same way.** The
+send-as address is missing, or domain-wide delegation does not include
+`https://www.googleapis.com/auth/gmail.settings.sharing`. Add that scope
+on the service account's client ID (step 4), wait a few minutes, then
+**Create in Google again** on the mailbox card.
 
 **Timeouts or `dial tcp …:443: i/o timeout` in the log.** The network
 policy blocks Google: set `networkPolicy.google.enabled: true` (and

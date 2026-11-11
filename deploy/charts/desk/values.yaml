@@ -179,13 +179,14 @@ frontend:
   config: {}
   # Origins the browser may call besides the app (scheme + host, no path).
   # The frontend container fills them into the CSP when it starts. Empty
-  # leaves that source out. Mail HTML uses a sandboxed srcdoc iframe, which
-  # the template allows as about:srcdoc.
+  # leaves that source out. extraFrameSrc is not an origin: it is the
+  # frame-src token for the sandboxed mail iframe. Leave about:srcdoc.
   securityHeaders:
     keycloakOrigin: ""
     denOrigin: ""
     s3Origin: ""
     extraConnectSrc: ""
+    extraFrameSrc: "about:srcdoc"
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the

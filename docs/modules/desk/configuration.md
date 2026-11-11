@@ -223,6 +223,14 @@ installation-specific; the sign-in settings live in `/config.json` (above).
 | `DESK_VERSION` | `dev` | Version shown in the app. |
 | `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config. The Helm chart (and the Kustomize manifests) mount their own. |
 
+The frontend container, not the backend, reads one more variable when nginx
+starts. It is not in `.env`. Compose, the chart and the image default all
+set it.
+
+| Variable | Default | Required | What it does |
+| --- | --- | --- | --- |
+| `EXTRA_FRAME_SRC` | `about:srcdoc` | no | Extra `frame-src` token. `about:srcdoc` lets the sandboxed mail iframe render. It is the token itself, not an origin. Empty leaves the mail pane blank. |
+
 ```sh
 docker build -f infra/Dockerfile.frontend \
   --build-arg DESK_VERSION=1.0.0 \

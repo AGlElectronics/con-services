@@ -110,6 +110,13 @@ data:
             add_header Cache-Control "no-store" always;
         }
 
+        # Hidden iframe target for oidc-client-ts silent renew. This one
+        # page may be framed by the app itself; every other response stays DENY.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
+            add_header Cache-Control "no-cache" always;
+        }
+
         location /static/ {
             expires 1y;
             add_header Cache-Control "public, immutable" always;

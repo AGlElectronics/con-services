@@ -375,6 +375,9 @@ then add:
     image: ghcr.io/aglelectronics/desk-frontend:1.0.0-1
     restart: unless-stopped
     networks: [internal]
+    environment:
+      # Sandboxed customer mail. The token itself, not an origin.
+      EXTRA_FRAME_SRC: "about:srcdoc"
     volumes:
       # infra/nginx.stack.conf from the Desk repository: forwards /api/ to desk-backend:8080.
       - ./desk/nginx.stack.conf:/etc/nginx/conf.d/default.conf:ro
@@ -491,6 +494,11 @@ cannot be decrypted").** `DESK_SECRET_KEY` changed without the old key in
 
 **Staff sign in but see no mailboxes.** They need a mailbox's role; see
 [Access](access.md).
+
+**A conversation opens but the customer's message is blank, and the browser
+refuses `about:srcdoc`.** The frontend is missing `EXTRA_FRAME_SRC=about:srcdoc`.
+Set it and restart the frontend. See
+[Configuration](configuration.md#frontend-build-settings).
 
 **Replies stay "queued" or show "Not sent".** No SMTP server: the mailbox
 has none and `SMTP_HOST` is empty, or the server refused. The thread shows
