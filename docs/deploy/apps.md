@@ -137,7 +137,7 @@ S3_SECRET_ACCESS_KEY: "{{ .s3SecretKey }}"
 | HR | `infra/postgres/roles/hr`, `infra/keycloak/clients` (`hr-provisioner`), and `modules/learn/service-token`, `modules/wiki/service-token`, `modules/tasks/service-token` for the ones enabled |
 | Learn | also `infra/keycloak/clients` (`learn-provisioner`) |
 | Finance | `infra/postgres/roles/finance` |
-| Desk | `infra/postgres/roles/desk`, `modules/desk/secret-key` |
+| Desk | `infra/postgres/roles/desk`, `modules/desk/s3`, `modules/desk/secret-key`; `modules/desk/google` with Google Workspace mailboxes |
 | all, with `images.pullSecret.enabled: true` | `infra/ghcr` (pull secret) |
 
 All paths are below Con Services' OpenBao mount `conservices/`

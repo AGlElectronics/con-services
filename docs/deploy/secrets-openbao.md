@@ -68,7 +68,7 @@ conservices/                       KV version 2 mount (openbao.kvPath)
 │   │   └── operator-token         generated  token
 │   ├── stash/s3                   you        (rally, learn, wiki, tasks alike)
 │   ├── learn/service-token        generated  token (wiki, tasks alike)
-│   └── desk/secret-key            generated  key
+│   ├── desk/secret-key            generated  key (and previous while rotating)
 └── infra/
     ├── postgres/
     │   ├── superuser              generated  password
@@ -473,11 +473,11 @@ while the entry is missing.
 | `conservices/infra/postgres/roles/<role>` | `password` | password of a PostgreSQL login: `den`, `keycloak`, and one per enabled module (`stash`, `hr`, `events` for Rally, `finance`, `learn`, `wiki`, `desk`, `tasks`) | generated | `postgres` and the application | always (`den`, `keycloak`); per enabled module |
 | `conservices/modules/den/operator-token` | `token` | token between Den's backend and its operator | generated | `den` | always |
 | `conservices/modules/<module>/service-token` | `token` | token HR uses to call `learn`, `wiki`, `tasks` | generated | that module, `hr` | that module enabled |
-| `conservices/modules/desk/secret-key` | `key` | encrypts the mailbox passwords Desk stores. **Keep it forever** | generated | `desk` | Desk enabled |
+| `conservices/modules/desk/secret-key` | `key`, optional `previous` | encrypts the mailbox passwords Desk stores. **Never delete it**; to change it, follow [Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key) | generated | `desk` | Desk enabled |
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |
 | `conservices/modules/den/s3` | `access_key`, `secret_key` | S3 access key ID and secret key, read and write on bucket `<prefix>-conservices-den` only | you | `den` | always |
-| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks`, `desk` | you | that module | that module enabled |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | S3 key with **read only** access to all module buckets (Den copies files into its backups) | you | `den` | always |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-den-backups` only | you | `den` | always |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-pg-backups` only (CloudNativePG) | you | `postgres` | always |
@@ -646,7 +646,8 @@ Then force-sync the ExternalSecrets that read it and restart the
 Deployments, as above. This works for the database passwords
 (CloudNativePG changes them in PostgreSQL), the Den operator token and the
 service tokens. **Never** do it for `modules/desk/secret-key` (it encrypts
-stored mailbox passwords) or the Keycloak entries (Keycloak keeps its own
+stored mailbox passwords; change it as in
+[Rotate DESK_SECRET_KEY](../modules/desk/operations.md#rotate-desk_secret_key)) or the Keycloak entries (Keycloak keeps its own
 copy after the first import; regenerate a client secret in the Keycloak
 admin console, then store it with `bao kv patch`).
 

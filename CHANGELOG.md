@@ -201,6 +201,23 @@ led by Den's MAJOR; see
   `OIDC_GROUP_PREFIX` or `OIDC_GROUP_MATCH=last` is set.
   [Authentication](docs/concepts/authentication.md#refusing-id-tokens)
   explains that refusing ID tokens relies on Keycloak's `typ` claim.
+- Desk in the shared stack: the bucket `desk-data-dev` in the Docker
+  Compose S3 server (and in the Den operator's `FILES_S3_BUCKETS`, so dev
+  backups include it), `desk-data` in the trial S3 server of
+  `deploy/kubernetes/base/data/s3.yaml`, and the Desk backend in Compose
+  now stores attachments in S3, may reach GreenMail and Mailpit
+  (`DESK_ALLOWED_MAIL_HOSTS`) and sends its own emails as
+  `Desk <desk@conservices.test>` through Mailpit (`NOTIFY_FROM`).
+- `scripts/smoke-desk.ps1`: an end-to-end check of Desk against the dev
+  stack (mailbox on GreenMail, incoming mail, reply, undo, note, access per
+  mailbox, trash), cleaning up after itself
+  ([Desk setup](docs/modules/desk/setup.md#option-4-development-on-docker)).
+- Desk documentation: Google Workspace and IMAP setup, access, user guide,
+  operations (trash, retention, rotating `DESK_SECRET_KEY`), and the full
+  API reference. The secrets inventory lists Desk's S3 key, the previous
+  secret key and the Google service account key (Secret `desk-google`, with
+  an ExternalSecret example); the network policy flow table lists Desk's
+  egress to Google APIs and to mail servers.
 
 ### Changed
 
@@ -265,6 +282,15 @@ led by Den's MAJOR; see
 - [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
+- **BREAKING (dev realm):** the Keycloak group `desk-agent` is gone from the
+  dev realm (`infra/keycloak/realm-conservices.json`, `apply-mvp.sh`). Desk
+  grants access per mailbox with groups `desk-<slug>-viewer`, `-manager`
+  and `-delete`; the dev realm has them for the `support` mailbox, and
+  `alice` is in `desk-support-manager`. On an existing dev Keycloak, run
+  `infra/keycloak/apply-mvp.sh` again and delete the `desk-agent` group.
+- `DESK_SECRET_KEY` can be rotated now (with `DESK_SECRET_KEY_PREVIOUS` and
+  `/server reencrypt`); the secrets pages no longer say to treat it as
+  fixed ([Rotate DESK_SECRET_KEY](docs/modules/desk/operations.md#rotate-desk_secret_key)).
 
 ### Security
 

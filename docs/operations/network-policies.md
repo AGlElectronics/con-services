@@ -114,6 +114,8 @@ belong to which.
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
+| `desk-backend` | Google APIs: `gmail.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `www.googleapis.com` | 443 | Helm, only with `networkPolicy.google.enabled` | [Google Workspace mailboxes](../modules/desk/google-workspace.md): reading and labelling mail, sending replies, creating users and groups. Cilium: the `CiliumNetworkPolicy` `desk-backend-google` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.google.cidrs`. Checked against public CAs. |
+| `desk-backend` | mail servers on the internet | 993, 143 (IMAP), 465, 587 (SMTP) | Helm (`networkPolicy.extraEgress`, on by default) | [IMAP and SMTP mailboxes](../modules/desk/imap.md) and the notification mail server (`SMTP_HOST`). Narrow the `ipBlock` to your provider where you can; with only Google mailboxes and no `SMTP_HOST`, set `extraEgress: []`. Desk itself refuses private and internal addresses unless they are listed in `DESK_ALLOWED_MAIL_HOSTS`. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
 backends on 8443, CloudNativePG admitting them on 5432, an in-cluster S3
@@ -146,7 +148,8 @@ namespaces start from a default deny with only DNS allowed.
 Not listed, so blocked: one module calling another (except the documented
 integrations below), the operator being reached by anything but
 `den-backend`, any pod reaching the internet (except external S3 when you
-allow it), and the gateway reaching backends directly.
+allow it, and Desk's mail servers and Google APIs listed above), and the
+gateway reaching backends directly.
 
 Every flow in this table except DNS is encrypted with TLS and checked against
 the internal certificate authority (external S3: against public CAs); see
