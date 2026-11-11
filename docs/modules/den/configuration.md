@@ -20,7 +20,7 @@ settings go into **ConfigMaps**, passwords and keys into **Secrets**:
 | Object | Kind | Used by | Holds |
 | --- | --- | --- | --- |
 | `den-config` | ConfigMap | `den-backend` | Everything in [Backend](#backend) that is not a secret. |
-| `den-secrets` | Secret | `den-backend` and its `migrate` initContainer | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET`, `OPERATOR_TOKEN`. |
+| `den-secrets` | Secret | `den-backend` and its `migrate` initContainer | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET` (optional), `OPERATOR_TOKEN`, `DEN_CREDENTIAL_KEY` (optional). |
 | `den-operator-config` | ConfigMap | `den-operator` | Everything in [Operator](#operator) that is not a secret. |
 | `den-operator-secrets` | Secret | `den-operator` | `OPERATOR_TOKEN`, `PG_ADMIN_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY`. |
 
@@ -123,6 +123,8 @@ start-up if it does not exist.
 | `DEV_DEFAULT_USER` | `dev-admin` | no | In dev mode, the user assumed when no `X-Dev-User` header is sent. |
 | `DEN_ADMIN_GROUPS` | `den-admin` | no | Comma-separated IdP groups whose members are admins. The first one is published in the role catalog. |
 | `DEN_MEMBER_GROUPS` | `den-member` | no | Comma-separated IdP groups whose members may use the portal. The first one is published in the role catalog. |
+| `DEN_OPS_GROUPS` | `den-ops` | no | Comma-separated IdP groups whose members have the **ops** role: run, schedule and download backups, and delete module databases. Admins need it as well for these. The first one is published in the role catalog. In dev mode every user has the role. |
+| `IDENTITY_STAFF_MODE` | `own` | no | Where staff accounts live: `own` (our realm), `brokered` (our realm, signing in through the convention's IdP) or `existing` (the convention's realm). With `existing` Den never writes to the realm, so the Keycloak name sync is off. Any other value stops the backend at start-up. See [Existing identity provider](../../proposals/existing-identity-provider.md). |
 
 !!! note "Letting every signed-in person use the portal"
     Den lets everyone who signs in use the portal when its member group list
@@ -132,17 +134,47 @@ start-up if it does not exist.
 
 ### Keycloak login branding
 
-Optional. When `KEYCLOAK_ADMIN_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`
-and `KEYCLOAK_CLIENT_SECRET` all have a value, Den pushes its brand into the
-realm (see [Keycloak sync](admin-guide.md#keycloak-sync)). Otherwise the
-feature is off.
+The Keycloak sign-in page gets its look from Den by itself: the
+`conservices` login theme fetches Den's
+[public brand](api.md#get-apiv1publicbrand) in the browser. Set this on
+**Keycloak**, not on Den:
+
+| Variable (on Keycloak) | Default | Required | Description |
+| --- | --- | --- | --- |
+| `DEN_PUBLIC_URL` | none | for the branded sign-in page | Den's public address, for example `https://den.conservices.test`. The theme reads it through its `denPublicUrl` property. Empty: Keycloak's neutral look. |
+
+Optionally Den also keeps the realm's **display name** equal to the
+organisation name, because Keycloak puts it into its own e-mails and page
+titles and a browser cannot fetch it. When `KEYCLOAK_ADMIN_URL`,
+`KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID` and `KEYCLOAK_CLIENT_SECRET` all have
+a value (and `IDENTITY_STAFF_MODE` is not `existing`), Den does that (see
+[Keycloak sync](admin-guide.md#keycloak-sync)). Keycloak has no role smaller
+than `manage-realm` that allows it; leave these empty to run Den without any
+write access to the realm.
 
 | Variable | Default | Required | Description |
 | --- | --- | --- | --- |
-| `KEYCLOAK_ADMIN_URL` | none | for sync | How Den reaches Keycloak's API, for example `https://keycloak.conservices-identity.svc.cluster.local:8443`. Can be an internal address; Keycloak never calls Den. |
+| `KEYCLOAK_ADMIN_URL` | none | for the name sync | How Den reaches Keycloak's API, for example `https://keycloak.conservices-identity.svc.cluster.local:8443`. Can be an internal address; Keycloak never calls Den. |
 | `KEYCLOAK_REALM` | realm in `OIDC_ISSUER_URL` | no | The realm to update. By default taken from the part after `/realms/` in `OIDC_ISSUER_URL`. |
 | `KEYCLOAK_CLIENT_ID` | `den-keycloak` | no | A confidential client whose service account has the `realm-management` role `manage-realm`. |
-| `KEYCLOAK_CLIENT_SECRET` | none | for sync | That client's secret. |
+| `KEYCLOAK_CLIENT_SECRET` | none | for the name sync | That client's secret ([Secrets](../../operations/secrets.md)). |
+
+### Calling modules (portal to-dos)
+
+Den's backend calls paired modules for the portal's to-do list
+([`GET /api/v1/portal/todos`](api.md#get-apiv1portaltodos)) with each
+module's pairing credential. Den stores only hashes of credentials, so it
+derives them from a key it can recompute them with.
+
+| Variable | Default | Required | Description |
+| --- | --- | --- | --- |
+| `DEN_CREDENTIAL_KEY` | none | for portal to-dos | A secret of at least 32 characters (`openssl rand -hex 32`). With it, new pairing credentials are `HMAC-SHA256(key, credential id)`. Empty: credentials are random and the to-do list is off. Shorter than 32 characters stops the backend at start-up. Changing it means pairing every module again ([Secrets](../../operations/secrets.md)). |
+
+Den calls a module at its `internal_url`, else its `base_url`, always over
+`https` (plain `http` only with `APP_ENV=development`), with a 5-second
+timeout. The same calls read each module's `/api/role-catalog` to decide
+who sees it on the portal. On Kubernetes this needs the network policy rule
+described in [Network policies](../../operations/network-policies.md).
 
 ### Operator
 
@@ -163,7 +195,7 @@ creating each module by hand (**New module**).
 
 | Variable | Default | Required | Description |
 | --- | --- | --- | --- |
-| `DEN_PREREGISTER_MODULES` | none | no | JSON array of modules. Each entry: `slug` (the module's slug; Rally is `events`), `display_name`, `base_url` (the module's public address), optional `environment`. At every start Den inserts each slug it does not know yet as **unpaired**. It never updates or deletes an existing module, so names, addresses and removals made on the Modules page stay as they are. Empty or unset: nothing is registered. |
+| `DEN_PREREGISTER_MODULES` | none | no | JSON array of modules. Each entry: `slug` (the module's slug; Rally is `events`; lowercase letters, digits and single hyphens), `display_name`, `base_url` (the module's public address, `https://`; `http://` only with `APP_ENV=development`), optional `internal_url` (where Den itself calls the module, same rules) and `environment`. At every start Den inserts each slug it does not know yet as **unpaired**. It never updates or deletes an existing module, so names, addresses and removals made on the Modules page stay as they are. Empty or unset: nothing is registered. |
 
 Example, as the GitOps template sets it for Stash and Rally:
 
@@ -199,6 +231,26 @@ migrations always run before the new server starts.
 /den-migrate           # apply pending migrations
 /den-migrate -status   # list migrations and whether they are applied
 ```
+
+While it applies migrations it holds a PostgreSQL advisory lock, so when
+several backend pods start at once their migrate containers wait for each
+other; the later ones find nothing left to do.
+
+## Health check subcommand
+
+The backend and operator images have no shell tools, so their binaries can
+check themselves. Docker Compose uses this as the `healthcheck`:
+
+```sh
+/den-server healthcheck        # in den-backend: calls its own /livez
+den-operator healthcheck       # in den-operator
+```
+
+It prints `ok` and exits `0`, or prints `unhealthy: …` and exits `1`. It
+calls `127.0.0.1` on the port of `HTTP_ADDR` (`OPERATOR_ADDR` for the
+operator), over HTTPS when `TLS_CERT_FILE` is set (the certificate is not
+checked: it only talks to its own process). Kubernetes uses the HTTP probes
+instead.
 
 ## Web app settings (config.json)
 
@@ -388,6 +440,8 @@ configMapGenerator:
       - OIDC_AUDIENCE=den-spa
       - DEN_ADMIN_GROUPS=den-admin
       - DEN_MEMBER_GROUPS=den-member
+      - DEN_OPS_GROUPS=den-ops
+      - IDENTITY_STAFF_MODE=own
       - CORS_ALLOWED_ORIGINS=https://den.conservices.test
       - S3_ENDPOINT=https://s3.conservices-data.svc.cluster.local:9000
       - S3_BUCKET=den-data
@@ -404,7 +458,9 @@ configMapGenerator:
 ```
 
 The example overlay fills `den-secrets` with **development-only** values
-(for example `OPERATOR_TOKEN=den-operator-dev-token`). Never reuse them.
+(for example `OPERATOR_TOKEN=den-operator-dev-token` and
+`DEN_CREDENTIAL_KEY=dev-only-den-credential-key-change-me`). Never reuse
+them; see [Secrets](../../operations/secrets.md).
 
 ## Example: production overlay
 
@@ -455,8 +511,9 @@ reads (`conservices/den/backend` in the example):
 DATABASE_URL            postgres://den:<password>@<db.example.org>:5432/den?sslmode=verify-full&sslrootcert=/etc/provider-ca/ca.pem
 S3_ACCESS_KEY_ID        <access-key>
 S3_SECRET_ACCESS_KEY    <secret-key>
-KEYCLOAK_CLIENT_SECRET  <den-keycloak-client-secret>
+KEYCLOAK_CLIENT_SECRET  <den-keycloak-client-secret>   # only with the realm name sync
 OPERATOR_TOKEN          <long-random-secret>
+DEN_CREDENTIAL_KEY      <openssl rand -hex 32>         # for portal to-dos
 ```
 
 `/etc/provider-ca/ca.pem` is your database provider's CA certificate. Put it
@@ -496,7 +553,8 @@ creates the network policies.
 2. **Create the two Secrets** with your secret manager (External Secrets
    Operator; see [Secrets](../../operations/secrets.md)): `den-secrets`
    with `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
-   `KEYCLOAK_CLIENT_SECRET`, `OPERATOR_TOKEN`, and `den-operator-secrets`
+   `OPERATOR_TOKEN`, optionally `KEYCLOAK_CLIENT_SECRET` and
+   `DEN_CREDENTIAL_KEY`, and `den-operator-secrets`
    with `OPERATOR_TOKEN`, `PG_ADMIN_URL`, `BACKUP_S3_*` and `FILES_S3_*`
    keys. With CloudNativePG, `PG_ADMIN_URL` looks like
    `postgres://postgres:<password>@conservices-pg-rw.conservices-data.svc.cluster.local:5432/postgres?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`.
@@ -555,10 +613,11 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 | `existingSecret` | `den-secrets` | Secret for the backend and the `migrate` initContainer. |
 | `operator.existingSecret` | `den-operator-secrets` | Secret for the operator. |
 | `config.*` | the base's `den-config` | Backend settings. `OPERATOR_URL` (with `operator.enabled`) and the `TLS_*` / `SSL_CERT_DIR` paths (with internal TLS) are added unless you set them. |
-| `preregisterModules` | `[]` | Modules Den lists, unpaired, from its first start: a list of `{slug, display_name, base_url}` (optional `environment`), rendered as `DEN_PREREGISTER_MODULES` only when not empty ([Modules registered at start-up](#modules-registered-at-start-up)). The chart stops when an entry lacks one of the three keys, or when `config.DEN_PREREGISTER_MODULES` is also set. |
+| `preregisterModules` | `[]` | Modules Den lists, unpaired, from its first start: a list of `{slug, display_name, base_url}` (optional `internal_url`, `environment`), rendered as `DEN_PREREGISTER_MODULES` only when not empty ([Modules registered at start-up](#modules-registered-at-start-up)). The chart stops when an entry lacks one of the three keys, or when `config.DEN_PREREGISTER_MODULES` is also set. |
 | `operatorConfig.*` | the base's `den-operator-config`, but `MODULE_DB_HOST=conservices-pg-rw.conservices-data.svc.cluster.local:5432` | Operator settings. `MODULE_DB_PARAMS` defaults to `sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`. |
 | `operator.enabled` | `true` | Deploy the operator. Without it, Den runs without backups and managed databases. |
-| `backend.replicas`, `operator.replicas` | `1` | Exactly 1; the chart refuses other values (see [High availability](../../operations/helm.md#high-availability)). |
+| `backend.replicas` | `1` | Backend replicas; may be raised (rolling updates, migrations behind a PostgreSQL lock, download links in the database). Rate limits count per replica. |
+| `operator.replicas` | `1` | Exactly 1; the chart refuses other values (see [High availability](../../operations/helm.md#high-availability)). |
 | `backend.extraEnv`, `backend.extraVolumes`, `backend.extraVolumeMounts` | `[]` | Extras, for example a managed database's CA. `extraVolumeMounts` also go into the `migrate` initContainer. |
 | `operator.extraEnv`, `operator.extraVolumes`, `operator.extraVolumeMounts` | `[]` | The same for the operator. |
 | `operator.tmpSizeLimit` | `5Gi` | Size of `/tmp`, where dumps are written before upload. |
@@ -567,14 +626,26 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 | `frontend.config` | `{}` | The web app's `/config.json` ([Web app settings](#web-app-settings-configjson)), as the ConfigMap `<release>-frontend-config`. Keys left out come from `config.AUTH_MODE`, `config.OIDC_ISSUER_URL` and `config.OIDC_CLIENT_ID` (else `den-spa`). |
 | `route.*` | host `den.conservices.test`, Gateway `public` in `conservices-gateway`, `timeout: 60s`, `moduleRemovalTimeout: 30m` | `HTTPRoute` and `BackendTLSPolicy`; see [Exposing the web app](../../operations/helm.md#exposing-the-web-app-gateway-api). |
 | `ingress.*` | off | Plain `Ingress` (legacy). |
-| `networkPolicy.*` | on | As for the modules ([Network policy values](../../operations/helm.md#network-policy-values)), plus `allowFromModules` (module backends may call `den-backend`) and `operatorExtraEgress`. |
+| `networkPolicy.*` | on | As for the modules ([Network policy values](../../operations/helm.md#network-policy-values)), plus `allowFromModules` (module backends may call `den-backend`), `allowToModules.enabled` / `.port` (default on, `8080`: `den-backend` may call module backends for role catalogs and to-dos) and `operatorExtraEgress`. |
 | `networkPolicy.data.s3.external.fqdns`, `.cidrs`, `.port` | `[]`, `[]`, `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`) for both the backend and the operator (branding assets, backups, bucket copies). Host names render the `CiliumNetworkPolicy` `den-external-s3`; address ranges add `ipBlock` rules. See [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
 | `imagePullSecrets` | `[]` | Pull Secrets for private images on the backend, web app and operator pods, for example `[{name: ghcr-pull}]`; see [Private images](../../operations/helm.md#private-images). |
 
 ### Troubleshooting
 
-**`backend.replicas must be 1 for Den`** or **`operator.replicas must be 1`**
-: Both are singletons by design; scale `frontend.replicas` instead.
+**`operator.replicas must be 1`**
+: The operator is a singleton by design (its backup timer and lock live in
+  the process).
+
+**`DEN_CREDENTIAL_KEY must be at least 32 characters`** at start-up
+: Generate a longer key with `openssl rand -hex 32`, store it in your
+  secret manager and restart the backend.
+
+**`IDENTITY_STAFF_MODE must be own, brokered or existing`** at start-up
+: Fix the value in `config` (or the ConfigMap); there is no other mode.
+
+**A module's address is refused with `must use https`**
+: Module addresses must be `https://`; plain `http://` is only accepted with
+  `APP_ENV=development` (local Docker Compose).
 
 **The operator logs `x509: certificate signed by unknown authority` when connecting to PostgreSQL**
 : The CloudNativePG cluster's server certificate is not from the internal
