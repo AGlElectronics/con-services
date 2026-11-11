@@ -4,7 +4,8 @@
 # .github/workflows/ci.yml, pinned to a tag of this repository (ci-v1, ...).
 # Docs: https://aglelectronics.github.io/con-services/contributing/ci/
 #
-# Without `push`, it runs the checks (Go, frontend, Trivy, image policy).
+# Without `push`, it runs the checks (Go, shared code drift, frontend, Trivy,
+# image policy).
 # With `push`, it then publishes the images to GHCR with the tag
 # MAJOR.MINOR.PATCH-BUILD, signs them with cosign (keyless) and attaches a
 # CycloneDX SBOM attestation. Existing tags are never overwritten.
@@ -111,6 +112,24 @@ on:
       node-version:
         type: string
         default: "22"
+      shared-check:
+        description: >-
+          Drift check of the shared Go packages copied from con-services
+          shared/go (files with the "Code generated from con-services
+          shared/go" header in <go-dir>/internal). "error" fails the run on
+          drift, "warn" only annotates it, "off" skips the job. A module
+          without such files always passes.
+        type: string
+        default: error
+      shared-ref:
+        description: >-
+          con-services ref to compare against when con-services has no
+          branch named like this run's branch (default main).
+        type: string
+        default: main
+      shared-repository:
+        type: string
+        default: AGlElectronics/con-services
     outputs:
       tag:
         description: The published image tag (empty without push).
@@ -143,6 +162,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           DEN_MAJOR: ${{ inputs.den-major }}
           TEST_DATABASE_MODE: ${{ inputs.test-database-mode }}
+          SHARED_CHECK: ${{ inputs.shared-check }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
@@ -176,6 +196,10 @@ jobs:
           case "$TEST_DATABASE_MODE" in
             sidecar|service) ;;
             *) echo "::error::test-database-mode must be sidecar or service"; exit 1 ;;
+          esac
+          case "$SHARED_CHECK" in
+            error|warn|off) ;;
+            *) echo "::error::shared-check must be error, warn or off"; exit 1 ;;
           esac
 
           images="$(jq -ce '
@@ -308,6 +332,88 @@ jobs:
         env:
           GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
         run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  # Modules carry generated copies of con-services shared/go/<pkg> in
+  # <go-dir>/internal/<pkg>. Compare them with con-services: the branch of
+  # the same name when it exists (a change made in both repositories), else
+  # shared-ref. Modules that have not adopted a shared package pass.
+  # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/
+  shared-code:
+    name: Shared code drift
+    needs: setup
+    if: inputs.go-dir != '' && inputs.shared-check != 'off'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+          persist-credentials: false
+
+      - name: Find adopted shared packages
+        id: adopted
+        env:
+          GO_DIR: ${{ inputs.go-dir }}
+        run: |
+          set -euo pipefail
+          found="$(grep -rlF --include='*.go' 'Code generated from con-services shared/go/' "$GO_DIR/internal" 2>/dev/null || true)"
+          if [ -z "$found" ]; then
+            echo "No shared packages adopted; nothing to check."
+            echo "adopted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Generated copies:"; echo "$found"
+            echo "adopted=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pick the con-services ref
+        id: ref
+        if: steps.adopted.outputs.adopted == 'true'
+        env:
+          REPO: ${{ inputs.shared-repository }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          FALLBACK: ${{ inputs.shared-ref }}
+        run: |
+          set -euo pipefail
+          ref="$FALLBACK"
+          if [ "$REF_TYPE" = "branch" ] && [ -n "$BRANCH" ] \
+            && git ls-remote --exit-code --heads "https://github.com/${REPO}.git" "refs/heads/${BRANCH}" >/dev/null 2>&1; then
+            ref="$BRANCH"
+          fi
+          echo "Comparing with ${REPO}@${ref}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.adopted.outputs.adopted == 'true'
+        with:
+          repository: ${{ inputs.shared-repository }}
+          ref: ${{ steps.ref.outputs.ref }}
+          path: .con-services
+          persist-credentials: false
+          sparse-checkout: |
+            shared
+            scripts
+
+      - name: Check for drift
+        if: steps.adopted.outputs.adopted == 'true'
+        env:
+          GO_DIR: ${{ inputs.go-dir }}
+          MODE: ${{ inputs.shared-check }}
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          set -uo pipefail
+          if bash .con-services/scripts/sync-shared.sh --backend-dir "$GO_DIR" --check; then
+            exit 0
+          fi
+          msg="Shared Go code differs from con-services@${REF} shared/go. Change it in con-services and run scripts/sync-shared; never edit the generated copies."
+          if [ "$MODE" = "warn" ]; then
+            echo "::warning::$msg"
+            exit 0
+          fi
+          echo "::error::$msg"
+          exit 1
 
   frontend:
     name: Frontend
@@ -560,7 +666,7 @@ jobs:
 
   release-prepare:
     name: Release tag
-    needs: [setup, go, frontend, trivy-fs, images]
+    needs: [setup, go, shared-code, frontend, trivy-fs, images]
     if: >-
       inputs.push && !cancelled()
       && !contains(needs.*.result, 'failure')

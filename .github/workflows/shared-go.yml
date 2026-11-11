@@ -1,0 +1,71 @@
+# Tests the canonical shared Go packages (shared/go) that every module
+# copies with scripts/sync-shared, and checks that both sync scripts produce
+# a copy that builds inside a module.
+# Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/
+name: Shared Go
+
+on:
+  pull_request:
+    paths:
+      - "shared/**"
+      - "scripts/sync-shared.*"
+      - ".github/workflows/shared-go.yml"
+  push:
+    branches: [main]
+    paths:
+      - "shared/**"
+      - "scripts/sync-shared.*"
+      - ".github/workflows/shared-go.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test shared/go
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: shared/go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: shared/go/go.mod
+          cache-dependency-path: shared/go/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted (run 'gofmt -w .' in shared/go):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race ./...
+
+      - name: Sync into a scratch module and build it
+        working-directory: .
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/scratch/backend"
+          mkdir -p "$scratch"
+          printf 'module example.org/scratch/backend\n\ngo %s\n' "$(awk '$1 == "go" { print $2 }' shared/go/go.mod)" > "$scratch/go.mod"
+          bash scripts/sync-shared.sh --backend-dir "$scratch" --packages "$(ls shared/go | grep -v '\.' | paste -sd, -)"
+          bash scripts/sync-shared.sh --backend-dir "$scratch" --check
+          cd "$scratch"
+          go mod tidy
+          go vet ./...
+          go test ./...
