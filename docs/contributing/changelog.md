@@ -82,12 +82,15 @@ section in that app's changelog. The numbers follow the Den-led rules on
 [Versions and upgrades](../operations/versioning.md#the-rules):
 
 - **Den:** MAJOR only when something modules use is removed or changed
-  incompatibly; MINOR when something is added; PATCH for fixes. A Den
-  MINOR or PATCH never removes or deprecates a feature.
+  incompatibly, counting on from the MINOR (`1.4.2` → `2.5.0`); MINOR when
+  something is added; PATCH for fixes. A Den MINOR or PATCH never removes
+  or deprecates a feature.
 - **Modules:** MAJOR always equals the Den MAJOR the module is built for;
-  MINOR for features (even big ones); PATCH for fixes. When Den releases a
-  new MAJOR, the module's next release takes that MAJOR and keeps counting
-  MINOR and PATCH (`1.12.1` → `2.12.1`).
+  MINOR for features (even big ones); PATCH for fixes. A module release
+  that uses something new in Den states it on its *Needs Den* line
+  (`Needs Den: 1.5.0 or later`). When Den releases a new MAJOR, **every**
+  module releases that MAJOR, also when it needs no change, and keeps
+  counting: unchanged `1.3.0` → `2.3.0`, adapted `1.12.1` → `2.13.0`.
 
 The release's images are tagged `MAJOR.MINOR.PATCH-BUILD`, for
 example `1.4.2-1`; `BUILD` counts rebuilds of the same version (for example
@@ -101,7 +104,7 @@ what to do, for example a renamed setting or a new network policy. In
 Den, an entry that breaks modules comes with a new Den MAJOR:
 
 ```markdown
-## [2.0.0] - 2027-02-01
+## [2.6.0] - 2027-02-01
 
 ### Removed
 

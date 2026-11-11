@@ -238,10 +238,13 @@ versioned with its app: tag the app's repository too, so that images of
 the new version exist (`git tag v1.12.2` on the unchanged code), then
 release the chart as above.
 
-**Den MAJOR:** release Den `2.0.0` first (both tags). Then, for each
-module, adapt it if needed, set `den-major: "2"` in its `ci.yml`, and
-release it with MAJOR 2 and its MINOR and PATCH kept (HR `1.13.0` →
-`2.13.0`), chart annotation `conservices.io/den-major: "2"`. The chart
+**Den MAJOR:** release Den first (both tags), counting on from its MINOR
+(`1.5.0` → `2.6.0`, never `2.0.0`). Then release **every** module with
+MAJOR 2, also the ones that need no change: set `den-major: "2"` in its
+`ci.yml` and the chart annotation `conservices.io/den-major: "2"`. A
+module that needed no change keeps its MINOR and PATCH (Stash `1.3.2` →
+`2.3.2`); a module that was adapted also raises its MINOR (HR `1.13.0` →
+`2.14.0`). The chart
 release workflow refuses a module tag `hr/v2.…` while no `den/v2.…` tag
 exists.
 

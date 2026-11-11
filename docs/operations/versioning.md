@@ -40,9 +40,14 @@ says which modules fit together.
 
 | Change in Den | Version change | Example | What it means for modules |
 | --- | --- | --- | --- |
-| Something modules use is removed or changed incompatibly: an endpoint, a field, a pairing step, a header | **MAJOR** | `1.4.2` → `2.0.0` | Every module needs a new release for the new MAJOR before it can run with this Den. |
-| Something is added, nothing removed: a new endpoint, a new optional field, a new page | **MINOR** | `1.4.2` → `1.5.0` | Nothing. Modules keep working; a later module release may start using the addition. |
+| Something modules use is removed or changed incompatibly: an endpoint, a field, a pairing step, a header | **MAJOR**, and MINOR keeps counting | `1.4.2` → `2.5.0` | Every module, also one that did not change, needs a new release for the new MAJOR before it can run with this Den. |
+| Something is added, nothing removed: a new endpoint, a new optional field, a new page | **MINOR** | `1.4.2` → `1.5.0` | Nothing. Modules keep working. A module release that starts using the addition says so in its changelog: *Needs Den: 1.5.0 or later*. |
 | A bug fix | **PATCH** | `1.4.2` → `1.4.3` | Nothing. |
+
+Den's MAJOR changes **only** for a breaking change. Den's numbers never
+start again from zero: a breaking release raises the MAJOR and counts on
+from the MINOR (`1.4.2` → `2.5.0`, never `2.0.0`), so every Den version
+number is used once and the order of releases stays readable.
 
 A Den MINOR or PATCH never removes or deprecates a feature. Removals wait
 for the next Den MAJOR, and that release's changelog lists them under
@@ -54,7 +59,8 @@ for the next Den MAJOR, and that release's changelog lists them under
 | --- | --- | --- |
 | A feature, however big | **MINOR** | HR `1.11.451` → `1.12.0` |
 | A bug fix | **PATCH** | HR `1.12.0` → `1.12.1` |
-| Den released a new MAJOR and the module was checked or adapted for it | **MAJOR** = the new Den MAJOR; MINOR and PATCH keep counting | HR `1.12.1` → `2.12.1` |
+| Den released a new MAJOR; the module was checked and needed no change | **MAJOR** = the new Den MAJOR; MINOR and PATCH stay | Finance `1.3.0` → `2.3.0` |
+| Den released a new MAJOR; the module was adapted for it | **MAJOR** = the new Den MAJOR, and MINOR + 1 | HR `1.12.1` → `2.13.0` |
 
 A module never raises its MAJOR on its own. Its MAJOR always equals the Den
 MAJOR it is built for, and CI refuses a module release or chart whose
@@ -77,9 +83,9 @@ Compare the MAJOR numbers:
 | --- | --- | --- |
 | HR `1.12.1` | `1.4.2` | No, both are MAJOR 1. Check the release's *Needs Den* line (below); `1.12.1` needs Den `1.0.0` or later. |
 | HR `1.13.0`, which needs Den `1.5.0` or later | `1.4.2` | Yes, a Den MINOR: upgrade Den to `1.5.0` first, then HR. |
-| HR `2.12.1` | `1.4.2` | Yes, a Den MAJOR: follow [Den MAJOR upgrades](#den-major-upgrades); every other enabled module moves to MAJOR 2 at the same time. |
+| HR `2.13.0` | `1.4.2` | Yes, a Den MAJOR (Den `2.5.0`): follow [Den MAJOR upgrades](#den-major-upgrades); every other enabled module moves to MAJOR 2 at the same time, for example Finance `1.3.0` → `2.3.0`. |
 | Den `1.5.0` | `1.4.2` | Only Den changes. No module needs an update. |
-| Den `2.0.0` | `1.4.2` | Every enabled module needs its MAJOR 2 release. |
+| Den `2.5.0` | `1.4.2` | Every enabled module needs its MAJOR 2 release. |
 
 In short: **Den changed MAJOR means every module needs an update.**
 Otherwise, update only the app that changed.
@@ -151,10 +157,10 @@ upgrade HR.
 ### A Den MAJOR
 
 Den removes an old pairing endpoint that modules called: Den `1.5.0` →
-`2.0.0`, with **BREAKING:** entries in its changelog. Every module is then
-checked against Den 2 and, where needed, adapted, and released with MAJOR
-2, keeping its numbers: HR `1.13.0` → `2.13.0`, Stash `1.3.2` → `2.3.2`,
-and so on. Once every module you run has a MAJOR 2 release, you upgrade
+`2.6.0`, with **BREAKING:** entries in its changelog. Every module is then
+checked against Den 2 and released with MAJOR 2, also the ones that need
+no change. HR had to be adapted, so `1.13.0` → `2.14.0`; Stash needed no
+change, so `1.3.2` → `2.3.2`; and so on. Once every module you run has a MAJOR 2 release, you upgrade
 Den and those modules together in one change; see
 [Den MAJOR upgrades](#den-major-upgrades).
 
@@ -386,7 +392,7 @@ have new versions. Only a Den MAJOR upgrade changes several apps at once.
 
 ### Den MAJOR upgrades
 
-A new Den MAJOR (for example `1.5.0` → `2.0.0`) removes or changes
+A new Den MAJOR (for example `1.5.0` → `2.6.0`) removes or changes
 something modules use, so Den and every enabled module move to the new
 MAJOR together. The GitOps template refuses a `cluster.yaml` in which an
 enabled module's MAJOR differs from Den's, so you cannot push half of it
@@ -405,11 +411,11 @@ by accident.
 
     ```yaml
     den:
-      version: "2.0.0-1"        # was "1.5.0-1"
+      version: "2.6.0-1"        # was "1.5.0-1"
     modules:
       hr:
         enabled: true
-        version: "2.13.0-1"     # was "1.13.0-1"
+        version: "2.14.0-1"     # was "1.13.0-1"
       stash:
         enabled: true
         version: "2.3.2-1"      # was "1.3.2-1"

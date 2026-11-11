@@ -738,7 +738,7 @@ with security updates only; it uses the same chart and is always safe.
 
 ### Upgrade to a new Den MAJOR
 
-A new Den MAJOR (for example `1.5.0` → `2.0.0`) removes something modules
+A new Den MAJOR (for example `1.5.0` → `2.6.0`) removes something modules
 rely on, so Den and every enabled module move to the new MAJOR in **one
 push**. The root chart refuses a `cluster.yaml` in which an enabled
 module's MAJOR differs from Den's, so a half-done upgrade never reaches
@@ -757,11 +757,11 @@ the cluster.
 
     ```yaml
     den:
-      version: "2.0.0-1"        # was "1.5.0-1"
+      version: "2.6.0-1"        # was "1.5.0-1"
     modules:
       hr:
         enabled: true
-        version: "2.13.0-1"     # was "1.13.0-1"
+        version: "2.14.0-1"     # was "1.13.0-1"
       stash:
         enabled: true
         version: "2.3.2-1"      # was "1.3.2-1"

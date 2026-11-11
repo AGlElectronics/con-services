@@ -19,7 +19,11 @@ led by Den's MAJOR; see
 ### Added
 
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
-  module's MAJOR always equals the Den MAJOR it is built for. Images are
+  module's MAJOR always equals the Den MAJOR it is built for. Den raises
+  its MAJOR only for a breaking change and keeps counting (`1.4.2` →
+  `2.5.0`); every module then releases the new MAJOR, also when unchanged
+  (`1.3.0` → `2.3.0`). A module that uses something new in Den says so on
+  its *Needs Den* line. Images are
   `ghcr.io/aglelectronics/<app>-<component>:MAJOR.MINOR.PATCH-BUILD`, never
   `latest`. Each app's chart is released by the tag `<app>/vX.Y.Z` in this
   repository (for example `hr/v1.0.0`) and carries the annotation
