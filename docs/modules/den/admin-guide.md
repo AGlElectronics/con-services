@@ -457,7 +457,7 @@ if a value is not valid, the message appears under the field.
 | Section | What it is | Who gets it |
 | --- | --- | --- |
 | **Retention** | How long HR keeps offboarded volunteers, how long unused accounts stay, and how long old module data is kept (days). The suggested numbers are **pending legal review**: they have not been checked against data-protection law yet. | every module |
-| **E-mail (SMTP)** | Server, port, security, sender, user name and password for the e-mails modules send. The password is never shown again after saving; type a new one to replace it, or tick *Remove the saved password*. Modules fetch it separately when they send mail; it is not in the bundle. | every module |
+| **E-mail (SMTP)** | Server, port, security, sender and user name for the e-mails modules send. The password is not typed here. The page says *Password: configured in Den's secret (DEN_SMTP_PASSWORD)* or *Password: not set*, and links to the configuration page. Modules fetch the password separately when they send mail; it is not in the bundle. | every module |
 | **Finance: seller details** | Legal name, address, country, VAT ID and the other details printed on invoices and receipts. | Finance |
 | **Stash: Lost & Found** | Either *kept for N days after the con* or *deleted N hours after closing*. | Stash |
 | **Wiki** | How many days old page revisions are kept. `0` keeps every revision. | Wiki |
@@ -465,12 +465,14 @@ if a value is not valid, the message appears under the field.
 | **Rally: submission site** | The host name attendees submit events on, for example `submit.example.org`. Rally's address in Den may be the slug `events`; it still receives this section. | Rally |
 | **Identity links** | The name of your sign-in (SSO), the "manage my account" address (password, two-factor) and the identity provider's admin console. | Den only: the menu and the portal. No module receives this. |
 
-The SMTP password is stored in Den's database (not encrypted there; the
-backups of that database are encrypted) and is not in the bundle. A module
-fetches it, when it sends mail, from Den with its pairing credential. See
+The SMTP password is Den's secret `DEN_SMTP_PASSWORD` (a key of
+`den-secrets`) or the file `DEN_SMTP_PASSWORD_FILE`. It is not stored in
+Den's database. A module fetches it, when it sends mail, from Den with its
+pairing credential. It is not in the bundle. See
 [Secrets](../../operations/secrets.md) and the
-[module settings contract](../../concepts/module-settings.md). Changes are
-written to the [audit log](#audit-log) without the password.
+[module settings contract](../../concepts/module-settings.md). Changes to
+the other fields are written to the [audit log](#audit-log). The password
+is not, because this page cannot change it.
 
 ## Audit log
 

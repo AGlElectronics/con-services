@@ -270,9 +270,12 @@ in Den re-pairs a module for you.
    moment ago, and *Last used* moves forward as the module syncs (every
    minute). The module shows Den's name and colours again.
 
-6. **If the SMTP password was in the module settings**, change it at your mail
-   provider and enter the new one on Den → **Module settings**: anyone with
-   the leaked credential could have read it.
+6. **If Den had an SMTP password**, change it at your mail provider, put the
+   new value in `DEN_SMTP_PASSWORD` (GitOps: OpenBao
+   `conservices/modules/den/smtp`), and restart Den. Anyone with the leaked
+   credential could have read it from
+   `GET /api/v1/integrations/module-settings/secrets`. The password is not
+   in the database.
 
 If only a **pairing URL** leaked and the audit log shows no unexpected
 `pairing.token.redeem`, waiting 15 minutes is enough; if it was used by

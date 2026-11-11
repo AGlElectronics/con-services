@@ -112,7 +112,8 @@ configMapGenerator:
 # Secrets in overlays/production-external-secrets):
 #   den-secrets:          DATABASE_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
 #                         KEYCLOAK_CLIENT_SECRET, OPERATOR_TOKEN,
-#                         DEN_CREDENTIAL_KEY
+#                         DEN_CREDENTIAL_KEY, DEN_SMTP_PASSWORD (optional;
+#                         empty when the mail server needs no login)
 #   den-operator-secrets: OPERATOR_TOKEN, PG_ADMIN_URL,
 #                         BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY,
 #                         FILES_S3_ACCESS_KEY_ID, FILES_S3_SECRET_ACCESS_KEY

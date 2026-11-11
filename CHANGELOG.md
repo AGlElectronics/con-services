@@ -239,6 +239,14 @@ led by Den's MAJOR; see
   sees is unchanged: the API `message` field and `last_error` on the Den
   connection page still say "Den rejected…", "Den refused the pairing URL"
   and "Den returned …" (`denlink.UserMessage`).
+- **BREAKING:** Den's shared SMTP password is the optional secret
+  `DEN_SMTP_PASSWORD` (`den-secrets`; empty in the development Compose
+  stack and the example overlay, because Mailpit needs no login). The
+  production ExternalSecret example lists the key. It is not stored in
+  Postgres. Before upgrading a trial that saved the password in Den, copy
+  it into the secret; Den's upgrade drops the stored value. See
+  [Secrets](docs/operations/secrets.md) and
+  [Module settings](docs/concepts/module-settings.md).
 - Den's Compose stack and Kubernetes base accept access tokens with
   audience `den-api` (the backend no longer reads `OIDC_CLIENT_ID`). The
   operator sets `BACKUP_SAME_STORAGE_AS_DATA` (true on the local trial,
@@ -251,9 +259,8 @@ led by Den's MAJOR; see
   and its Den API section matches Den: one organisation document at
   `GET`/`PUT /api/v1/module-settings` with `{"data": {…}}`, a read-only
   per-module view, and the SMTP password only from
-  `GET /api/v1/integrations/module-settings/secrets` (stored in Den's
-  database, not encrypted at rest).
-
+  `GET /api/v1/integrations/module-settings/secrets` (Den's secret
+  `DEN_SMTP_PASSWORD`, not the database).
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,

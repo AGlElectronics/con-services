@@ -480,6 +480,7 @@ while the entry is missing.
 | `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | S3 key with **read only** access to all module buckets (Den copies files into its backups) | you | `den` | always |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-den-backups` only | you | `den` | always |
+| `conservices/modules/den/smtp` | `password` | Password paired modules use to log in to the shared mail server (`DEN_SMTP_PASSWORD`). Not generated and not stored in Den's database. Leave it unset to send mail without a login; Den stays Ready. | you | `den` | optional |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-pg-backups` only (CloudNativePG) | you | `postgres` | always |
 | `conservices/infra/keycloak/smtp` | `host`, `port`, `from`, `username`, `password` | mail server for password reset and verification mail, for example `smtp.example.org`, `587`, `no-reply@example.org` | you | `keycloak` | `keycloak.smtp.enabled` (default `true`) |
 | `conservices/infra/cloudflare` | `api-token` | Cloudflare API token with Zone:DNS:Edit and Zone:Zone:Read on your zone only: 40 characters (older tokens) or 53 starting with `cfut_` or `cfat_` | you | `letsencrypt` | `acme.dns01.provider: cloudflare` (default) |
@@ -487,9 +488,10 @@ while the entry is missing.
 
 With every module enabled that is 18 generated entries (20 values) and 11
 entries you enter (12 with `images.pullSecret.enabled`), each S3 entry with
-its own key. Which buckets the S3 keys are for, and how to create them, is
-on [Data](data.md). Who reads which entry is on
-[Secrets](../operations/secrets.md#inventory).
+its own key. The optional password at `conservices/modules/den/smtp` is
+extra: leaving it unset does not Degrade Den. Which buckets the S3 keys are
+for, and how to create them, is on [Data](data.md). Who reads which entry
+is on [Secrets](../operations/secrets.md#inventory).
 
 ## Without the setup Job
 

@@ -548,6 +548,9 @@ services:
       # DEV ONLY: derives module credentials so Den can fetch portal to-dos
       # from paired modules. Production: a generated secret (docs: Secrets).
       DEN_CREDENTIAL_KEY: dev-only-den-credential-key-change-me
+      # DEV ONLY: shared SMTP password for paired modules. Mailpit accepts
+      # mail without a login, so this stays empty. Not stored in Postgres.
+      DEN_SMTP_PASSWORD: ""
       # Module databases + backups (docs: Databases and backups). Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: den-operator-dev-token

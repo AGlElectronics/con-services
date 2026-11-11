@@ -1074,7 +1074,7 @@ refused (`400`).
 | Section | Fields | Rules | Given to |
 | --- | --- | --- | --- |
 | `retention` | `offboarded_volunteers_days`, `inactive_users_days`, `module_data_days` | Whole days, 0–3650. | every module |
-| `smtp` | `host` (host name), `port` (1–65535, default `587`), `security` (`starttls` default, `tls`, or `none` only with `APP_ENV=development`), `username` (at most 256), `password`, `from` (e-mail address), `from_name` (at most 200) | `password` is **write-only**: a string sets it (at most 512), `null` clears it, leaving it out keeps it. Answers show `password_set` instead. Removing the section clears the password too. | every module; the password only through [`GET /api/v1/integrations/module-settings/secrets`](#get-apiv1integrationsmodule-settingssecrets) |
+| `smtp` | `host` (host name), `port` (1–65535, default `587`), `security` (`starttls` default, `tls`, or `none` only with `APP_ENV=development`), `username` (at most 256), `from` (e-mail address), `from_name` (at most 200) | Do not send `password`. A body that contains `smtp.password` (a string or `null`) is `422`: the password is the secret `DEN_SMTP_PASSWORD` or `DEN_SMTP_PASSWORD_FILE`, not a module setting. Answers show `password_set` instead, true when that secret has a value. Removing the section does not change the password. | every module; the password only through [`GET /api/v1/integrations/module-settings/secrets`](#get-apiv1integrationsmodule-settingssecrets) |
 | `finance` | `seller`: `legal_name` (at most 200), `address` (multi-line, at most 1000), `country`, `vat_id`, `tax_number` (at most 64), `registration` (at most 200), `email`, `website` | `country`: two-letter ISO code, upper-cased. `vat_id`: spaces, `.` and `-` removed, upper-cased, starts with a country code (`ATU12345678`). `website`: `https://` (http only in development). | slug `finance` |
 | `stash` | `lost_found`: `{"mode": "kept_after_con", "days": N}` (0–3650, default 30) or `{"mode": "deleted_after_closing", "hours": N}` (0–8760, default 48) | | slug `stash` |
 | `wiki` | `revision_retention_days` | 0–3650; `0` keeps every revision. | slug `wiki` |
@@ -1123,15 +1123,17 @@ Never saved: `{"data":{},"updated_at":null}`.
 Replace the whole document. **Auth:** admin. **Body:** `{"data": {…}}`,
 the same shape `GET` returns (sending a `GET` answer back, with its
 `updated_at`, works; `updated_at` is ignored). Returns the saved document as
-`GET`. Audited as `module_settings.update`; the password never appears in
-the audit log, only the note `SMTP password set` or `SMTP password
-cleared`.
+`GET`. Audited as `module_settings.update`. The password is not in the
+audit log, and this call cannot change it.
 
 ```sh
 curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"data":{"smtp":{"host":"smtp.example.org","username":"noreply","password":"change-me","from":"noreply@example.org","from_name":"Example Con"},"rally":{"submission_site_host":"submit.example.org"}}}' \
+  -d '{"data":{"smtp":{"host":"smtp.example.org","username":"noreply","from":"noreply@example.org","from_name":"Example Con"},"rally":{"submission_site_host":"submit.example.org"}}}' \
   $DEN/api/v1/module-settings
 ```
+
+`password_set` in the answer below is true because `DEN_SMTP_PASSWORD` is
+set on this Den. The request does not send a password.
 
 ```json
 {
@@ -1150,7 +1152,7 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json
 | `400` | `bad_request` | The body is not `{"data": {…}}` (for example the old unwrapped document), or has an unknown field. |
 | `401` / `403` | `unauthorized` / `forbidden` | Not signed in, or not an admin. |
 | `413` | `request_too_large` | The body is larger than 1 MiB. |
-| `422` | `validation_failed` | A value breaks a rule in the table above. |
+| `422` | `validation_failed` | A value breaks a rule in the table above, or the body contains `smtp.password`. |
 
 Validation errors have one message per field, keyed with the dotted key:
 
@@ -1161,6 +1163,7 @@ Validation errors have one message per field, keyed with the dotted key:
     "message": "validation failed",
     "details": {
       "smtp.port": "must be between 1 and 65535",
+      "smtp.password": "is set with the secret DEN_SMTP_PASSWORD (or DEN_SMTP_PASSWORD_FILE), not in module settings",
       "rally.submission_site_host": "must be a host name without https://, for example submit.example.org"
     }
   }
@@ -1665,10 +1668,11 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings
 
 ### `GET /api/v1/integrations/module-settings/secrets`
 
-The secret values of the calling module's settings. The bundle never
-carries them (a module stores the bundle). **Auth:** module credential.
+The SMTP password from Den's secret (`DEN_SMTP_PASSWORD`, or the file
+`DEN_SMTP_PASSWORD_FILE`). The bundle never carries it (a module stores
+the bundle). **Auth:** module credential.
 **Response:** `200`, `Cache-Control: no-store`. Keys without a value are
-left out, so `{}` means no password is set.
+left out, so `{}` means the secret is empty.
 
 ```sh
 curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings/secrets
@@ -1680,9 +1684,11 @@ curl -H "Authorization: Bearer $CRED" $DEN/api/v1/integrations/module-settings/s
 
 **Errors:** `401` when the credential is missing or revoked.
 
-Den keeps the password in its database, in a column the admin API, the
-bundle and the audit log never return. It is not encrypted there, so it is
-as safe as Den's database and its backups (the operator encrypts those).
+Den does not keep the password in its database. The admin API, the bundle
+and the audit log never return it. It is as safe as the secret it comes
+from ([Secrets](../../operations/secrets.md)): update the secret manager
+and restart Den. A mounted `DEN_SMTP_PASSWORD_FILE` is read on each
+request, so replacing the file needs no restart.
 
 ### `GET /api/v1/integrations/branding/profile`
 

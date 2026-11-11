@@ -40,7 +40,13 @@ image:
 #   OPERATOR_TOKEN          required with operator.enabled
 #   DEN_CREDENTIAL_KEY      optional; at least 32 characters. Lets Den call
 #                           paired modules for portal to-dos.
-# This chart never creates Secrets.
+#   DEN_SMTP_PASSWORD       optional. Password paired modules use to log in
+#                           to the shared mail server. Empty or absent: no
+#                           login. Not stored in Den's database. Do not also
+#                           set DEN_SMTP_PASSWORD_FILE.
+# This chart never creates Secrets. The backend loads every key of this
+# Secret as an environment variable (envFrom), so a missing optional key
+# simply leaves that variable unset.
 existingSecret: den-secrets
 
 # Non-secret backend settings, rendered into the ConfigMap

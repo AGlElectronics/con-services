@@ -20,7 +20,7 @@ settings go into **ConfigMaps**, passwords and keys into **Secrets**:
 | Object | Kind | Used by | Holds |
 | --- | --- | --- | --- |
 | `den-config` | ConfigMap | `den-backend` | Everything in [Backend](#backend) that is not a secret. |
-| `den-secrets` | Secret | `den-backend` and its `migrate` initContainer | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET` (optional), `OPERATOR_TOKEN`, `DEN_CREDENTIAL_KEY` (optional). |
+| `den-secrets` | Secret | `den-backend` and its `migrate` initContainer | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `KEYCLOAK_CLIENT_SECRET` (optional), `OPERATOR_TOKEN`, `DEN_CREDENTIAL_KEY` (optional), `DEN_SMTP_PASSWORD` (optional). |
 | `den-operator-config` | ConfigMap | `den-operator` | Everything in [Operator](#operator) that is not a secret. |
 | `den-operator-secrets` | Secret | `den-operator` | `OPERATOR_TOKEN`, `PG_ADMIN_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY`. |
 
@@ -178,6 +178,28 @@ Den calls a module at its `internal_url`, else its `base_url`, always over
 timeout. The same calls read each module's `/api/role-catalog` to decide
 who sees it on the portal. On Kubernetes this needs the network policy rule
 described in [Network policies](../../operations/network-policies.md).
+
+### Shared SMTP password
+
+Paired modules that send mail can share one SMTP login. The server, port,
+security, user name and sender are
+[module settings](../../concepts/module-settings.md). The password is not a
+module setting and is not stored in Postgres: Den has to give the real
+password to a paired module so that module can log in to the mail server,
+so a hash would not work. It comes from a secret.
+
+| Variable | Default | Required | Description |
+| --- | --- | --- | --- |
+| `DEN_SMTP_PASSWORD` | none | no | The password. Empty or unset: the mail server needs no login (Mailpit, in the development Compose stack, does not). On Kubernetes this is an optional key of `den-secrets`. A new value is picked up when Den starts again. |
+| `DEN_SMTP_PASSWORD_FILE` | none | no | Path of a file that holds the same password, for a secret mounted as a file. Den reads it on every request, so replacing the file needs no restart. A trailing newline is ignored. Do not set this and `DEN_SMTP_PASSWORD` together: Den refuses to start. |
+
+`GET /api/v1/module-settings` and the integration bundle report
+`smtp.password_set` (true when the value is non-empty) and never the
+password. `PUT /api/v1/module-settings` rejects a body that contains
+`smtp.password`. A paired module reads the value from
+[`GET /api/v1/integrations/module-settings/secrets`](api.md#get-apiv1integrationsmodule-settingssecrets).
+The Module settings page shows whether it is set and links here. Rotation
+is on the [Secrets](../../operations/secrets.md) page.
 
 ### Operator connection
 
@@ -577,6 +599,7 @@ S3_SECRET_ACCESS_KEY    <secret-key>
 KEYCLOAK_CLIENT_SECRET  <den-keycloak-client-secret>   # only with the realm name sync
 OPERATOR_TOKEN          <long-random-secret>
 DEN_CREDENTIAL_KEY      <openssl rand -hex 32>         # for portal to-dos
+DEN_SMTP_PASSWORD       <mail-server-password>         # optional; empty if the server needs no login
 ```
 
 `/etc/provider-ca/ca.pem` is your database provider's CA certificate. Put it
@@ -616,8 +639,8 @@ creates the network policies.
 2. **Create the two Secrets** with your secret manager (External Secrets
    Operator; see [Secrets](../../operations/secrets.md)): `den-secrets`
    with `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
-   `OPERATOR_TOKEN`, optionally `KEYCLOAK_CLIENT_SECRET` and
-   `DEN_CREDENTIAL_KEY`, and `den-operator-secrets`
+   `OPERATOR_TOKEN`, optionally `KEYCLOAK_CLIENT_SECRET`,
+   `DEN_CREDENTIAL_KEY` and `DEN_SMTP_PASSWORD`, and `den-operator-secrets`
    with `OPERATOR_TOKEN`, `PG_ADMIN_URL`, `BACKUP_S3_*` and `FILES_S3_*`
    keys. With CloudNativePG, `PG_ADMIN_URL` looks like
    `postgres://postgres:<password>@conservices-pg-rw.conservices-data.svc.cluster.local:5432/postgres?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`.
@@ -703,6 +726,14 @@ The keys of the ConfigMaps are the variables documented above; the chart's
 **`DEN_CREDENTIAL_KEY must be at least 32 characters`** at start-up
 : Generate a longer key with `openssl rand -hex 32`, store it in your
   secret manager and restart the backend.
+
+**`set only one of DEN_SMTP_PASSWORD and DEN_SMTP_PASSWORD_FILE`** at start-up
+: The password is one secret. Keep the environment variable (a key of
+  `den-secrets`) or the file, and remove the other.
+
+**`read DEN_SMTP_PASSWORD_FILE`** at start-up
+: The path is missing or Den cannot read it. Mount the secret at that path,
+  or unset `DEN_SMTP_PASSWORD_FILE` and set `DEN_SMTP_PASSWORD` instead.
 
 **`IDENTITY_STAFF_MODE must be own, brokered or existing`** at start-up
 : Fix the value in `config` (or the ConfigMap); there is no other mode.
