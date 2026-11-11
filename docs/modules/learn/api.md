@@ -51,8 +51,8 @@ pass `?lang=` explicitly, so a translation is never saved over the original.
 
 | Caller | How | Accepted on |
 | --- | --- | --- |
-| People (production) | `Authorization: Bearer <token>` from Keycloak, verified against `OIDC_ISSUER_URL` | `/api/v1/…` (except brand) |
-| Den's web app | A Keycloak token whose audience is listed in `OIDC_EXTRA_AUDIENCES` (for example `den-spa`) | **only** `/api/portal/todos` |
+| People (production) | `Authorization: Bearer <token>` from Keycloak, audience `learn-api`, verified against `OIDC_ISSUER_URL`. ID tokens are refused. | `/api/v1/…` (except brand) |
+| Den's backend | `Authorization: Bearer <Learn's pairing credential>` plus `X-Den-User-Issuer` and `X-Den-User-Subject` | **only** `/api/portal/todos` |
 | HR (server to server) | `Authorization: Bearer <LEARN_SERVICE_TOKEN>` | **only** `/api/internal/holdings` |
 | Local development (`AUTH_MODE=dev`) | `X-Dev-User: <name>`, `X-Dev-Groups: learn-trainer,…` | everything a person can call |
 | Anyone | nothing | probes, catalogs, `/api/public/verify/{code}`, brand |
@@ -155,7 +155,7 @@ the section tables.
 | GET | `/api/qualification-catalog` | anyone |
 | GET | `/api/internal/holdings?subjects=` | `LEARN_SERVICE_TOKEN` |
 | GET | `/api/public/verify/{code}` | anyone, 30 a minute per address |
-| GET | `/api/portal/todos` | signed in, also Den's tokens |
+| GET | `/api/portal/todos` | Den's backend (pairing credential) |
 
 ### `GET /livez`, `GET /readyz`, `GET /api/health`
 
@@ -279,14 +279,28 @@ curl -s $LEARN/api/public/verify/K7M2Q4XZ9A3B
 
 ### `GET /api/portal/todos`
 
-Signed in. The suite-wide to-do contract that Den's portal home reads: the
-caller's own open work (due courses, upcoming sessions, expiring
-certificates), most urgent first. Besides Learn tokens it accepts tokens for
-the audiences in `OIDC_EXTRA_AUDIENCES`, so Den's web app can call it with
-its own token. `Cache-Control: private, no-store`.
+Den's backend calls this. It is the suite-wide to-do contract Den's portal
+home reads: one person's open work (due courses, upcoming sessions, expiring
+certificates), most urgent first. The person's access token is not accepted.
+`Cache-Control: private, no-store`.
+
+**Who may call it:** Den, with Learn's pairing credential. The person is
+named in the headers, not in the query string. A person who has never
+signed in to Learn gets an empty list; Learn does not create a user for
+the call.
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `401` | `unauthorized` | No credential, the wrong one, Learn is not paired, or Den rejected the credential. |
+| `400` | `bad_request` | `X-Den-User-Issuer` or `X-Den-User-Subject` is missing, blank, or longer than 512 bytes. |
 
 ```sh
-curl -s -H "Authorization: Bearer $DEN_TOKEN" $LEARN/api/portal/todos
+curl -s -H "Authorization: Bearer $MODULE_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.example.org/realms/conservices" \
+  -H "X-Den-User-Subject: 8f0c2a1e-1b3d-4e5f-9a6b-7c8d9e0f1a2b" \
+  $LEARN/api/portal/todos
 ```
 
 ```json
@@ -1544,6 +1558,6 @@ curl -s -X POST $LEARN/api/v1/den/pair \
 | `503` `the group directory is off or not configured` | Set `GROUP_DIRECTORY=keycloak` and all four `KEYCLOAK_*` variables. Links still work from sign-in groups without them. |
 | `503` on media | `S3_ENDPOINT` is empty. |
 | Media upload works but images do not show in the browser | Presigned links point at an in-cluster address; set `S3_PUBLIC_BASE_URL`. |
-| Den's portal gets `401` on `/api/portal/todos` | Add Den's client id (for example `den-spa`) to `OIDC_EXTRA_AUDIENCES`. |
+| Den's portal gets `401` on `/api/portal/todos` | Den must call with Learn's pairing credential, not a person's token. Pair again if the Den connection page says the credential was rejected. On Kubernetes, `den-backend` must be allowed in to the backend port (`networkPolicy.den`). |
 | `429` `rate_limited` | Verify: more than 30 checks a minute from one address. Signed in: too many self-enrolments, check-ins, feedback or searches in a minute. Wait a minute. |
 | `400` `invalid JSON: json: unknown field` | Learn rejects unknown fields; check the spelling. |

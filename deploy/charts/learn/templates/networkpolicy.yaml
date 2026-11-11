@@ -90,6 +90,16 @@ spec:
             matchLabels:
               app.kubernetes.io/component: backend
         {{- end }}
+        {{- if $np.den.enabled }}
+        # Den's backend calls GET /api/portal/todos with the pairing credential.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.den.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: den
+              app.kubernetes.io/component: backend
+        {{- end }}
       ports:
         - { protocol: TCP, port: {{ .Values.backend.port }} }
   egress:

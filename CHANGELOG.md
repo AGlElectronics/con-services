@@ -222,6 +222,10 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Learn's Helm chart admits `den-backend` from `conservices-den` on the
+  backend port, so Den can call `GET /api/portal/todos`. Den's egress to
+  module backends is still added with Den's release. See
+  [Calls between modules](docs/operations/network-policies.md#calls-between-modules).
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.

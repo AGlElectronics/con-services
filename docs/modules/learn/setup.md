@@ -227,7 +227,6 @@ config:
   APP_BASE_URL: https://learn.example.org
   PUBLIC_BASE_URL: https://learn.example.org
   OIDC_ISSUER_URL: https://login.example.org/realms/conservices
-  OIDC_EXTRA_AUDIENCES: ""            # no Den web app
   CORS_ALLOWED_ORIGINS: https://learn.example.org
   S3_ENDPOINT: https://fsn1.your-objectstorage.com
   S3_BUCKET: example-learn
@@ -394,8 +393,7 @@ then add:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
       OIDC_CLIENT_ID: learn-spa
-      OIDC_AUDIENCE: learn-spa
-      OIDC_EXTRA_AUDIENCES: den-spa
+      OIDC_AUDIENCE: learn-api
       ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
       CORS_ALLOWED_ORIGINS: https://learn.con.example.org,https://den.con.example.org
       S3_ENDPOINT: https://fsn1.your-objectstorage.com
@@ -496,9 +494,13 @@ Telegram is switched off in **Settings**, the person has no chat id under
 policy blocks `api.telegram.org` (Helm: `networkPolicy.telegram.enabled`).
 The backend logs `notification delivery failed` with the Bot API's reason.
 
-**Den's portal shows no Learn to-dos.** Den's web app calls Learn from the
-browser: `OIDC_EXTRA_AUDIENCES` must include `den-spa` and
-`CORS_ALLOWED_ORIGINS` Den's address.
+**Den's portal shows no Learn to-dos.** Den's backend must be able to
+reach Learn and must send Learn's pairing credential with
+`X-Den-User-Issuer` and `X-Den-User-Subject`. A `401` means the credential
+is missing, wrong, or rejected: pair again from Den. On Kubernetes the
+Learn chart admits `den-backend` when `networkPolicy.den.enabled` is true;
+Den's own egress to Learn is added with Den's release. Remove a leftover
+`OIDC_EXTRA_AUDIENCES`: Learn no longer reads it.
 
 **HR grants roles without checking training.** HR has no
 `LEARN_HOLDINGS_URL`/`LEARN_SERVICE_TOKEN`, or the tokens differ (`401`), or

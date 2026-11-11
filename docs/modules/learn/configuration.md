@@ -29,14 +29,13 @@ every problem.
 | `HTTP_ADDR` | `:8080` | no | no | Listen address inside the container. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3005` | no | no | Comma-separated browser origins. **Include Den's address**, because Den's web app calls Learn. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3005` | no | no | Comma-separated browser origins that may call the API. In production the web app is same-origin, so this matters for the dev server. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `PUBLIC_BASE_URL` | none | recommended | no | Browser-facing Learn address used in emails, certificates, QR codes and portal to-do links. |
 | `AUTH_MODE` | `oidc` | no | no | `oidc` checks access tokens. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. Outside development those headers are removed and are not allowed through CORS. |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer URL. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `learn-spa`. |
-| `OIDC_AUDIENCE` | `learn-api` | no | no | Audience the access token must carry (Keycloak audience mapper on `learn-spa`, access tokens only). ID tokens are refused. |
-| `OIDC_EXTRA_AUDIENCES` | none | no | no | Extra audiences accepted only on `GET /api/portal/todos`, for example `den-spa` while Den's web app still sends its ID token. |
+| `OIDC_AUDIENCE` | `learn-api` | no | no | Audience every person's access token must carry (Keycloak audience mapper on `learn-spa`, access tokens only). ID tokens are refused. `GET /api/portal/todos` does not take this token: Den's backend calls it with the pairing credential. |
 | `OIDC_GROUPS_CLAIM` | `groups` | no | no | The only token claim groups are read from. The `roles` claim is never merged in. |
 | `OIDC_GROUP_MATCH` | `full` | no | no | `full`: the whole group path must match. `last`: only the last segment. Anything else stops the backend. |
 | `OIDC_GROUP_PREFIX` | none | no | no | Optional parent removed before matching, for example `/con2026`. |
@@ -67,10 +66,10 @@ every problem.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `SMTP_HOST` | none | no | no | Learn's own SMTP server for reminders and notices. **Empty turns Learn's SMTP off.** While paired, Den's SMTP settings are used when Den has configured a server. |
-| `SMTP_PORT` | `587` | no | no | SMTP port. |
-| `SMTP_USERNAME` | none | no | no | SMTP login. |
-| `SMTP_PASSWORD` | none | no | **yes** | SMTP password. |
+| `SMTP_HOST` | none | no | no | Learn's own SMTP server for reminders and notices. Used only when Den does not set `smtp.host`. **Empty, and Den sets no host, turns email off.** |
+| `SMTP_PORT` | `587` | no | no | SMTP port of Learn's own server. |
+| `SMTP_USERNAME` | none | no | no | SMTP login of Learn's own server. |
+| `SMTP_PASSWORD` | none | no | **yes** | Password for Learn's own server. Ignored while Den sets `smtp.host`. When Den sets `smtp.password_set`, Learn fetches the password from Den and keeps it in memory. |
 | `SMTP_FROM` | none | with SMTP | no | Sender address, for example `no-reply@example.org`. |
 | `SMTP_FROM_NAME` | none | no | no | Sender name, for example `Con Services`. |
 | `KEYCLOAK_BASE_URL` | none | for group sync | no | Keycloak address for read-only admin API calls, on the platform `https://keycloak.conservices-identity.svc.cluster.local:8443`. Group sync runs only when all four `KEYCLOAK_*` are set and `GROUP_DIRECTORY` is `keycloak`. |

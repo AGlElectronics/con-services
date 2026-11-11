@@ -62,9 +62,6 @@ config:
   # role group sits under, e.g. /con2026.
   OIDC_GROUPS_CLAIM: groups
   OIDC_GROUP_MATCH: full
-  # Den's web app calls Learn directly (portal to-dos, my-learning widgets)
-  # and still sends its ID token until Den calls server to server.
-  OIDC_EXTRA_AUDIENCES: den-spa
   CORS_ALLOWED_ORIGINS: https://learn.conservices.test,https://den.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.

@@ -117,7 +117,7 @@ HTTP:
 | Learn → Keycloak admin API | Read-only group and people lookups for group sync and the people picker (client `learn-provisioner`; off with `GROUP_DIRECTORY=off`). |
 | Learn → Telegram Bot API | Reminders to people who saved a chat id (`api.telegram.org`, only with `TELEGRAM_BOT_TOKEN`). |
 | HR → Learn | Role catalog, qualification catalog, holdings (service token). |
-| Browser (Den's web app) → Learn | Portal to-dos and "my learning" widgets, with Den's token (`OIDC_EXTRA_AUDIENCES`). |
+| Den's backend → Learn | `GET /api/portal/todos`, with Learn's pairing credential and `X-Den-User-Issuer` / `X-Den-User-Subject`. |
 | Browser → S3 | Media upload and download through presigned links (`S3_PUBLIC_BASE_URL`). |
 
 Den comes first: [How the platform starts](../../getting-started/how-the-platform-starts.md).

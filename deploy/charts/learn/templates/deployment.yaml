@@ -230,6 +230,9 @@ spec:
               value: {{ include "learn.s3Origin" . | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ $sh.extraConnectSrc | default "" | quote }}
+            # Empty: Learn does not frame sandboxed HTML (Desk sets about:srcdoc).
+            - name: EXTRA_FRAME_SRC
+              value: ""
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
