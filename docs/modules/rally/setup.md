@@ -78,6 +78,42 @@ import the `conservices` realm, so this step is **not automated**:
    self-registration, email verification and password reset switched on,
    and all three need email.
 
+Rally's API accepts **access tokens** only, and only with its own audience
+(`aud`) in them ([token contract](../../concepts/authentication.md#tokens-the-10-contract)).
+Keycloak puts an audience into the access token with an **audience
+mapper** on the client. Check that both clients have one, and add it where
+it is missing:
+
+1. Realm `conservices` → **Clients → events-spa → Client scopes →
+   events-spa-dedicated → Configure a new mapper → Audience**. Name
+   `events-api audience`, **Included Custom Audience** `events-api`,
+   **Add to access token** on, **Add to ID token** off. Save.
+2. Realm `attendees` → **Clients → rally-submit → Client scopes →
+   rally-submit-dedicated → Configure a new mapper → Audience**. Name
+   `events-public-api audience`, **Included Custom Audience**
+   `events-public-api`, **Add to access token** on, **Add to ID token** off.
+
+The same mappers in a realm file:
+
+```json
+{
+  "name": "events-api audience",
+  "protocol": "openid-connect",
+  "protocolMapper": "oidc-audience-mapper",
+  "config": {
+    "included.custom.audience": "events-api",
+    "access.token.claim": "true",
+    "id.token.claim": "false"
+  }
+}
+```
+
+The values must equal the backend's `OIDC_AUDIENCE` (default `events-api`)
+and `ATTENDEE_OIDC_AUDIENCE` (default `events-public-api`). Without the
+mapper every API call answers `401 invalid token` right after a successful
+sign-in; the backend log (debug level) says
+`oidc: expected audience "events-api"`.
+
 ### 3. Create the namespace
 
 The `app.kubernetes.io/part-of` label lets trust-manager copy the internal
@@ -104,13 +140,17 @@ Rally reads one Secret, `rally-secrets`:
 | Key | Required | Value |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | The URL from step 1. |
+| `DEN_LINK_ENCRYPTION_KEY` | yes | 32 random bytes, base64: `openssl rand -base64 32`. Encrypts the Den credential Rally stores. Without it the backend stops with `DEN_LINK_ENCRYPTION_KEY is required unless APP_ENV=development`. One key for Rally only, never shared with another module. |
 | `S3_ACCESS_KEY_ID` | while `S3_ENABLED=true` | An S3 access key allowed to use the `events-data` bucket (and create it once). |
 | `S3_SECRET_ACCESS_KEY` | while `S3_ENABLED=true` | Its secret. |
+| `HR_SERVICE_TOKEN` | for HR's access picker | The same value as in HR's Secret (`openssl rand -hex 32` once per installation). Lets HR read Rally's role catalog and nothing else. |
 | `TELEGRAM_BOT_TOKEN` | no | Bot token for live-day announcements. Empty means sends are recorded but nothing is posted. |
 
 ```sh
 vault kv put secret/conservices/rally/backend \
   DATABASE_URL='postgres://events:change-me@postgres.conservices-data.svc.cluster.local:5432/events?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
+  DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  HR_SERVICE_TOKEN=change-me-same-value-as-in-hr-at-least-32-characters \
   S3_ACCESS_KEY_ID=change-me \
   S3_SECRET_ACCESS_KEY=change-me
 ```
@@ -328,7 +368,7 @@ what is specific to Rally:
       CORS_ALLOWED_ORIGINS: https://events.example.org
       OIDC_ISSUER_URL: https://login.example.org/realms/example
       OIDC_CLIENT_ID: rally
-      OIDC_AUDIENCE: rally
+      OIDC_AUDIENCE: rally-api   # an audience mapper on the client adds it to access tokens
       ATTENDEE_OIDC_ISSUER_URL: ""
       ATTENDEE_OIDC_CLIENT_ID: ""
       S3_ENDPOINT: https://s3.example.org
@@ -510,8 +550,12 @@ below.
     ```text
     # /etc/conservices/rally-backend.env   (mode 600; values from the secret manager)
     DATABASE_URL=postgres://events:change-me@db.example.org:5432/events?sslmode=require
+    # openssl rand -base64 32; Rally's own key, never shared with another module
+    DEN_LINK_ENCRYPTION_KEY=change-me
     S3_ACCESS_KEY_ID=change-me
     S3_SECRET_ACCESS_KEY=change-me
+    # Same value as HR's HR_SERVICE_TOKEN (lets HR read the role catalog)
+    HR_SERVICE_TOKEN=change-me-same-value-as-in-hr-at-least-32-characters
     TELEGRAM_BOT_TOKEN=
     ```
 
@@ -543,9 +587,10 @@ below.
           AUTH_MODE: oidc
           OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
           OIDC_CLIENT_ID: events-spa
-          OIDC_AUDIENCE: events-spa
+          OIDC_AUDIENCE: events-api
           ATTENDEE_OIDC_ISSUER_URL: https://auth.con.example.org/realms/attendees
           ATTENDEE_OIDC_CLIENT_ID: rally-submit
+          ATTENDEE_OIDC_AUDIENCE: events-public-api
           ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
           S3_ENDPOINT: https://fsn1.your-objectstorage.com
           S3_BUCKET: example-events
@@ -561,7 +606,12 @@ below.
       events-frontend:
         image: ghcr.io/aglelectronics/rally-frontend:1.0.0-1
         <<: *hardening
+        # nginx writes its security headers to /etc/nginx/snippets at start
+        tmpfs: ["/tmp", "/etc/nginx/snippets"]
         networks: [internal]
+        environment:
+          KEYCLOAK_ORIGIN: https://auth.con.example.org
+          S3_ORIGIN: https://fsn1.your-objectstorage.com
         volumes:
           - ./rally-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
           - ./rally-web/staff.json:/etc/conservices/config.json:ro
@@ -569,14 +619,21 @@ below.
       events-submit:
         image: ghcr.io/aglelectronics/rally-submit:1.0.0-1
         <<: *hardening
+        tmpfs: ["/tmp", "/etc/nginx/snippets"]
         networks: [internal]
+        environment:
+          KEYCLOAK_ORIGIN: https://auth.con.example.org   # the attendee realm's server
+          S3_ORIGIN: https://fsn1.your-objectstorage.com
         volumes:
           - ./rally-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
           - ./rally-web/submit.json:/etc/conservices/config.json:ro
     ```
 
     With managed S3 reachable from browsers, leave `S3_PUBLIC_BASE_URL`
-    unset.
+    unset. `KEYCLOAK_ORIGIN` and `S3_ORIGIN` go into the web apps'
+    Content Security Policy ([Web app security headers](configuration.md#web-app-security-headers));
+    `S3_ORIGIN` is where browsers upload attachments (the scheme and host of
+    `S3_PUBLIC_BASE_URL`, or of the bucket's public address).
 
 5. Add the hosts to the `Caddyfile`:
 
@@ -728,6 +785,33 @@ revoked one. Create a key under **Schedule → Setup** and send it as
 `api.telegram.org`: add an `extraEgress` rule for port 443.
 
 **HR shows Events with "error" in the access step.** HR cannot reach
-`https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog`.
-Rally's chart already allows `conservices-hr`; check HR's egress rule and
-`ROLE_CATALOG_SOURCES`.
+`https://rally-backend.conservices-rally.svc.cluster.local:8080/api/role-catalog`,
+or Rally answers `401`. Rally's chart already allows `conservices-hr`;
+check HR's egress rule and `ROLE_CATALOG_SOURCES`, and that `HR_SERVICE_TOKEN`
+in `rally-secrets` has the same value as in HR's Secret. An HR release that
+does not send the token yet cannot read the catalog at all.
+
+**The backend stops with `AUTH_MODE=dev lets anyone sign in as anyone and is
+only allowed with APP_ENV=development`.** Remove `AUTH_MODE` (the default is
+`oidc`). For local work set both `AUTH_MODE=dev` and `APP_ENV=development`.
+
+**The backend stops with `DEN_LINK_ENCRYPTION_KEY is required unless
+APP_ENV=development`.** Add the key to `rally-secrets` (step 4) and restart.
+`must be 32 bytes after base64 decoding` means the value is not a key made
+with `openssl rand -base64 32`.
+
+**Sign-in works, then every page shows an error and the API answers `401
+invalid token`.** The access token lacks Rally's audience: add the audience
+mapper (step 2) or make `OIDC_AUDIENCE` match it. An older web app that
+still sends the ID token gets the same answer; reload so the browser loads
+the current one.
+
+**`401 attendee accounts cannot use the staff API`** (or `staff accounts
+cannot use the submission site`). The token came from the other realm: the
+web app's `/config.json` points at the wrong realm. Compare its
+`oidcAuthority` with `OIDC_ISSUER_URL` or `ATTENDEE_OIDC_ISSUER_URL`.
+
+**The submission site answers `429 rate_limited`.** One client made more
+requests than `PUBLIC_RATE_LIMIT` or `SUBMISSION_RATE_LIMIT` allow. If many
+people share one address (a convention Wi-Fi behind one NAT), raise the
+limits; if every client gets the proxy's address, fix `TRUSTED_PROXY_CIDRS`.
