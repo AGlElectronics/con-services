@@ -234,7 +234,8 @@ led by Den's MAJOR; see
   `scripts/smoke-stash.ps1` sends access tokens, and its role-catalog
   call is signed in. The OpenBao guide lists `modules/stash/telegram`,
   `modules/stash/smtp` (both optional) and `modules/hr/service-token`
-  (generated when HR and Stash are both enabled). What to change on an
+  (generated when HR is enabled; Stash receives it when Stash is enabled
+  too). What to change on an
   existing installation is in
   [Stash's changelog](https://github.com/AGlElectronics/stash/blob/main/CHANGELOG.md).
 - [Module settings](docs/concepts/module-settings.md): the contract now
