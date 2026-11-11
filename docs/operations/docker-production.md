@@ -305,6 +305,11 @@ cp ~/con-services-gitops/charts/module-extras/files/access-config/*.toml access-
 
     The `*-migrate` services run before the new backends start.
 
+- **More than one Den backend:** migrations run in `den-migrate` before
+  `den-backend` starts. The backend keeps no state of its own (backup
+  download links are in the database), so you may run more than one
+  `den-backend` container behind a load balancer.
+
 - **Backups:** Den's operator backs up every database (Den, Keycloak and
   the modules) and the buckets in `FILES_S3_BUCKETS`, encrypted to your age
   key, once a day, exactly as on Kubernetes; see

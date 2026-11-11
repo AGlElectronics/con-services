@@ -26,7 +26,6 @@ den | Hardening | Rotate the den-keycloak client secret for production | high | 
 den | Hardening | Replace the standalone Den MinIO credentials den/denden123 | low | den/infra/docker-compose.yml:53-54 and :104, den/.env.example:16-17
 den | Access control | Enforce users.is_disabled in the auth resolver | low | den/backend/migrations/20260101000001_init.sql:35 defines it; auth/resolver.go never checks it
 den | Unfinished | Use or drop the unused role_assignments table | low | init.sql:77 defines it; roles come only from DEN_ADMIN_GROUPS env (config.go:89); resolver.go:16 still says lookup comes later
-den | Unfinished | Replace the hard-coded defaultOrgID with real per-organisation scoping | normal | den/backend/internal/http/modules.go:23 and auth/resolver.go:17; module get, update and delete never filter by organization_id
 den | Unfinished | Remove or wire the dead internal/modules, internal/pairing and internal/domain packages and the sqlc queries | low | none of them are imported; Dockerfile.backend:45 runs sqlc generate but its output is never used
 den | Unfinished | Validate module_id and module_slug on pairing redeem as ADR 0002 requires | normal | den/backend/internal/http/pairing.go:101-103 ignores the body and ModuleSlug; ADR 0002:33-34 requires a match
 den | Access control | Hide org-wide user and module counts from plain members on the dashboard | low | den/backend/internal/http/dashboard.go:76-85 returns admin counts to every member

@@ -241,6 +241,8 @@ and its own database backups. Then:
   as safe as an admin password, or turn the sync off: give the service
   account no role at all and leave `KEYCLOAK_ADMIN_URL` empty on Den
   (`keycloak.realm.denDisplayNameSync: false` in the Argo CD template).
+- **Put the operations staff into `den-ops`** (or your `DEN_OPS_GROUPS`):
+  only they can run and download backups and delete module databases.
 - Decide on **session lengths**. The test realm uses 5-minute access tokens,
   a 10-hour idle session and a 24-hour maximum.
 

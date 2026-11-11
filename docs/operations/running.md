@@ -135,7 +135,7 @@ use Traefik with the Helm charts (`ingress.enabled: true`, see
 | `conservices-identity` | `keycloak` | Deployment | 1 | Recreate | `/health/started`, `/health/ready`, `/health/live` on port 9000 |
 | `conservices-data` | `postgres` | StatefulSet | 1 | RollingUpdate | `pg_isready` |
 | `conservices-data` | `s3` (SeaweedFS, local trial only) | Deployment | 1 | Recreate | `/healthz` (readiness); liveness also restarts it when its certificate changes |
-| `conservices-den` | `den-backend` (+ `migrate` initContainer) | Deployment | **exactly 1** | Recreate | `/livez` (liveness), `/readyz` (readiness) |
+| `conservices-den` | `den-backend` (+ `migrate` initContainer) | Deployment | 1 or more | RollingUpdate | `/livez` (liveness), `/readyz` (readiness) |
 | `conservices-den` | `den-frontend` | Deployment | 2 or more | RollingUpdate | `/` on port 8080 (HTTPS) |
 | `conservices-den` | `den-operator` | Deployment | **exactly 1** | Recreate | `/livez` |
 | `conservices-stash` | `stash-backend` | Deployment | **exactly 1** | Recreate | TCP 8080 (liveness), `/api/health` (readiness) |
@@ -155,7 +155,6 @@ things in ways that are not obvious:
 
 | Workload | Why only one |
 | --- | --- |
-| `den-backend` | Backup download links (`/api/v1/backup-downloads/{token}`) are kept in the memory of the process that created them; a second replica would answer *download link not found* for half the clicks. The `migrate` initContainer also must never run twice at the same time, which `Recreate` guarantees. |
 | `den-operator` | Runs the daily backup on a timer and allows only one backup or database removal at a time, using an in-process lock. Two operators would back up twice and could drop a database during a backup. |
 | `stash-backend` | Applies its database migrations in-process at start-up. Two replicas starting together would migrate concurrently. |
 | Wiki backend (planned) | Keeps live-editing buffers on local disk. |
@@ -165,6 +164,15 @@ The frontends are plain nginx with no state; scale them freely:
 
 ```sh
 kubectl scale -n conservices-den deploy/den-frontend --replicas=3
+```
+
+`den-backend` may run more than one replica too: backup download links are
+stored in PostgreSQL, and when several pods start at once their `migrate`
+initContainers wait on a PostgreSQL advisory lock. The rate limits on the
+public endpoints count per replica.
+
+```sh
+kubectl scale -n conservices-den deploy/den-backend --replicas=2
 ```
 
 To make that permanent, set `replicas` in your overlay with a patch, since
@@ -335,8 +343,9 @@ kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | t
   operator's `tmp` volume with a patch.
 
 **You scaled a backend to two replicas and things broke**
-: See [Scaling](#scaling): backends must stay at one replica. Scale back:
-  `kubectl scale -n conservices-den deploy/den-backend --replicas=1`.
+: See [Scaling](#scaling): the operator and the Stash backend must stay at
+  one replica. Scale back, for example:
+  `kubectl scale -n conservices-den deploy/den-operator --replicas=1`.
 
 **`kubectl apply -k` fails with `no matches for kind "HTTPRoute"` or `"BackendTLSPolicy"`**
 : The Gateway API CRDs are missing or older than v1.4 (BackendTLSPolicy is

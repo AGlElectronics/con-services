@@ -158,6 +158,9 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      # The conservices login theme fetches the brand from Den in the browser
+      # (theme property denPublicUrl). Empty = Keycloak's neutral look.
+      DEN_PUBLIC_URL: https://den.conservices.test
     ports:
       - "127.0.0.1:8085:8080"
     volumes:
@@ -581,13 +584,26 @@ services:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
-      OIDC_CLIENT_ID: den-spa
-      OIDC_AUDIENCE: den-spa
-      # Den keeps the realm's display name equal to the organisation name
-      # (service account den-keycloak); the login theme pulls the rest of the
-      # brand from Den's public brand endpoint.
+      # Den accepts access tokens only; the realm adds den-api to them.
+      # OIDC_CLIENT_ID is not read by the backend (the web app's client id
+      # lives in infra/frontend-config/den.json).
+      OIDC_AUDIENCE: den-api
+      # Optional: keeps the realm display name (Keycloak's e-mails) equal to the
+      # organisation name (service account den-keycloak). The sign-in page
+      # pulls the rest of the brand from Den's public brand endpoint.
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: den-keycloak-dev-secret
+      IDENTITY_STAFF_MODE: own
+      # Roles from Keycloak groups; den-ops may run backups and drop databases.
+      DEN_ADMIN_GROUPS: den-admin
+      DEN_MEMBER_GROUPS: den-member
+      DEN_OPS_GROUPS: den-ops
+      # DEV ONLY: derives module credentials so Den can fetch portal to-dos
+      # from paired modules. Production: a generated secret (docs: Secrets).
+      DEN_CREDENTIAL_KEY: dev-only-den-credential-key-change-me
+      # DEV ONLY: shared SMTP password for paired modules. Mailpit accepts
+      # mail without a login, so this stays empty. Not stored in Postgres.
+      DEN_SMTP_PASSWORD: ""
       # Module databases + backups (docs/operations/databases-and-backups.md).
       # Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
@@ -660,6 +676,9 @@ services:
       args:
         NGINX_CONF: nginx.stack.conf
     container_name: conservices-den-frontend
+    environment:
+      # Sign-in server for the Content-Security-Policy (shared nginx headers).
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/den.json:/etc/conservices/config.json:ro
@@ -668,10 +687,11 @@ services:
       den-backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/config.json"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
     ports:
       - "127.0.0.1:3001:8080"
 

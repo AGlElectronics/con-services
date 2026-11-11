@@ -15,8 +15,17 @@ Den has two areas:
   API enforces this too, so hiding a button is never the only protection.
 
 Roles come from Keycloak groups: `den-admin` makes you an admin,
-`den-member` a member (both group names are configurable). See
+`den-member` a member, and `den-ops` gives the **ops** role (all three group
+names are configurable). The ops role is separate from admin: only people
+with it can run, schedule and download backups and delete a module's
+database. Admins without it see the Backups page read-only. A Den serves one
+organisation; another convention runs its own Den. See
 [Authentication](../../concepts/authentication.md#from-groups-to-roles).
+
+Members see only the services they can use: a module whose role catalog
+names one of their groups, or a module set to *Every member* (see
+[Editing a module](#editing-a-module)). Only admins see the counts on the
+Overview page.
 
 ## The portal
 
@@ -37,10 +46,13 @@ shared with every paired module.
 
 ### Portal to-dos
 
-The portal asks every listed service for things the signed-in person should
-do, and shows them in one list, sorted by due date and then severity. A
-module takes part by serving `GET <module address>/api/portal/todos`; Den's
-web app calls it with the person's ID token and expects:
+The portal shows things the signed-in person should do in the services they
+can use, in one list, sorted by due date and then severity. Den's backend
+asks each module itself (the browser only talks to Den, and the person's
+token never leaves Den): it calls `GET <module address>/api/portal/todos`
+with the module's pairing credential and the person's issuer and subject
+(the exact request is in the
+[API reference](api.md#get-apiv1portaltodos)), and expects:
 
 ```json
 {
@@ -60,8 +72,10 @@ web app calls it with the person's ID token and expects:
 `severity` is `info`, `warning` or `danger` (anything else counts as `info`),
 `url` must be an `http` or `https` link, and `due_at` may be `null`. Modules
 that do not answer within 5 seconds, answer with an error, or do not support
-the request are skipped silently. The list refreshes every 5 minutes. To-dos
-are only collected when Den runs with OIDC sign-in.
+the request are skipped. The list refreshes every 5 minutes. To-dos need
+`DEN_CREDENTIAL_KEY` on Den's backend
+([Configuration](configuration.md#calling-modules-portal-to-dos)); a module
+paired before that key was set must be paired again.
 
 ## The admin console
 
@@ -69,16 +83,19 @@ The admin console has its own menu on the left:
 
 | Page | What it is for |
 | --- | --- |
-| **Overview** | Counts of paired modules, modules waiting to pair, services live on the portal and people known to Den, with shortcuts. |
-| **Modules** | Add, pair and remove modules. |
-| **Branding** | Colours, fonts, wording, logo, favicon, sign-in background, Keycloak sync. |
+| **Overview** | Counts of paired modules, modules waiting to pair, services live on the portal and people with a role, with shortcuts. |
+| **Modules** | Add, edit, pair and remove modules; see and revoke their credentials. |
+| **Branding** | Colours, fonts, wording, logo, favicon, sign-in background, Keycloak name sync. |
 | **Organisation** | The organisation settings document. |
-| **Backups** | Backup status, schedule and downloads; the database list. |
+| **Module settings** | Settings Den hands to modules: retention, e-mail, Finance, Stash, Wiki, Tasks, Rally, and Den's own identity links. |
+| **Backups** | Backup status, schedule and downloads (ops role); the database list. |
+| **Audit log** | Every change made in Den, who made it and when. |
 | **Settings** | The sign-in mode, the dev user name (dev mode only) and version information. |
 
-The menu also links to the **Keycloak admin console**, where you manage
-accounts and groups. A warning sign next to **Backups**, and a banner, appear
-whenever backups need attention.
+When **Module settings → Identity links** has an identity provider admin
+console address, the menu links to it (for example the Keycloak admin
+console, where you manage accounts and groups). A warning sign next to
+**Backups**, and a banner, appear whenever backups need attention.
 
 ## Modules
 
@@ -93,11 +110,16 @@ databases, its database and size.
 
     | Field | Meaning | Example |
     | --- | --- | --- |
-    | **Short name** | The module's *slug*: short, lowercase, unique. | `hr` |
+    | **Short name** | The module's *slug*: lowercase letters, digits and single hyphens, unique. | `hr` |
     | **Display name** | The name people see on the portal. | `HR` |
-    | **Address** | The module's public web address. The portal links here. Leave it empty and the module will not appear on the portal. | `https://hr.example.org` |
+    | **Address** | The module's public web address, `https://`. The portal links here. Leave it empty and the module will not appear on the portal. | `https://hr.example.org` |
     | **Environment** | A free label, `production` by default. The same slug can be registered once per environment. | `production` |
+    | **Server address** | Optional. Where Den's backend itself reaches the module (its role catalog and to-dos), usually its in-cluster address. Empty: the address above. | `https://hr-backend.conservices-hr.svc.cluster.local:8080` |
+    | **Shown on the portal to** | *People with a role in the module* (default) or *Every member*. | People with a role |
     | **Create a database for it** | Only shown when Den manages databases. Den creates a database and login for the module. | ticked |
+
+    Addresses must start with `https://`; `http://` is only accepted when Den
+    runs with `APP_ENV=development`.
 
 3. Click **Create module**.
 
@@ -146,8 +168,45 @@ explained in [Pairing](../../concepts/pairing.md). Step by step:
    and if it has an address it appears on the portal.
 
 If the module reports that Den refused the URL, the message says why:
-the token was already used, it expired, or it was not copied completely.
-Make a new one.
+the token was already used, it expired, it was not copied completely, or it
+was made for another module (Den checks the module's id and short name when
+the module sends them). Make a new one, or paste it into the right module.
+
+Pairing a module again replaces its credential: the new one works and every
+older one stops working at once. Den never pairs a module by itself; if a
+module reports that Den refused its credential, pair it again by hand.
+
+### Credentials
+
+Click **Credentials** on a module's row to see the credentials it was given
+when it was paired: when each was made, when it was last used, and whether
+it is still active. Normally only the newest is active.
+
+- **Revoke** one credential, or **Revoke all credentials**, when one may
+  have leaked (for example a copied configuration or a lost backup of the
+  module). The module is disconnected from Den straight away: it stops
+  receiving the brand and settings, and its calls to Den are refused.
+- A module left without an active credential shows as **unpaired**. To
+  connect it again, click **Pair** and paste the new URL into the module.
+
+The full procedure for a leaked pairing URL or credential is in
+[Disaster recovery](../../operations/disaster-recovery.md#a-pairing-url-or-module-credential-leaked).
+
+### Editing a module
+
+Click **Edit** to change a module's display name, addresses, environment, the
+**Enabled** switch (off hides it from the portal) and who sees it on the
+portal:
+
+- **People with a role in the module**: Den reads the module's role catalog
+  (`/api/role-catalog`) and shows the module to members who have one of its
+  groups. If Den cannot read the catalog at the module's server address,
+  members do not see it.
+- **Every member**: for modules everyone may use without a role, such as
+  Learn (anyone can take a course).
+
+The same setting decides which people's theme preference the module may
+read from Den.
 
 ### Removing a module
 
@@ -155,9 +214,12 @@ Click **Remove** on the module's row. Den asks twice before deleting
 anything:
 
 1. **What happens to the data.**
-    - **Remove and delete its data** (offered when Den manages a database for
-      the module): the operator backs the database up first, then deletes it
-      and its login. If the backup fails, nothing is deleted.
+    - **Remove and delete its data**: the operator backs the database up
+      first, then deletes it and its login. If the backup fails, nothing is
+      deleted. This is only offered when **Den created** the module's
+      database (with *Create a database for it*), the database is not
+      protected, and you have the **ops** role; otherwise the dialog says
+      why it is not offered.
     - **Remove only, keep its data**: the module is unregistered and its
       database stays where it is, so you can add and pair it again later.
 2. **Type the module's short name** to confirm deleting the data.
@@ -173,7 +235,7 @@ detail in
 
 The **Branding** page decides how Den, every paired module and the Keycloak
 sign-in page look. It has a JSON editor with three tabs, a live preview, the
-assets, the sign-in background and the Keycloak sync status.
+assets, the sign-in background and the Keycloak name sync status.
 
 Each tab edits one JSON document. Next to the editor, a table lists every
 key Den understands, what it changes, and its current value; click **add**
@@ -257,7 +319,9 @@ Example:
 | `favicon` | The browser tab icon. | Square PNG or SVG. |
 | `login-background` | The picture behind every sign-in screen. | Landscape JPG or WebP, about 1920 × 1080, ideally under 2 MB. |
 
-Upload with **Upload** (or **Replace**). Files may be up to 10 MB. The newest
+Upload with **Upload** (or **Replace**). Files may be up to 10 MB and must be
+PNG, JPEG, WebP, ICO or SVG; Den checks the file itself, not its name. SVG
+files are only ever shown as images, never opened as pages. The newest
 upload of each role is the one in use, and it is live as soon as it is
 uploaded; **Remove** deletes it. Paired modules and the sign-in page fetch
 the files through Den, so no module ever needs access to Den's storage.
@@ -268,36 +332,41 @@ click **Save new revision** to publish them.
 
 ### Keycloak sync
 
-At the bottom of the Branding page, **Sign-in page (Keycloak)** shows
-whether Den keeps the Keycloak sign-in page in line with the brand.
+The Keycloak sign-in page follows the brand by itself: the `conservices`
+login theme fetches Den's public brand (organisation name, tagline, colours,
+logo, favicon, background picture, layout and caption) each time the page
+opens, and draws the page in light and dark mode. Changes show up on the
+next page load. For that, Keycloak needs:
 
-When it is set up, Den writes three things into the realm:
+- the `conservices` theme files (the Kubernetes manifests mount them from
+  the `keycloak-theme` ConfigMap, built from
+  `infra/keycloak/themes/conservices`), selected as the realm's login theme
+  (the realm import does this);
+- the environment variable `DEN_PUBLIC_URL` with Den's public address.
 
-- the login theme `conservices`;
-- the realm's display name, set to the organisation name;
-- a realm attribute `conservicesBrand`: a JSON document with the brand
-  revision, organisation name, tagline, colours, the logo, favicon and
-  background picture addresses, and the login layout and caption. The
-  `conservices` login theme reads it and draws the sign-in page in light and
-  dark mode.
-
-Den syncs when it starts, right after every branding or organisation
-settings change, and every 5 minutes (which also undoes manual edits in the
-Keycloak console). After a failure it retries after 15 seconds. **Sync now**
-syncs immediately and shows the result.
+Den itself needs no access to the realm for this. The card **Sign-in page
+(Keycloak)** at the bottom of the Branding page is about one optional extra:
+the realm's **display name**, which Keycloak uses in its own e-mails (for
+example the password-reset mail). When a Keycloak admin client is set up,
+Den sets it to the organisation name when it starts, right after every
+branding or organisation settings change, and every 5 minutes (which also
+undoes manual edits in the Keycloak console). After a failure it retries
+after 15 seconds. **Sync name now** syncs immediately and shows the result.
 
 The card shows one of:
 
-- *Realm conservices is on revision 10, synced …*: all good;
-- *Last sync failed: …*: the error from Keycloak;
-- *Not connected*: Den's backend has no `KEYCLOAK_ADMIN_URL` and
-  `KEYCLOAK_CLIENT_SECRET`.
+- *Realm conservices is named Example Con …, synced …*: all good;
+- *Last realm name sync failed: …*: the error from Keycloak; see
+  [the runbook](../../operations/disaster-recovery.md#the-keycloak-name-sync-fails);
+- *Realm name sync is off*, with the reason: either no Keycloak admin client
+  is configured (fine: the sign-in page is branded anyway), or Den runs with
+  `IDENTITY_STAFF_MODE=existing`, where the realm belongs to your convention
+  and Den never changes it.
 
-To set it up, Den needs a confidential Keycloak client with a service account
-that has the `realm-management` role `manage-realm`. The local realm ships
-one, `den-keycloak`. The `conservices` theme files must also be installed in
-Keycloak; the Kubernetes manifests mount them from the `keycloak-theme`
-ConfigMap (built from `infra/keycloak/themes/conservices`).
+The name sync needs a confidential Keycloak client whose service account has
+the `realm-management` role `manage-realm` (Keycloak has no smaller role that
+can rename a realm). The local realm ships one, `den-keycloak`. Leave it out
+if you do not want Den to have that access.
 See [Configuration](configuration.md#keycloak-login-branding).
 
 The organisation name is chosen in this order: `organization_name` from the
@@ -319,8 +388,9 @@ the whole document and lists the problems under the editor.
 
 `organization_name` (text)
 :   The organisation's name, shown in emails (for example HR's
-    account-deleted notice) and on the sign-in page. It is also the name Den
-    pushes into Keycloak.
+    account-deleted notice) and on the sign-in page. With the
+    [Keycloak name sync](#keycloak-sync) on, it is also the realm's display
+    name.
 
 `org_email_domain` (text)
 :   The organisation's email domain, for example `example.org`. HR builds
@@ -374,11 +444,56 @@ org_email_domain: must be a domain like example.org
 username_template: unknown placeholder {surname} (use {first} {last} {nickname})
 ```
 
-Saving also triggers a [Keycloak sync](#keycloak-sync).
+Saving also triggers a [Keycloak name sync](#keycloak-sync).
+
+## Module settings
+
+The **Module settings** page holds settings Den hands to paired modules, in
+the same bundle they already fetch every minute. Each module gets the
+shared parts and only its own part, and shows those values as *Managed in
+Den*. A field you leave empty means "the module decides". Click **Save**;
+if a value is not valid, the message appears under the field.
+
+| Section | What it is | Who gets it |
+| --- | --- | --- |
+| **Retention** | How long HR keeps offboarded volunteers, how long unused accounts stay, and how long old module data is kept (days). The suggested numbers are **pending legal review**: they have not been checked against data-protection law yet. | every module |
+| **E-mail (SMTP)** | Server, port, security, sender and user name for the e-mails modules send. The password is not typed here. The page says *Password: configured in Den's secret (DEN_SMTP_PASSWORD)* or *Password: not set*, and links to the configuration page. Modules fetch the password separately when they send mail; it is not in the bundle. | every module |
+| **Finance: seller details** | Legal name, address, country, VAT ID and the other details printed on invoices and receipts. | Finance |
+| **Stash: Lost & Found** | Either *kept for N days after the con* or *deleted N hours after closing*. | Stash |
+| **Wiki** | How many days old page revisions are kept. `0` keeps every revision. | Wiki |
+| **Tasks** | How long trash, read notifications, the audit log and automation history are kept, and how many days before a due date a reminder is sent. | Tasks |
+| **Rally: submission site** | The host name attendees submit events on, for example `submit.example.org`. Rally's address in Den may be the slug `events`; it still receives this section. | Rally |
+| **Identity links** | The name of your sign-in (SSO), the "manage my account" address (password, two-factor) and the identity provider's admin console. | Den only: the menu and the portal. No module receives this. |
+
+The SMTP password is Den's secret `DEN_SMTP_PASSWORD` (a key of
+`den-secrets`) or the file `DEN_SMTP_PASSWORD_FILE`. It is not stored in
+Den's database. A module fetches it, when it sends mail, from Den with its
+pairing credential. It is not in the bundle. See
+[Secrets](../../operations/secrets.md) and the
+[module settings contract](../../concepts/module-settings.md). Changes to
+the other fields are written to the [audit log](#audit-log). The password
+is not, because this page cannot change it.
+
+## Audit log
+
+The **Audit log** page lists every change made in Den, newest first: who did
+it, what (for example `module.update`), on which item, and a note. Click the
+arrow on a row to see the values before and after. Filter by kind of change
+(modules, pairing, branding, settings, backups, Keycloak), by an item's id or
+by date; **Show older events** loads the next page.
+
+*System* in the *Who* column means Den did it by itself, for example
+registering a module from `DEN_PREREGISTER_MODULES`. For a pairing redeem the
+person shown is the admin who created the pairing URL. Credentials, tokens and
+passwords are never in the log. The same data is available from
+[`GET /api/v1/audit-events`](api.md#get-apiv1audit-events).
 
 ## Backups
 
-The **Backups** page is the front end of Den's operator. It shows:
+The **Backups** page is the front end of Den's operator. Running, scheduling
+and downloading backups needs the **ops** role (group `den-ops`); admins
+without it see the status and the database list only, with a note saying
+so. It shows:
 
 - **Last backup**: whether it succeeded, when, how big, and how many
   databases and file stores it contained;
@@ -390,7 +505,9 @@ The **Backups** page is the front end of Den's operator. It shows:
 - **Databases**: every database on the server with its size, and which are
   never deleted by Den;
 - **Stored backups**: every backup, with a **Download** button. Downloads are
-  encrypted and can only be opened with the secret backup key.
+  encrypted and can only be opened with the secret backup key. Each click
+  makes a one-time link that works for 5 minutes; backups, schedule changes
+  and downloads are written to the [audit log](#audit-log).
 
 **Back up now** starts a full backup immediately. If the page says **Not set
 up**, Den runs without an operator; if it says **Operator unreachable**,

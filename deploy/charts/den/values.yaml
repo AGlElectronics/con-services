@@ -36,9 +36,17 @@ image:
 #                           ?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt
 #   S3_ACCESS_KEY_ID        required
 #   S3_SECRET_ACCESS_KEY    required
-#   KEYCLOAK_CLIENT_SECRET  optional (Keycloak login branding)
+#   KEYCLOAK_CLIENT_SECRET  optional (realm display-name sync)
 #   OPERATOR_TOKEN          required with operator.enabled
-# This chart never creates Secrets.
+#   DEN_CREDENTIAL_KEY      optional; at least 32 characters. Lets Den call
+#                           paired modules for portal to-dos.
+#   DEN_SMTP_PASSWORD       optional. Password paired modules use to log in
+#                           to the shared mail server. Empty or absent: no
+#                           login. Not stored in Den's database. Do not also
+#                           set DEN_SMTP_PASSWORD_FILE.
+# This chart never creates Secrets. The backend loads every key of this
+# Secret as an environment variable (envFrom), so a missing optional key
+# simply leaves that variable unset.
 existingSecret: den-secrets
 
 # Non-secret backend settings, rendered into the ConfigMap
@@ -47,7 +55,8 @@ existingSecret: den-secrets
 # internalTLS.enabled) and OPERATOR_URL (with operator.enabled) are added by
 # the chart unless you set them here.
 config:
-  # Environment name; anything but "development" logs JSON.
+  # production (default) or development. Only development allows
+  # AUTH_MODE=dev and http:// module addresses, and logs plain text.
   APP_ENV: production
   # Den's public address: pairing URLs, den_base_url, Keycloak branding.
   APP_BASE_URL: https://den.conservices.test
@@ -58,11 +67,25 @@ config:
   # Must match the tokens' iss claim exactly and be reachable at start-up
   # (in-cluster through keycloak-public, see networkPolicy.oidc).
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  # The web app's client (its /config.json oidcClientId). The backend
+  # does not read it.
   OIDC_CLIENT_ID: den-spa
-  OIDC_AUDIENCE: den-spa
-  # Comma-separated IdP groups: admins, and people who may use the portal.
+  # Den accepts access tokens only, with this audience (the realm's
+  # audience mapper on den-spa adds it). ID tokens are refused.
+  OIDC_AUDIENCE: den-api
+  # Groups come only from this claim; full: the whole group path must
+  # match (last: only its last segment). OIDC_GROUP_PREFIX: optional path
+  # every role group sits under, e.g. /con2026.
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  # Comma-separated IdP groups: admins, people who may use the portal, and
+  # operations (run and download backups, delete module databases).
   DEN_ADMIN_GROUPS: den-admin
   DEN_MEMBER_GROUPS: den-member
+  DEN_OPS_GROUPS: den-ops
+  # Where staff accounts live: own, brokered or existing. existing: Den never
+  # writes to the realm (the display-name sync is off).
+  IDENTITY_STAFF_MODE: own
   # Only needed when the web app and the API live on different addresses.
   CORS_ALLOWED_ORIGINS: https://den.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
@@ -73,8 +96,10 @@ config:
   S3_BUCKET: den-data
   S3_REGION: us-east-1
   S3_USE_PATH_STYLE: "true"
-  # Keycloak login branding (all four KEYCLOAK_* set = on; the secret one
-  # lives in existingSecret). Admin API address, in-cluster.
+  # Optional realm display-name sync, used in Keycloak's e-mails (all four
+  # KEYCLOAK_* set = on; the secret one lives in existingSecret; needs
+  # manage-realm). The sign-in page pulls the brand from Den without it.
+  # Admin API address, in-cluster.
   KEYCLOAK_ADMIN_URL: https://keycloak.conservices-identity.svc.cluster.local:8443
   KEYCLOAK_REALM: conservices
   KEYCLOAK_CLIENT_ID: den-keycloak
@@ -87,7 +112,8 @@ config:
 # into the ConfigMap "<release>-config" when not empty. Den inserts each slug
 # once and never updates or deletes it; change or remove modules on the
 # Modules page. Keys: slug (Rally is "events"), display_name, base_url
-# (the module's public address), optional environment.
+# (the module's public address, https), optional internal_url (where Den
+# itself calls the module, e.g. its in-cluster address) and environment.
 # Docs: https://aglelectronics.github.io/con-services/modules/den/configuration/
 #   preregisterModules:
 #     - { slug: stash, display_name: Stash, base_url: https://stash.example.org }
@@ -121,13 +147,12 @@ internalTLS:
   ingressNginxAnnotations: false
 
 backend:
-  # MUST stay 1, with the Recreate strategy: backup download links live in
-  # the memory of the process that minted them (a second replica answers
-  # "download link not found"), and two migrate initContainers must never
-  # run at once. The chart refuses any other value. The web app scales.
+  # The backend is stateless: backup download links are in the database and
+  # the migrate initContainers take a Postgres lock, so several replicas
+  # (and rolling updates) are fine. The rate limits count per replica.
   replicas: 1
-  singleReplica: true
-  singleReplicaReason: "backup download links live in process memory, and migrations must never run twice at once (docs/operations/running.md)"
+  singleReplica: false
+  singleReplicaReason: ""
   port: 8080
   # Longer than config.SHUTDOWN_TIMEOUT.
   terminationGracePeriodSeconds: 30
@@ -193,6 +218,11 @@ operatorConfig:
   # Time zone of the daily backup hour (the hour is set in Den's console).
   BACKUP_TIMEZONE: UTC
   BACKUP_S3_ENDPOINT: https://s3.conservices-data.svc.cluster.local:9000
+  # "true" while the backups sit on the same S3 service as the live data
+  # (as with these defaults): Den shows a warning on the Backups page.
+  # Point BACKUP_S3_ENDPOINT at another provider or location and set
+  # "false". Equal BACKUP_S3_ENDPOINT and FILES_S3_ENDPOINT warn anyway.
+  BACKUP_SAME_STORAGE_AS_DATA: "true"
   BACKUP_S3_BUCKET: conservices-backups
   BACKUP_S3_REGION: us-east-1
   BACKUP_S3_USE_PATH_STYLE: "true"
@@ -203,6 +233,9 @@ operatorConfig:
   FILES_S3_REGION: us-east-1
   FILES_S3_USE_PATH_STYLE: "true"
   # Every module bucket that should be in the backups, comma-separated.
+  # Only buckets that exist: a missing one fails the backup. Add each
+  # module's bucket when you install it (stash-data, events-data,
+  # finance-data, learn-data, wiki-data, tasks-data, ...).
   FILES_S3_BUCKETS: den-data
 
 frontend:
@@ -234,6 +267,17 @@ frontend:
   #   apiBaseUrl     "" (same origin: nginx forwards /api/)
   # Docs: https://aglelectronics.github.io/con-services/modules/den/configuration/#web-app-settings-configjson
   config: {}
+  # Origins for the web app's Content-Security-Policy (shared nginx
+  # security headers). Docs:
+  # https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # The sign-in server. Empty: the origin of frontend.config.oidcAuthority
+    # or config.OIDC_ISSUER_URL.
+    keycloakOrigin: ""
+    # Den's web app only talks to its own origin, so these stay empty.
+    denOrigin: ""
+    s3Origin: ""
+    extraConnectSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -319,6 +363,12 @@ networkPolicy:
   # namespaces labelled conservices.io/tier: module) may call den-backend:
   # pairing, the bundle, user preferences.
   allowFromModules: true
+  # den-backend may call module backends on this port: their role catalog
+  # (who sees a module on the portal) and portal to-dos. Each module's own
+  # policy must admit den-backend too.
+  allowToModules:
+    enabled: true
+    port: 8080
   # PostgreSQL and S3 in conservices-data, for the backend and the
   # operator. Defaults: CloudNativePG cluster conservices-pg and Garage (S3
   # API through its TLS sidecar). For the Kustomize local-trial postgres/s3 use

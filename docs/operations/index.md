@@ -73,7 +73,8 @@ to work around them.
 - **No Helm chart for the platform or Den.** Use Kustomize for those.
 - **No Prometheus metrics** from Con Services programs; monitor through
   Kubernetes, the Gateway and the health endpoints.
-- **Backends run as a single replica** each; only the frontends scale.
+- **Most backends run as a single replica**; the frontends and Den's
+  backend scale ([Scaling](running.md#scaling)).
 
 ## Troubleshooting
 

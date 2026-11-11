@@ -256,9 +256,46 @@ led by Den's MAJOR; see
   `FINANCE_S3_BUCKET`, `FINANCE_S3_ACCESS_KEY_ID` and
   `FINANCE_S3_SECRET_ACCESS_KEY` (without them Finance received
   `S3_ENDPOINT` alone and refused to start).
+- The `conservices` Keycloak login theme fetches the brand from Den's public
+  endpoint in the browser (and caches it), instead of reading a realm
+  attribute Den used to write. Set `DEN_PUBLIC_URL` on Keycloak; the Docker
+  stack and the Kustomize identity base do.
+- Dev realm: group `den-ops` (Den's new ops role for backups and database
+  deletion), given to the `admin` account; `alice` stays an admin without
+  it.
+- Docker stack: healthchecks for `den-backend` and `den-operator` (their
+  `healthcheck` subcommand) and `den-frontend`; the web app waits for a
+  healthy backend. `den-backend` gets `DEN_OPS_GROUPS`,
+  `IDENTITY_STAFF_MODE` and a dev-only `DEN_CREDENTIAL_KEY`.
+- Kubernetes: `den-config` gains `DEN_OPS_GROUPS` and `IDENTITY_STAFF_MODE`;
+  `den-secrets` gains the optional `DEN_CREDENTIAL_KEY` (dev value in
+  `overlays/example`, Vault key `conservices/den/backend` in the External
+  Secrets example). The Den backend uses `RollingUpdate` and may run more
+  than one replica.
+- NetworkPolicies: `den-backend` may reach module backends on 8080 (role
+  catalogs, portal to-dos), and Stash admits `den-backend`. Documented on
+  [Network policies](docs/operations/network-policies.md#calls-between-modules).
+- `scripts/smoke-den-operator.ps1` (roles, managed database, backup, one-time
+  download, removal, audit log); `scripts/smoke-den-pairing.ps1` registers
+  a missing module and checks that organisation settings reach it.
+- Runbooks: [a leaked pairing URL or module credential](docs/operations/disaster-recovery.md#a-pairing-url-or-module-credential-leaked)
+  and [a failing Keycloak name sync](docs/operations/disaster-recovery.md#the-keycloak-name-sync-fails).
+- `scripts/check-chart-versions.py --base` no longer asks for a version bump
+  of a chart whose version was never released (no `<app>/vX.Y.Z` tag yet).
 
 ### Changed
 
+- Den's Helm chart and Kustomize nginx include the shared
+  `security-headers-frame-self.conf` for `/silent-callback.html` (same-origin
+  framing for silent sign-in). The image copies that template; it no longer
+  builds a `security-headers-frameable.conf` with `sed`. `EXTRA_FRAME_SRC`
+  stays empty on Den.
+- The [Den API reference](docs/modules/den/api.md#get-apiv1integrationsmodules)
+  documents `GET /api/v1/integrations/modules`: a paired module lists the
+  organisation's enabled, paired modules and each one's `role_catalog_url`.
+  HR's call is already allowed by the module-backend egress to `den-backend`
+  and Den's ingress from module backends
+  ([Network policies](docs/operations/network-policies.md#calls-between-modules)).
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.
@@ -268,6 +305,28 @@ led by Den's MAJOR; see
   sees is unchanged: the API `message` field and `last_error` on the Den
   connection page still say "Den rejected…", "Den refused the pairing URL"
   and "Den returned …" (`denlink.UserMessage`).
+- **BREAKING:** Den's shared SMTP password is the optional secret
+  `DEN_SMTP_PASSWORD` (`den-secrets`; empty in the development Compose
+  stack and the example overlay, because Mailpit needs no login). The
+  production ExternalSecret example lists the key. It is not stored in
+  Postgres. Before upgrading a trial that saved the password in Den, copy
+  it into the secret; Den's upgrade drops the stored value. See
+  [Secrets](docs/operations/secrets.md) and
+  [Module settings](docs/concepts/module-settings.md).
+- Den's Compose stack and Kubernetes base accept access tokens with
+  audience `den-api` (the backend no longer reads `OIDC_CLIENT_ID`). The
+  operator sets `BACKUP_SAME_STORAGE_AS_DATA` (true on the local trial,
+  where backups share the S3 server with the live data) and the dev backup
+  list includes every module bucket, including `finance-data-dev`. The Den
+  web app container gets `KEYCLOAK_ORIGIN` for its Content-Security-Policy,
+  and `/silent-callback.html` is allowed to be framed by Den itself.
+- The [module settings contract](docs/concepts/module-settings.md) now
+  includes Tasks' retention and reminders and Rally's submission-site host,
+  and its Den API section matches Den: one organisation document at
+  `GET`/`PUT /api/v1/module-settings` with `{"data": {…}}`, a read-only
+  per-module view, and the SMTP password only from
+  `GET /api/v1/integrations/module-settings/secrets` (Den's secret
+  `DEN_SMTP_PASSWORD`, not the database).
 - [Module settings](docs/concepts/module-settings.md): the contract now
   says where every key lives. Settings for one module are under its slug
   (`finance.seller.legal_name`, `stash.lost_found.mode`,
@@ -339,6 +398,10 @@ led by Den's MAJOR; see
   which allows framing by the app's own origin only (`frame-ancestors
   'self'`, `X-Frame-Options: SAMEORIGIN`). Other sites still cannot embed
   the app.
+- Den no longer needs `view-realm`; the dev realm's `den-keycloak` service
+  account keeps only `manage-realm`, used for the optional realm name sync.
+  Without that sync, Den needs no access to the realm at all.
+
 - Default-deny NetworkPolicies in every namespace with an explicit allow
   list, `restricted` Pod Security on every namespace, resource requests and
   limits on every container, and no service account tokens mounted.

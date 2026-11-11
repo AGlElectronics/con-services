@@ -29,9 +29,12 @@ keeps its current settings and environment variables.
 4. A standalone module (or one Den sets nothing for) shows the same keys,
    with the same names, limits and defaults, on its own settings page.
 5. Secrets never travel in the bundle (the module caches the bundle in its
-   database). The bundle says `password_set: true`; the module fetches the
-   value when it needs it with `client.SMTPPassword`
-   ([below](#fetching-the-smtp-password)) and keeps it in memory only.
+   database). The bundle says `password_set: true` when Den's secret
+   `DEN_SMTP_PASSWORD` (or the file `DEN_SMTP_PASSWORD_FILE`) is set. The
+   module fetches the value when it needs it with `client.SMTPPassword`
+   ([below](#fetching-the-smtp-password)), which calls
+   `GET /api/v1/integrations/module-settings/secrets`, and keeps it in memory
+   only. Den does not store the password.
 
 ## Key names
 
@@ -43,7 +46,7 @@ JSON Den sends, so `wiki.revision_retention_days` is
 | --- | --- | --- |
 | `retention` | every module that holds the data in question | `retention.inactive_users_days` |
 | `smtp` | every module that sends mail | `smtp.host`, `smtp.password_set` |
-| `<module>`, the module's slug (`finance`, `stash`, `wiki`, `hr`, `rally`, `learn`, `desk`, `tasks`) | that module only | `finance.seller.legal_name`, `stash.lost_found.mode`, `wiki.revision_retention_days` |
+| `<module>`, the module's slug (`finance`, `stash`, `wiki`, `hr`, `learn`, `desk`, `tasks`; Rally, whose slug is `events`, uses `rally`) | that module only | `finance.seller.legal_name`, `stash.lost_found.mode`, `wiki.revision_retention_days` |
 
 The rules:
 
@@ -83,7 +86,7 @@ retention run deletes it again.
 | `smtp.host`, `smtp.port` | Mail server; port default `587`. |
 | `smtp.security` | `starttls` (default), `tls` or `none` (development only). |
 | `smtp.username` | Login; empty for none. |
-| `smtp.password_set` | `true` when Den holds a password; the value comes from the secrets endpoint. |
+| `smtp.password_set` | `true` when Den's secret `DEN_SMTP_PASSWORD` (or `DEN_SMTP_PASSWORD_FILE`) has a value. The password itself comes only from the secrets endpoint, never from the database or the bundle. |
 | `smtp.from`, `smtp.from_name` | Sender address and name. |
 
 These replace a module's `SMTP_*` variables when Den sets `smtp.host`.
@@ -133,6 +136,14 @@ A value outside its range is ignored and Tasks keeps its own value.
 | `kept_after_con` | `days` (default `30` *(pending legal review)*) | Unclaimed items and their finder details are kept until `days` after the convention's end date. |
 | `deleted_after_closing` | `hours` (default `48` *(pending legal review)*) | A record is deleted `hours` after it is closed (claimed, handed over or discarded). |
 
+### Rally: submission site
+
+| Key | Meaning |
+| --- | --- |
+| `rally.submission_site_host` | Host name of the site where attendees submit events, without `https://`, for example `submit.con.example.org`. |
+
+Rally's slug is `events`; it receives the `rally` section.
+
 ## In the bundle
 
 What Stash receives from `GET /api/v1/integrations/bundle` when Den sets
@@ -158,8 +169,9 @@ retention, mail and Stash's own setting:
 ```
 
 Every key the contract defines, as Den stores it for the organisation
-(`GET /api/v1/modules/{id}/settings` shows the same `data`). Each module
-receives `retention`, `smtp` and only its own section from it:
+(`GET /api/v1/module-settings` returns it as `data`). Each module receives
+`retention`, `smtp` and only its own section from it
+(`GET /api/v1/modules/{id}/settings` shows exactly that part):
 
 ```json
 {
@@ -191,7 +203,14 @@ receives `retention`, `smtp` and only its own section from it:
   },
   "stash": { "lost_found": { "mode": "deleted_after_closing", "hours": 48 } },
   "wiki": { "revision_retention_days": 365 },
-  "tasks": { "trash_days": 30, "audit_days": 730, "due_soon_days": 1 }
+  "tasks": {
+    "trash_days": 30,
+    "notification_days": 90,
+    "audit_days": 730,
+    "automation_run_days": 90,
+    "due_soon_days": 1
+  },
+  "rally": { "submission_site_host": "submit.con.example.org" }
 }
 ```
 
@@ -232,42 +251,73 @@ Bundles stored by an older Den, with the sections at the top level of
 
 ## Den API
 
-### `GET /api/v1/modules/{id}/settings` and `PUT /api/v1/modules/{id}/settings`
+Den keeps **one** set of module settings for the organisation and cuts each
+module's part out of it. The full reference, with every error, is in
+[Den's API reference](../modules/den/api.md#module-settings).
 
-The settings Den sends to one module. **Who may call it:** a Den admin
-(`modules.manage`).
+### `GET /api/v1/module-settings` and `PUT /api/v1/module-settings`
 
-**Request body (`PUT`):** the whole `data` object. Keys left out are not
-sent to the module (it uses its own value). `smtp.password` may be given to
-set or replace the password; it is never returned.
+All module settings of the organisation. **Who may call it:** a Den admin
+or owner, signed in.
 
-**Response:** `200` with `{"data": {…}, "updated_at": "…"}`;
-`smtp.password` appears only as `smtp.password_set`.
+**Request body (`PUT`):** `{"data": {…}}` with the **whole** document; it
+replaces what is stored. A key left out is not sent to modules (they use
+their own value). Do not send `smtp.password` (a string or `null`): Den
+answers `422` and tells you to set `DEN_SMTP_PASSWORD` or
+`DEN_SMTP_PASSWORD_FILE`. Leaving out the `smtp` section does not change
+the password, because the password is not part of the document. Besides
+the sections above, `data` may hold `identity`, Den's own portal links,
+which no module receives.
+
+**Response:** `200` with `{"data": {…}, "updated_at": "…"}`.
+`smtp.password_set` is true when the secret has a value; the password is
+never in the answer. Every change is written to Den's audit log (the
+password is not, and this call cannot change it).
 
 **Errors:**
 
 | Status | Code | When |
 | --- | --- | --- |
+| `400` | `bad_request` | The body is not `{"data": {…}}`, or has a key the contract does not define. |
 | `401` / `403` | `unauthorized` / `forbidden` | Not signed in, or not an admin. |
-| `404` | `not_found` | No such module. |
-| `422` | `validation_failed` | A value is out of range; `details` names the key, for example `{"stash.lost_found.mode": "must be kept_after_con or deleted_after_closing"}`. |
+| `422` | `validation_failed` | A value is out of range, or the body contains `smtp.password`. `details` names the key, for example `{"smtp.password": "is set with the secret DEN_SMTP_PASSWORD (or DEN_SMTP_PASSWORD_FILE), not in module settings"}`. |
 
 ```sh
-curl -s -X PUT https://den.con.example.org/api/v1/modules/$STASH_ID/settings \
+curl -s -X PUT https://den.con.example.org/api/v1/module-settings \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"data":{"stash":{"lost_found":{"mode":"deleted_after_closing","hours":48}}}}'
+  -d '{"data":{"retention":{"inactive_users_days":730},"stash":{"lost_found":{"mode":"deleted_after_closing","hours":48}}}}'
 ```
 
 ```json
-{"data":{"stash":{"lost_found":{"mode":"deleted_after_closing","hours":48}}},"updated_at":"2026-11-11T09:30:00Z"}
+{"data":{"retention":{"inactive_users_days":730},"stash":{"lost_found":{"mode":"deleted_after_closing","hours":48}}},"updated_at":"2026-11-11T09:30:00Z"}
+```
+
+### `GET /api/v1/modules/{id}/settings`
+
+Read-only: exactly the `module_settings` that one module receives in its
+bundle (`retention`, `smtp` and its own section, without secrets). **Who
+may call it:** a Den admin or owner. **Errors:** `404 not_found` when there
+is no such module.
+
+```sh
+curl -s https://den.con.example.org/api/v1/modules/$STASH_ID/settings \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"data":{"retention":{"inactive_users_days":730},"stash":{"lost_found":{"mode":"deleted_after_closing","hours":48}}},"updated_at":"2026-11-11T09:30:00Z"}
 ```
 
 ### `GET /api/v1/integrations/module-settings/secrets`
 
-The secret values of the calling module's settings. **Who may call it:** a
-paired module, with its module credential. **Response:** `200`
-`{"smtp": {"password": "…"}}`; keys without a value are left out.
-**Errors:** `401` (missing or revoked credential).
+The SMTP password from Den's secret, for the calling module. **Who may
+call it:** a paired module, with its module credential. **Response:** `200`
+`{"smtp": {"password": "…"}}`, sent with `Cache-Control: no-store`; keys
+without a value are left out, so `{}` means `DEN_SMTP_PASSWORD` is empty.
+**Errors:** `401` (missing or revoked credential). The password is the
+environment variable `DEN_SMTP_PASSWORD`, or the file
+`DEN_SMTP_PASSWORD_FILE` (read on each request). It is not stored in
+Den's database.
 
 ```sh
 curl -s https://den-backend.conservices-den.svc.cluster.local:8080/api/v1/integrations/module-settings/secrets \
@@ -278,10 +328,15 @@ curl -s https://den-backend.conservices-den.svc.cluster.local:8080/api/v1/integr
 {"smtp":{"password":"change-me"}}
 ```
 
-Den stores these values encrypted. They are secrets in the sense of
-[Secrets](../operations/secrets.md): rotate the SMTP password at the mail
-provider, then save the new one on Den's Module settings page; modules pick
-it up on their next fetch.
+The password is a secret in the sense of
+[Secrets](../operations/secrets.md): it lives in the secret manager
+(`DEN_SMTP_PASSWORD` in `den-secrets`, filled from OpenBao
+`conservices/modules/den/smtp` in the GitOps reference), not in Postgres.
+No admin API, bundle or audit entry returns it. Rotate it at the mail
+provider, update the secret, and restart Den (a mounted
+`DEN_SMTP_PASSWORD_FILE` is read on the next request, so it needs no
+restart). Modules pick up the new value the next time they fetch this
+endpoint.
 
 ### Fetching the SMTP password
 

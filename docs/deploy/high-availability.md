@@ -83,11 +83,16 @@ two copies never run at the same time:
 
 | Workload | Reason | What it would take to scale |
 | --- | --- | --- |
-| `den-backend` | Backup download links are kept in process memory; database migrations must not run twice at once. | Store download tokens in PostgreSQL; run migrations with a database lock. |
 | `den-operator` | Runs the daily backup on a timer with an in-process lock. | Leader election (Kubernetes Lease) or a database lock. |
 | `stash-backend` | Applies its migrations in-process at start-up. | Move migrations to an initContainer with a lock, like the other modules. |
 | Wiki backend | Keeps live-editing buffers on its volume. | Shared buffer store (database or Redis). |
 | Other module backends | Run migrations as an initContainer; some keep timers in memory. | Check each module's documentation before raising `replicas`. |
+
+`den-backend` may run several replicas (`backend.replicas` in the Den
+chart): backup download links are stored in PostgreSQL, and migrate
+initContainers that start together wait on a PostgreSQL advisory lock. Its
+rate limits (pairing redeem, public brand, backup downloads) are counted per
+replica.
 
 Kubernetes restarts a failed singleton automatically, and the readiness
 probe keeps traffic away until it is ready. The charts refuse higher

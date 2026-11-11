@@ -27,8 +27,15 @@ Source: [AGlElectronics/den](https://github.com/AGlElectronics/den)
   page pick it up automatically.
 - **Organisation settings**: a JSON document of organisation-wide settings,
   such as the organisation's name and email domain, read by paired modules.
-- **Keycloak sync**: pushes the brand into the Keycloak realm so the sign-in
-  page matches.
+- **Keycloak sign-in page**: the `conservices` login theme fetches the brand
+  from Den, so the sign-in page matches; optionally Den also keeps the
+  realm's display name equal to the organisation name.
+- **Module settings**: retention, e-mail, Finance seller details, Stash Lost
+  & Found, the Rally submission site and identity links, handed to paired
+  modules.
+- **Audit log**: every change made in Den, with who made it.
+- **Roles from groups**: `den-admin`, `den-member` and `den-ops` (backups
+  and database deletion).
 - **User preferences**: each person's light or dark theme, shared by every
   app.
 - **Databases and backups** through Den's operator: creates a database for a

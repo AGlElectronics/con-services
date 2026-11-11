@@ -49,6 +49,11 @@ configMapGenerator:
     behavior: replace
     files:
       - config.json=den-frontend-config.json
+  - name: den-frontend-env
+    namespace: conservices-den
+    behavior: merge
+    literals:
+      - KEYCLOAK_ORIGIN=https://auth.con.example.org
   - name: den-operator-config
     namespace: conservices-den
     behavior: merge
@@ -58,6 +63,8 @@ configMapGenerator:
       - BACKUP_TIMEZONE=Europe/Vienna
       # A different provider or account than the live data.
       - BACKUP_S3_ENDPOINT=https://s3.backup-provider.example
+      - BACKUP_SAME_STORAGE_AS_DATA=false
+      # Add every installed module's bucket.
       - FILES_S3_BUCKETS=den-data
 
 # The HTTPRoutes attach to the Gateway "public" in conservices-gateway

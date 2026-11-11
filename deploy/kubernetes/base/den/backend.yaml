@@ -2,10 +2,9 @@
 # /den-migrate. Migrations run in the "migrate" initContainer, so every
 # rollout applies them before the new API process starts.
 #
-# Keep ONE replica with the Recreate strategy:
-#   - backup download links are kept in the process's memory, so a link
-#     minted by one replica is unknown to another;
-#   - Recreate guarantees two migrate containers never run at once.
+# Stateless: backup download links are in the database, and migrate
+# containers that start together wait on a Postgres advisory lock, so the
+# replica count may be raised and rollouts are rolling.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -25,7 +24,10 @@ spec:
   replicas: 1
   revisionHistoryLimit: 5
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: den

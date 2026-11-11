@@ -75,8 +75,8 @@ sequenceDiagram
     Den-->>Admin: pairing URL (shown once)
     Admin->>Mod: paste the URL into the module's<br/>"Den connection" settings
     Mod->>Den: POST /api/v1/integrations/pairing/redeem?token=…<br/>{"module_slug":"hr","module_version":"…"}
-    Den->>Den: token known, not used, not expired?
-    Den->>Den: mark token used, create module credential,<br/>status → "paired", write audit event
+    Den->>Den: one transaction: lock the token row; known, not used,<br/>not expired, module_id/module_slug match?
+    Den->>Den: mark token used, revoke older credentials,<br/>create module credential, status → "paired",<br/>write audit event
     Den-->>Mod: credential (shown once), module_id,<br/>organization_id, den_base_url
     Mod->>MDB: store credential and Den's address
     Mod->>Den: GET /api/v1/integrations/bundle<br/>Authorization: Bearer <credential>
@@ -99,7 +99,7 @@ stateDiagram-v2
     Paired --> Paired: bundle every minute
     Paired --> Unreachable: Den does not answer
     Unreachable --> Paired: Den answers again
-    Paired --> Rejected: Den answers 401<br/>(module removed in Den)
+    Paired --> Rejected: Den answers 401<br/>(credential revoked or module removed)
     Rejected --> Paired: pair again with a new URL
     Paired --> Standalone: admin disconnects<br/>(DEN_MODE=standalone)
     Paired --> Waiting: admin disconnects<br/>(DEN_MODE=required)
@@ -124,18 +124,24 @@ Its first part is Den's `APP_BASE_URL`. The token is 32 random bytes,
 URL-safe base64 encoded. Den never stores the token itself, only its
 SHA-256 hash, so a leaked database does not leak usable tokens.
 
-A token can fail for three reasons, each answered with `401 Unauthorized`:
+A token can fail for these reasons:
 
-| Message | Meaning |
-| --- | --- |
-| `invalid pairing token` | Den does not know this token. Check you copied the whole URL. |
-| `pairing token already consumed` | It was already used. Make a new one. |
-| `pairing token expired` | More than 15 minutes passed. Make a new one. |
+| Status | Message | Meaning |
+| --- | --- | --- |
+| 401 | `invalid pairing token` | Den does not know this token. Check you copied the whole URL. |
+| 401 | `pairing token already consumed` | It was already used. Make a new one. |
+| 401 | `pairing token expired` | More than 15 minutes passed. Make a new one. |
+| 409 | `this pairing URL was made for the module hr, not stash` | The module sent a `module_slug` (or `module_id`) of another module. The token stays unused: paste it into the right module. |
+| 429 | `too many requests, try again later` | More than 10 redeems a minute from one address. |
+
+Redeeming is a single database transaction that locks the token, so one URL
+gives exactly one credential even if it is sent twice at the same moment.
+Den writes the redeem to its audit log with the admin who created the URL.
 
 ### The module credential
 
-The credential is another 32-byte random secret. Den returns it exactly once,
-in the redeem response, and keeps only its hash. The module stores it in its
+The credential is another 32-byte secret. Den returns it exactly once, in the
+redeem response, and keeps only its hash. The module stores it in its
 **own** database and sends it as `Authorization: Bearer <credential>` on
 every call to Den's integration API. Each credential gets a label such as
 `pairing-20261106-101500 v1.2.0`, and Den records when it was last used.
@@ -147,6 +153,17 @@ not reveal it. Outside `APP_ENV=development` such a module refuses to start
 without the key. A credential stored in plain text by an older version is
 encrypted the first time it is read; nobody has to pair again. Generating
 and rotating the key: [Secrets](../operations/secrets.md#den-link-encryption-key).
+With `DEN_CREDENTIAL_KEY` set, Den derives the credential from that key and
+the credential's id (HMAC-SHA256) instead of picking it at random. Den can
+then recompute it to call the module itself, for the portal's to-do list,
+while its database still holds only the hash. A module sees no difference.
+
+A module has **one active credential**. Pairing it again creates a new one
+and revokes every older one in the same step. Admins can see and revoke
+credentials in Den → Modules → **Credentials**
+([API](../modules/den/api.md#get-apiv1modulesidcredentials)); a module left
+without an active credential is shown as `unpaired`. Den never pairs a
+module by itself: reconnecting is always an admin pasting a new URL.
 
 ### When the browser and the module see Den at different addresses
 
@@ -220,9 +237,15 @@ Every minute, a paired module pulls the **bundle** from
   Keys Den does not set fall back to the module's own value. See
   [Organisation settings](../modules/den/admin-guide.md#organisation-settings).
 
+The bundle also has a third part, **module_settings**: the values from Den →
+[Module settings](../modules/den/admin-guide.md#module-settings) meant for
+this module (retention, SMTP, identity links, and the module's own section,
+for example `stash.lost_and_found`).
+
 Modules can also read and save a person's theme choice (system, light or
 dark) through `/api/v1/integrations/user-preferences`, so picking dark mode in
-one app applies everywhere.
+one app applies everywhere. Den only answers for the module's own users
+(people who signed in to Den and may use the module).
 
 The exact endpoints are in the
 [API reference](../modules/den/api.md#integration-api-for-paired-modules).
@@ -242,17 +265,17 @@ received (it stores it in its own database, so this survives a restart) and
 keeps trying every minute. It shows the error on its Den connection settings
 page.
 
-**The credential was revoked.** If Den answers `401` (for example because the
-module was removed from Den), the module reports that Den rejected its
-credential and that it should be paired again. A module using the shared
-`denlink` also records this: it marks the link **revoked** (kept across
-restarts), shows `"revoked": true` in
-[`GET /api/den/state`](#den-mode-and-pairing-state) and its status, and its
-web app tells the module's admins to pair again. It **never pairs again by
-itself**; an admin mints a new pairing URL in Den and pastes it. Meanwhile
-the module keeps its last bundle and keeps serving its API. If a later sync
-is accepted (Den's credential table was restored, for example), the mark
-is cleared.
+**The credential was revoked.** If Den answers `401` (an admin revoked the
+credential, the module was paired again elsewhere, or it was removed from
+Den), the module reports that Den rejected its credential and that it
+should be paired again. A module using the shared `denlink` also records
+this: it marks the link **revoked** (kept across restarts), shows
+`"revoked": true` in [`GET /api/den/state`](#den-mode-and-pairing-state)
+and its status, and its web app tells the module's admins to pair again.
+It **never pairs again by itself**; an admin mints a new pairing URL in Den
+and pastes it. Meanwhile the module keeps its last bundle and keeps serving
+its API. If a later sync is accepted (Den's credential table was restored,
+for example), the mark is cleared.
 
 **Unpaired from the module's side.** Disconnecting in the module deletes the
 stored credential, and the module goes back to its local settings and look.
@@ -265,11 +288,13 @@ pairing tokens and credentials, so the module's next call is refused with
 up); see
 [Adding and removing modules](../operations/databases-and-backups.md#adding-and-removing-modules).
 
-!!! note "Pairing again"
-    Pairing a module again (minting and redeeming a new URL) adds a new
-    credential; earlier credentials of the same module are not revoked
-    automatically. Den has no endpoint yet to list or revoke individual
-    credentials. Removing the module revokes all of them.
+!!! note "Pairing again and revoking"
+    Pairing a module again (minting and redeeming a new URL) replaces its
+    credential: every earlier credential of the module is revoked in the
+    same transaction. To cut a module off without removing it, revoke its
+    credentials in Modules → **Credentials**. If a pairing URL or a
+    credential may have leaked, follow the
+    [runbook](../operations/disaster-recovery.md#a-pairing-url-or-module-credential-leaked).
 
 ## The Den connection API in each module
 

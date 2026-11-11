@@ -422,3 +422,15 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- end }}
 {{- toPrettyJson $out -}}
 {{- end -}}
+
+{{/* KEYCLOAK_ORIGIN of the web app: frontend.securityHeaders.keycloakOrigin,
+else the origin (scheme://host[:port]) of the issuer the web app signs in at. */}}
+{{- define "den.keycloakOrigin" -}}
+{{- $sh := .Values.frontend.securityHeaders | default dict -}}
+{{- if $sh.keycloakOrigin -}}
+{{- $sh.keycloakOrigin -}}
+{{- else -}}
+{{- $issuer := (.Values.frontend.config | default dict).oidcAuthority | default .Values.config.OIDC_ISSUER_URL | default "" -}}
+{{- regexFind "^https?://[^/]+" $issuer -}}
+{{- end -}}
+{{- end -}}

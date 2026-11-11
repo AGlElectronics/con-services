@@ -27,8 +27,8 @@ automountServiceAccountToken: false
 ---
 # Den backend. Migrations run in the "migrate" initContainer (/den-migrate
 # from the same image), so every rollout applies them before the new API
-# process starts. One replica with Recreate: backup download links live in
-# the process's memory, and two migrate containers must never run at once.
+# process starts; concurrent migrate containers wait on a Postgres advisory
+# lock. Stateless, so it scales and rolls.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,7 +41,10 @@ spec:
   replicas: {{ .Values.backend.replicas }}
   revisionHistoryLimit: 5
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: den
@@ -198,6 +201,18 @@ spec:
         - name: frontend
           image: {{ include "den.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          {{- $sh := .Values.frontend.securityHeaders | default dict }}
+          # Origins for the Content-Security-Policy; the image writes
+          # /etc/nginx/snippets/security-headers*.conf from them at start-up.
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ include "den.keycloakOrigin" . | quote }}
+            - name: DEN_ORIGIN
+              value: {{ $sh.denOrigin | default "" | quote }}
+            - name: S3_ORIGIN
+              value: {{ $sh.s3Origin | default "" | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ $sh.extraConnectSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -240,6 +255,9 @@ spec:
             - name: frontend-config
               mountPath: /etc/conservices
               readOnly: true
+            # Written at start-up (the root file system is read-only).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
             - name: cache
               mountPath: /var/cache/nginx
             # nginx.pid of older images built on nginx:alpine (/var/run links here)
@@ -256,6 +274,8 @@ spec:
         - name: frontend-config
           configMap:
             name: {{ .Release.Name }}-frontend-config
+        - name: nginx-snippets
+          emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: run
