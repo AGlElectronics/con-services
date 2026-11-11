@@ -179,7 +179,7 @@ timeout. The same calls read each module's `/api/role-catalog` to decide
 who sees it on the portal. On Kubernetes this needs the network policy rule
 described in [Network policies](../../operations/network-policies.md).
 
-### Operator
+### Operator connection
 
 Optional. Without `OPERATOR_URL`, Den runs without the operator: the
 Backups page says *Not set up*, and modules are added and removed without

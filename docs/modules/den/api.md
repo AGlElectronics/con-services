@@ -1375,7 +1375,7 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/operations/status
   host and port in `FILES_S3_ENDPOINT` and `BACKUP_S3_ENDPOINT`). Then
   `warning` explains the risk; Den shows it on the Backups page and as a
   banner in the admin area. See
-  [Configuration](configuration.md#backups).
+  [Configuration](configuration.md#operator).
 - `last` and `last_success` are absent before the first backup.
 - `target`, `recipients`, `settings`, `last`, `last_success` and `next_run`
   are absent when backups are turned off.
