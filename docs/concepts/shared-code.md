@@ -354,13 +354,31 @@ Modules depend on the interfaces `gworkspace.Directory`, `gworkspace.Gmail`
 | Interface | Methods |
 | --- | --- |
 | `Directory` | `GetUser`, `CreateUser`, `SetSuspended`, `DeleteUser`, `ListGroups`, `GetGroup`, `CreateGroup`, `DeleteGroup`, `ListMembers`, `AddMember`, `RemoveMember` |
-| `Gmail` | `ListMessages`, `GetMessage`, `SendMessage`, `ModifyLabels`, `TrashMessage` |
+| `Gmail` | `ListMessages`, `GetMessage`, `SendMessage`, `ModifyLabels`, `TrashMessage`, `UntrashMessage`, `ListLabels`, `CreateLabel`, `CreateSendAs`, `DeleteSendAs` |
 
-The client refuses users, groups and mailboxes outside
+The client refuses users, groups, mailboxes and send-as aliases outside
 `GOOGLE_WORKSPACE_DOMAIN`, so a mistake in a module cannot create accounts
 in another domain. `gworkspace.IsNotFound(err)` and
 `gworkspace.IsConflict(err)` tell the common Google errors apart. Setting
 up the service account is described [below](#google-workspace-service-account).
+
+`ListLabels` returns every label on the mailbox. `CreateLabel` creates a
+user label by name and shows it in Gmail's label list and on messages
+(`labelShow` / `show`); a name that already exists is a conflict.
+`UntrashMessage` moves a message out of the trash. `CreateSendAs(ctx,
+mailbox, alias, displayName)` lets that mailbox send as `alias`
+(`treatAsAlias` is set), and `DeleteSendAs` removes the alias. Those two
+request `gworkspace.SendAsScopes()` — `GmailScopes` plus
+`gworkspace.SendAsScope`
+(`https://www.googleapis.com/auth/gmail.settings.sharing`). Every other
+Gmail call stays on `GmailScopes` (`gmail.modify`) alone, so a module that
+never creates an alias does not authorise the extra scope. A duplicate
+alias is `IsConflict`; deleting one that is already gone is `IsNotFound`.
+Desk, which treats both of those as success, can drop its own copies of
+these four calls and keep that mapping.
+
+`gworkspace.NewFake` implements the same methods. Its `ListLabels` returns
+only labels the test created, not Gmail's system labels.
 
 ## Configuration reference
 
@@ -858,7 +876,15 @@ The container log shows the start-up step:
     https://www.googleapis.com/auth/admin.directory.user
     https://www.googleapis.com/auth/admin.directory.group
     https://www.googleapis.com/auth/gmail.modify
+    https://www.googleapis.com/auth/gmail.settings.sharing
     ```
+
+    `gmail.modify` covers reading, sending, labels, trash and untrash.
+    `gmail.settings.sharing` is only for creating and deleting a send-as
+    alias (`CreateSendAs`, `DeleteSendAs`). Authorise it for Desk. Leave
+    it off for a module that never makes those two calls: they are the
+    only calls that request it, and Google rejects a token when
+    domain-wide delegation does not list a scope the call asks for.
 
 3. Mount the key into the module's pod as a file from a Secret (see
    [Secrets](../operations/secrets.md#google-workspace-service-account-key))

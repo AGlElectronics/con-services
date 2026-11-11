@@ -164,6 +164,15 @@ led by Den's MAJOR; see
   credential. Standalone returns `ErrNotPaired`; a rejected credential
   returns `ErrRevoked`. See
   [Paired modules](docs/concepts/shared-code.md#paired-modules).
+- Shared Go code: `gworkspace` lists and creates a Gmail label by name
+  (`ListLabels`, `CreateLabel`), restores a trashed message
+  (`UntrashMessage`), and creates and deletes a send-as alias
+  (`CreateSendAs`, `DeleteSendAs`). Send-as calls need the extra scope
+  `https://www.googleapis.com/auth/gmail.settings.sharing`
+  (`gworkspace.SendAsScope`), authorised in domain-wide delegation only
+  for a module that creates aliases (Desk). Other Gmail calls stay on
+  `gmail.modify`. See
+  [Google Workspace service account](docs/concepts/shared-code.md#google-workspace-service-account).
 - Shared Go code: `RequireDen` checks a call Den makes into a module on
   `GET /api/portal/todos`. It compares the pairing credential in constant
   time and reads the person from `X-Den-User-Issuer` and
@@ -186,6 +195,9 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Shared Go code: `gworkspace` reports `google workspace is not configured`
+  and `google workspace needs …` with a lowercase first letter, like the
+  package's other errors.
 - Shared Go code: `denlink` error strings now follow Go's convention
   (`ErrRevoked`, `den refused the pairing URL`, `den returned …` — a
   lowercase first letter, no trailing punctuation). The sentence an admin
