@@ -125,10 +125,17 @@ Every error has the same body:
 | 404 | `not_found` | It does not exist, **or you may not see it**. |
 | 409 | `conflict` | The current state does not allow it (deleting a private space, a restore already running). |
 | 422 | `validation_failed` | Field problems; `details` maps field to reason. |
-| 413 | `request_too_large` | A JSON body over 1 MiB (uploads have their own limits, see [Files](#files)). |
+| 413 | `request_too_large` | A JSON body over 1 MiB, or over 64 KiB for pairing with Den and saving preferences (uploads have their own limits, see [Files](#files)). |
 | 429 | `rate_limited` | Too many requests: public share links (120 a minute per client, bursts of 30), the offboarding hook (60 a minute per client), uploads (60 a minute per person, bursts of 20). Wait for `Retry-After` seconds. |
 | 503 | `unavailable` | Object storage is off (`S3_ENDPOINT` empty), or the server is restarting. |
 | 500 | `internal` | Unexpected; quote the `X-Request-ID` response header when reporting it. |
+
+`bad_request`, `request_too_large` and `rate_limited` are the suite-wide
+codes of the shared `authbase` package
+([Shared code](../../concepts/shared-code.md#error-codes)); every module
+returns them the same way. Every response carries `X-Request-ID`, and the
+web app may read it across origins (`Access-Control-Expose-Headers:
+X-Request-ID`).
 
 A `429` looks like this:
 
@@ -356,8 +363,9 @@ curl -s $WIKI/api/v1/me -H "Authorization: Bearer $TOKEN"
 
 Who may call: signed in. Your theme, shared across modules through Den.
 Body for `PUT`: `{"theme": "system" | "light" | "dark"}`; anything else is
-`422`. When Wiki is not paired with Den the value is echoed back and kept in
-the browser only.
+`422`. A body over 64 KiB is `413 request_too_large`, one that is not
+exactly one JSON value `400 bad_request`. When Wiki is not paired with Den
+the value is echoed back and kept in the browser only.
 
 ```sh
 curl -s -X PUT $WIKI/api/v1/me/preferences -H "Authorization: Bearer $TOKEN" \
@@ -1274,7 +1282,7 @@ module; see [Pairing](../../concepts/pairing.md).
 | Method and path | Result |
 | --- | --- |
 | `GET /api/v1/den` | Status: `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at", "last_error", "revoked": false}`, or `{"paired": false, "revoked": false}`. |
-| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`. `422 pairing_failed` with the reason (expired token, Den unreachable, a host not allowed by `DEN_ALLOWED_HOSTS`). Also clears a revoked link. |
+| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`, at most 64 KiB (`413 request_too_large` above, `400 bad_request` for anything but one JSON value). `422 pairing_failed` with the reason (expired token, Den unreachable, a host not allowed by `DEN_ALLOWED_HOSTS`). Also clears a revoked link. |
 | `POST /api/v1/den/sync` | Fetch Den's brand and settings now. `409` when not paired, `409 den_credential_revoked` when Den rejected the credential, `502` when Den fails. |
 | `DELETE /api/v1/den/pair` | Unpair, `204`. Wiki falls back to its own settings. |
 
@@ -1297,6 +1305,15 @@ asks the admin to pair again:
 curl -s -X POST $WIKI/api/v1/den/pair -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pairing_url":"https://den.example.org/api/v1/integrations/pairing/redeem?token=change-me"}'
+```
+
+A body over 64 KiB is refused before Wiki contacts Den:
+
+```text
+HTTP/1.1 413 Request Entity Too Large
+Content-Type: application/json
+
+{"error":{"code":"request_too_large","message":"request body is larger than 65536 bytes"}}
 ```
 
 ---

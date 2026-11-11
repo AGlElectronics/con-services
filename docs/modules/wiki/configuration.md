@@ -46,7 +46,7 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL connection URL, for example `postgres://wiki:change-me@db.example.org:5432/wiki?sslmode=require`. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests to finish. Give the pod at least 30 s on top for live editing. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3007` | no | no | Comma-separated browser origins allowed to call the API, for example `https://wiki.example.org`. |
-| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
+| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses and is read right to left; `X-Real-IP` and `True-Client-IP` are never read. The resulting client IP is what rate limits count and what the request log shows. Add a proxy that sits outside the private ranges; `none` trusts no proxy. An invalid entry stops the backend at start-up. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 
 ### Sign-in
 
@@ -198,10 +198,27 @@ describes, and Wiki stores the bundle with its pairing:
 
 `wiki.revision_retention_days` must be a whole number, `0` or more (`0` keeps everything).
 Anything else, or no value at all, means "use
-`WIKI_REVISION_RETENTION_DAYS`". Den does not send `module_settings` yet;
-until it does, the local setting applies. While Den's credential is
+`WIKI_REVISION_RETENTION_DAYS`". Wiki reads the value from the bundle it
+keeps with the pairing, so after a restart Den's value applies straight
+away, before Wiki reaches Den again. A bundle from an older Den, with
+`wiki` directly under `module_settings` instead of under `data`, is read
+too. Until Den offers the setting on its Module settings page, the local
+setting applies. While Den's credential is
 [revoked](admin-guide.md#settings-den-connection), Wiki keeps using the
 last value it received.
+
+To see which value is in force, list a page's history:
+
+```sh
+curl -s $WIKI/api/v1/pages/$PAGE/revisions -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"revisions":[],"retention_days":90,"retention_source":"den"}
+```
+
+`retention_source` is `den` when Den's value applies and `config` when
+`WIKI_REVISION_RETENTION_DAYS` does.
 
 ### Troubleshooting
 
