@@ -86,6 +86,7 @@ handlers and `RequirePaired`), plus:
 | `denlink.Schema`, `denlink.SchemaUpgrade` | The `den_link` table for a new module, and the migration an existing one needs (adds `revoked_at`). |
 | `client.ModuleSettings() *ModuleSettings`, `Bundle.ModuleSettings` | Den's [module settings](module-settings.md) for this module, from the stored bundle (so they survive a restart); `nil` when standalone. Methods, all safe on `nil`: `Lookup(key)`, `Section(name)`, `Decode(key, &dst)`, `String`, `Bool`, `Int`, `Days(key)` (whole number, 0 or more), `Retention()`, `SMTP()` (only when `smtp.host` is set; port `587` and `starttls` by default), `FinanceSeller()`. Keys are dotted: `wiki.revision_retention_days`, `finance.seller`. |
 | `client.ModuleSettingSecret(ctx, key) (string, error)`, `client.SMTPPassword(ctx) (string, error)` | A secret Den keeps out of the bundle. `SMTPPassword` is the key `smtp.password`. An empty string and a nil error means Den holds none. `ErrNotPaired` when standalone, `ErrRevoked` when Den rejected the credential. Kept in memory for `SecretCacheTTL` (one minute), never in the database. A response over 64 KiB is refused. See [Fetching the SMTP password](module-settings.md#fetching-the-smtp-password). |
+| `client.Modules(ctx) ([]Module, error)` | Den's enabled, paired modules (`GET /api/v1/integrations/modules`, the module's pairing credential). `Module.RoleCatalogURL` is that module's role catalog; empty when it publishes none. `ErrNotPaired` when standalone, `ErrRevoked` when Den rejected the credential. Kept in memory for `ModulesCacheTTL` (one minute). A response over 64 KiB is refused. See [Paired modules](#paired-modules). |
 | `client.RequireDen(next) http.HandlerFunc`, `PortalCallerFrom(ctx)`, `CredentialMatches(ctx, token)`, `BearerToken(header)`, `UserFromDen(r)` | Check a call Den makes into the module (`GET /api/portal/todos`). See [Portal to-dos](#portal-to-dos). |
 | `denlink.UserMessage(err) string` | The sentence an admin sees: the API `message` field and `den_link.last_error`. `Error()` is the Go error string (lowercase, no trailing punctuation). |
 
@@ -95,8 +96,8 @@ handlers accept a body of at most 64 KiB and answer like
 bad_request` when it is not exactly one JSON value. `denlink` keeps its own
 small copy of that decoder instead of calling `authbase`, because a module
 may copy `denlink` without `authbase` and the shared packages never import
-each other. A secrets response from Den is capped at the same 64 KiB and
-is not cached when it is larger.
+each other. A secrets response and the paired-module list from Den are
+each capped at the same 64 KiB and are not cached when larger.
 
 What changes in the module's API is on [Pairing](pairing.md#the-den-connection-api-in-each-module).
 
@@ -118,6 +119,80 @@ dotted key. The answer stays in the process for at most a minute
 (`SecretCacheTTL`); a successful sync, a new pairing, unpairing, or a
 rejected credential drops it immediately. It is never written to
 `den_link`.
+
+#### Paired modules
+
+`Modules` asks Den which modules are paired. HR uses it to find each
+module's [role catalog](role-catalog.md) without a hand-written list:
+
+```go
+mods, err := client.Modules(ctx)
+```
+
+The call is `GET /api/v1/integrations/modules` with the module's pairing
+credential (`Authorization: Bearer`), the same credential as the bundle.
+Den answers `200` with the enabled, paired modules:
+
+```json
+{
+  "modules": [
+    {
+      "slug": "desk",
+      "display_name": "Desk",
+      "base_url": "https://desk.con.example.org",
+      "internal_url": "https://desk-backend.conservices-desk.svc.cluster.local:8080",
+      "role_catalog_url": "https://desk-backend.conservices-desk.svc.cluster.local:8080/api/role-catalog"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `Slug`, `DisplayName` | As registered in Den. |
+| `BaseURL` | Public address, for links. |
+| `InternalURL` | Address a backend inside the cluster uses. Empty when the registration has none. |
+| `RoleCatalogURL` | Where that module serves `GET /api/role-catalog`. Den builds it from `internal_url`, or from `base_url` when `internal_url` is empty. Empty when the module publishes no catalog. |
+
+Do not append `/api/role-catalog` yourself: Den already did.
+
+A body over 64 KiB is refused and not cached. A successful answer stays in
+memory for `ModulesCacheTTL` (one minute) and is dropped when the module
+syncs, pairs again, unpairs, or Den rejects the credential — the same
+moments as the SMTP password. It is never written to `den_link`.
+
+`ErrNotPaired` means standalone: no request is sent. `ErrRevoked` means
+Den rejected the credential, including a `401` on this call (the link is
+marked revoked, as with `Sync`). Any other failure is returned and not
+cached.
+
+HR connects this to its catalog fetcher. `Discover` wants a slug and a
+catalog URL. Skip a module whose `RoleCatalogURL` is empty.
+`ROLE_CATALOG_SOURCES` still replaces the URL of a slug and adds modules
+Den does not list. When the call returns `ErrNotPaired`, return no
+discovered modules so the override list is the whole set (standalone HR).
+On any other error, log it and return no discovered modules for that
+attempt; HR still shows the last catalog it saved for a module.
+
+```go
+fetcher.Discover = func(ctx context.Context) []catalog.Source {
+    mods, err := denClient.Modules(ctx)
+    if err != nil {
+        if !errors.Is(err, denlink.ErrNotPaired) {
+            log.Warn().Err(err).Msg("den link: paired modules")
+        }
+        return nil
+    }
+    out := make([]catalog.Source, 0, len(mods))
+    for _, m := range mods {
+        if m.Slug == "" || m.RoleCatalogURL == "" {
+            continue
+        }
+        out = append(out, catalog.Source{Slug: m.Slug, URL: m.RoleCatalogURL})
+    }
+    return out
+}
+```
 
 #### Portal to-dos
 
@@ -419,6 +494,8 @@ longer exists in `shared/go` is deleted.
    [Fetching the SMTP password](module-settings.md#fetching-the-smtp-password).
 10. Serve `GET /api/portal/todos` with `client.RequireDen` so Den's portal
     can list the person's to-dos. See [Portal to-dos](#portal-to-dos).
+11. HR: set the catalog fetcher's `Discover` from `client.Modules`. See
+    [Paired modules](#paired-modules). Other modules do not call it.
 
 **groupmatch**: replace the module's own group comparison, store grants with
 `NewGrant` (a migration normalising existing grants), stop merging `roles`

@@ -155,6 +155,15 @@ led by Den's MAJOR; see
   value stays in memory for at most one minute, is dropped on sync, unpair
   or a rejected credential, and is never written to the module database.
   See [Fetching the SMTP password](docs/concepts/module-settings.md#fetching-the-smtp-password).
+- Shared Go code: `denlink.Client.Modules` lists the organisation's
+  paired modules from Den (`GET /api/v1/integrations/modules`, with the
+  module's pairing credential). Each entry carries the slug, name,
+  addresses and `role_catalog_url` HR uses to discover role catalogs.
+  The list stays in memory for one minute (`ModulesCacheTTL`), is refused
+  when larger than 64 KiB, and is dropped on sync, unpair or a rejected
+  credential. Standalone returns `ErrNotPaired`; a rejected credential
+  returns `ErrRevoked`. See
+  [Paired modules](docs/concepts/shared-code.md#paired-modules).
 - Shared Go code: `RequireDen` checks a call Den makes into a module on
   `GET /api/portal/todos`. It compares the pairing credential in constant
   time and reads the person from `X-Den-User-Issuer` and
