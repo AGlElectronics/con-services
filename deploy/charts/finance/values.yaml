@@ -25,11 +25,12 @@ image:
     pullPolicy: IfNotPresent
 
 # Name of an existing Secret (created by your secret manager, for example an
-# ExternalSecret) with the key DATABASE_URL. This chart never creates Secrets.
+# ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID and
+# S3_SECRET_ACCESS_KEY. This chart never creates Secrets.
 existingSecret: finance-secrets
 
-# Finance has no access config file: who may use it is the
-# FINANCE_ACCESS_GROUPS setting below.
+# Finance has no access config file: who may use it, and with which role,
+# is the FINANCE_*_GROUPS settings below.
 accessConfig:
   enabled: false
   existingConfigMap: ""
@@ -46,8 +47,29 @@ config:
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
   OIDC_CLIENT_ID: finance-spa
   OIDC_AUDIENCE: finance-spa
-  # Keycloak groups allowed to use Finance at all.
-  FINANCE_ACCESS_GROUPS: finance-admin
+  # IdP groups (comma-separated) that grant each Finance role. The first
+  # group of each is what the role catalog publishes for HR.
+  FINANCE_ADMIN_GROUPS: finance_admin
+  FINANCE_APPROVER_GROUPS: finance_approver
+  FINANCE_BOOKKEEPER_GROUPS: finance_bookkeeper
+  FINANCE_READONLY_GROUPS: finance_read-only
+  # Money settings (pending accountant review). Set the currency before the
+  # first invoice.
+  FINANCE_CURRENCY: EUR
+  FINANCE_DEFAULT_VAT_RATE_BP: "2000"
+  FINANCE_INVOICE_PREFIX: FIN-
+  FINANCE_CREDIT_NOTE_PREFIX: FIN-CN-
+  # Voids, payments, expenses, credit notes and refunds above this many
+  # cents need a second person. "0": all of them.
+  FINANCE_APPROVAL_THRESHOLD_CENTS: "0"
+  FINANCE_MAX_BACKDATE_DAYS: "366"
+  # Issued invoice and credit note PDFs. The keys (S3_ACCESS_KEY_ID,
+  # S3_SECRET_ACCESS_KEY) come from existingSecret. Empty S3_ENDPOINT:
+  # issuing answers 503 storage_unavailable.
+  S3_ENDPOINT: https://s3.conservices-data.svc.cluster.local:9000
+  S3_BUCKET: finance-data
+  S3_REGION: us-east-1
+  S3_USE_PATH_STYLE: "true"
   CORS_ALLOWED_ORIGINS: https://finance.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -211,8 +233,8 @@ networkPolicy:
   # conservices-pg and Garage (S3 API through its TLS sidecar). For the Kustomize
   # local-trial postgres/s3 use podSelector app.kubernetes.io/name:
   # postgres / s3 and s3.port 9000. For managed services set
-  # enabled: false and add ipBlock rules to extraEgress. Finance stores no
-  # files, so it needs PostgreSQL only.
+  # enabled: false and add ipBlock rules to extraEgress. Finance stores the
+  # PDFs of issued invoices and credit notes in S3.
   data:
     enabled: true
     namespace: conservices-data
@@ -221,7 +243,7 @@ networkPolicy:
         cnpg.io/cluster: conservices-pg
       port: 5432
     s3:
-      enabled: false
+      enabled: true
       podSelector:
         app.kubernetes.io/name: garage
       port: 3900
