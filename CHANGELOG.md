@@ -99,6 +99,43 @@ led by Den's MAJOR; see
   the module's *Den connection* page. Pre-registered modules
   (`DEN_PREREGISTER_MODULES`) only appear as unpaired; nothing pairs
   automatically ([Pairing](docs/concepts/pairing.md)).
+- Shared Go code in `shared/go`, the one source of the packages every
+  module copies ([Shared code](docs/concepts/shared-code.md)):
+  `groupmatch` (one rule for matching groups, with `OIDC_GROUPS_CLAIM`,
+  `OIDC_GROUP_MATCH` and `OIDC_GROUP_PREFIX`), `denlink` (the Den pairing
+  client, now with the credential encrypted at rest, a pairing host
+  allow-list and a *revoked* state), `authbase` (safe `AUTH_MODE`/`APP_ENV`
+  defaults, dev headers only in dev mode, bounded JSON bodies, rate
+  limiting, API security headers) and `gworkspace` (Google Workspace
+  accounts, groups and Gmail through a service account, with a fake for
+  tests). Modules adopt them in their own releases.
+- `scripts/sync-shared.ps1` and `scripts/sync-shared.sh` copy those
+  packages into a module's `backend/internal/` with the module's import
+  path, and with `-Check` / `--check` report every copy that drifted.
+- CI: `module-ci.yml` has a new job **Shared code drift** (inputs
+  `shared-check`, `shared-ref`, `shared-repository`) that fails a module's
+  run when a generated copy differs from `shared/go`. Modules without
+  copies pass unchanged. The new workflow **Shared Go** tests `shared/go`
+  and builds a scratch module from the synced copies.
+- `shared/nginx/security-headers.conf`: the security headers for every web
+  app's nginx (Content Security Policy with Keycloak and Den origins,
+  `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`);
+  HSTS stays at the Gateway.
+- Contracts for 1.0, implemented per module later:
+  [Role catalog](docs/concepts/role-catalog.md) (dynamic and privileged
+  roles, the catalog needs HR's service token or a staff sign-in, HR
+  finds modules through Den), [Module settings](docs/concepts/module-settings.md)
+  (retention, SMTP, Finance seller details and Stash Lost & Found
+  retention set in Den; retention defaults are pending legal review), and
+  on [Authentication](docs/concepts/authentication.md) the group matching
+  rule, safe defaults, an access token per API kept only in memory, and
+  portal to-dos fetched by Den's backend so no user token leaves Den.
+- Secrets inventory: `DEN_LINK_ENCRYPTION_KEY` (one per module), its
+  rotation with `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, and the Google
+  Workspace service-account key mounted as a file
+  ([Secrets](docs/operations/secrets.md#den-link-encryption-key)). The Docker
+  Compose module backends and the `example-stash` overlay carry public
+  dev-only values of `DEN_LINK_ENCRYPTION_KEY`.
 - Proposal [Using the convention's existing identity provider](docs/proposals/existing-identity-provider.md)
   (agreed, not implemented yet): reuse a convention's attendee realm
   without moving accounts, staff modes `brokered` (our realm added next to
@@ -124,3 +161,10 @@ led by Den's MAJOR; see
 - Docs recommend pinning both Gateway IPs, so the Keycloak admin console
   can never be exposed through the public Gateway, and never publishing
   `auth-admin` through a Cloudflare Tunnel.
+- The shared `denlink` refuses pairing URLs whose host is not in
+  `DEN_ALLOWED_HOSTS` when `DEN_INTERNAL_URL` is not set, requires
+  `https://` outside development and never follows redirects, so a pasted
+  URL cannot make a module's backend call an arbitrary address. A module
+  using it refuses to start outside `APP_ENV=development` without
+  `DEN_LINK_ENCRYPTION_KEY`, and never re-pairs by itself after Den
+  revoked its credential.
