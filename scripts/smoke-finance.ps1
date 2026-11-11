@@ -31,10 +31,11 @@ foreach ($u in $users.Keys) {
   if ($DevAuth) {
     $headers[$u] = @{ 'X-Dev-User' = $u; 'X-Dev-Groups' = $users[$u].groups }
   } else {
-    # Finance checks the ID token (audience finance-spa), not the access token.
+    # Finance accepts only access tokens with the audience finance-api (the
+    # realm's audience mapper on finance-spa); ID tokens are refused.
     $tok = (Invoke-RestMethod -Method Post -Uri "$Keycloak/realms/conservices/protocol/openid-connect/token" -Body @{
         grant_type = 'password'; client_id = 'finance-spa'; username = $u; password = $users[$u].password; scope = 'openid'
-      }).id_token
+      }).access_token
     $headers[$u] = @{ Authorization = "Bearer $tok" }
   }
 }

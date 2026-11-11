@@ -451,7 +451,9 @@ services:
       OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: finance-spa
-      OIDC_AUDIENCE: finance-spa
+      # Access tokens only, with this audience (the realm's audience mapper
+      # on finance-spa adds it).
+      OIDC_AUDIENCE: finance-api
       # Keycloak groups of the four Finance roles (realm-conservices.json).
       FINANCE_ADMIN_GROUPS: finance_admin
       FINANCE_APPROVER_GROUPS: finance_approver
@@ -484,6 +486,9 @@ services:
         NGINX_CONF: nginx.stack.conf
         FINANCE_VERSION: dev
     container_name: conservices-finance-frontend
+    environment:
+      # Content Security Policy: the browser may talk to the dev Keycloak.
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/finance.json:/etc/conservices/config.json:ro
