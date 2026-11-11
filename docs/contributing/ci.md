@@ -483,7 +483,10 @@ on every change to `deploy/`, `docs/`, `mkdocs.yml` or the workflows:
   annotation `conservices.io/den-major` equal to its MAJOR, and image tags
   in `values.yaml` of the form `<version>-BUILD`. On a pull request, every
   chart whose files changed must also have a higher `version` than on the
-  target branch; charts that did not change are not touched. A module
+  target branch; charts that did not change are not touched, and neither
+  are charts of apps without a release tag `<app>/v*` yet (before its
+  first release a chart may change while staying at its first version;
+  the check reads the tags, so the job checks out with `fetch-depth: 0`). A module
   chart whose MAJOR differs from the Den chart's gives a warning only
   (expected during a Den MAJOR transition);
 - `helm lint --strict` and `helm template` for every chart in
@@ -545,6 +548,7 @@ python3 scripts/check-chart-versions.py --base origin/main
 
 ```text
 hr: 1.12.0 -> 1.12.1
+wiki: not released yet (no tag wiki/v*), version bump not required
 den: 1.0.0
 hr: 1.12.1
 ...

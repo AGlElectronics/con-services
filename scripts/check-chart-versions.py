@@ -14,6 +14,7 @@ its chart is versioned with it. For every chart (or only the one named by
       every chart
   python3 scripts/check-chart-versions.py --base origin/main
       also: a chart changed since that ref must have a higher version
+      (only once the app has a release tag <app>/v*; needs the tags)
   python3 scripts/check-chart-versions.py --tag hr/v1.12.1
       a release tag: only that chart, and its version must equal the tag
   python3 scripts/check-chart-versions.py --tag hr/v1.12.1 --list-images
@@ -90,14 +91,26 @@ def git(*args):
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
 
 
+def released(name):
+    """Whether the app has a chart release tag <name>/v* yet."""
+    return bool(git("tag", "--list", f"{name}/v*").split())
+
+
 def check_bumps(charts_dir, base, versions, errors):
-    """A chart changed since `base` must have a higher version than at `base`."""
+    """A chart changed since `base` must have a higher version than at `base`.
+
+    Charts of apps without a release tag <app>/v* are skipped: before its
+    first release a chart may change while staying at its first version.
+    """
     changed = git("diff", "--name-only", f"{base}...HEAD", "--", charts_dir.as_posix()).split()
     names = sorted({pathlib.PurePosixPath(p).parts[len(charts_dir.parts)] for p in changed
                     if len(pathlib.PurePosixPath(p).parts) > len(charts_dir.parts) + 1})
     for name in names:
         if name not in versions:
             continue  # removed, or already reported
+        if not released(name):
+            print(f"{name}: not released yet (no tag {name}/v*), version bump not required")
+            continue
         try:
             old_meta = yaml.safe_load(git("show", f"{base}:{charts_dir.as_posix()}/{name}/Chart.yaml")) or {}
         except subprocess.CalledProcessError:

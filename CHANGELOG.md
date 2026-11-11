@@ -198,6 +198,45 @@ led by Den's MAJOR; see
   `FINANCE_S3_BUCKET`, `FINANCE_S3_ACCESS_KEY_ID` and
   `FINANCE_S3_SECRET_ACCESS_KEY` (without them Finance received
   `S3_ENDPOINT` alone and refused to start).
+
+### Changed
+
+- Shared Go code: `authbase` and `denlink` read `APP_ENV` the same way
+  (trimmed, any case, `production` when unset), through the new
+  `NormalizeAppEnv` in each package. `APP_ENV=Development` now counts as
+  development in `denlink` too, and `denlink.FromEnv` reports an unset
+  `APP_ENV` as `production` instead of an empty value.
+- Shared Go code: the `authbase` rate limiter counts IPv6 clients per
+  `/64` network (`authbase.ClientIP` returns keys such as
+  `ip:2001:db8:1:2::/64`), so a client cannot dodge the limit by switching
+  addresses inside its own network. IPv4 clients are still counted per
+  address.
+- Nginx security headers: new `shared/nginx/security-headers.conf.template`
+  that the official nginx image fills in at start-up from
+  `KEYCLOAK_ORIGIN`, `DEN_ORIGIN`, `S3_ORIGIN` and `EXTRA_CONNECT_SRC`, so
+  one frontend image works for any domain. Both forms of the snippet now
+  allow an S3 storage origin (`connect-src` and `img-src`) for apps that
+  upload straight from the browser. The docs explain the Dockerfile lines,
+  why the snippet goes into each serving `location` and never at `server`
+  level or into `/api/` (two Content Security Policies), moving inline
+  scripts into files, and Stash's `camera=(self)`
+  ([Shared code](docs/concepts/shared-code.md#nginx-security-headers)).
+- Keycloak development realms: every web app client has an audience mapper
+  that adds its API to its access tokens (`den-api`, `hr-api`,
+  `stash-api`, `events-api`, `learn-api`, `finance-api`, `desk-api`,
+  `tasks-api`, `wiki-api`, and `events-public-api` on `rally-submit` in
+  the `attendees` realm). ID tokens are unchanged, so modules that still
+  send ID tokens keep working. `infra/keycloak/apply-mvp.sh` adds the
+  mappers to existing development realms. A running production realm
+  needs them added by hand before a module that checks its audience is
+  upgraded ([Audiences per API](docs/concepts/authentication.md#audiences-per-api)).
+- CI *Chart versions*: a changed chart needs a higher version only once
+  its app has a chart release tag `<app>/v*`; before the first release a
+  chart may change while staying at its first version.
+- [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
+  notes that a module needs an ESLint configuration when its frontend has a
+  `lint` script, because the module CI runs `npm run lint`.
+
 ### Security
 
 - Default-deny NetworkPolicies in every namespace with an explicit allow

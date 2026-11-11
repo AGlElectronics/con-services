@@ -78,7 +78,7 @@ handlers and `RequirePaired`), plus:
 
 | Addition | Use |
 | --- | --- |
-| `denlink.FromEnv(slug, version, os.Getenv) (Config, error)` | Read every setting; fails without `DEN_LINK_ENCRYPTION_KEY` outside `APP_ENV=development`. |
+| `denlink.FromEnv(slug, version, os.Getenv) (Config, error)` | Read every setting; fails without `DEN_LINK_ENCRYPTION_KEY` outside `APP_ENV=development`. `Config.AppEnv` is normalised (`denlink.NormalizeAppEnv`): trimmed, lower-cased, `production` when unset. |
 | `denlink.Open(pool, cfg, log) (*Client, error)` | `New` that returns the configuration error, so the backend refuses to start. `New` still works; then `Restore` and `Pair` return the error. |
 | `client.Revoked() bool`, `Status.Revoked`, `State.Revoked` | Den rejected the credential; an admin must pair again. |
 | `denlink.ErrRevoked` | What `Sync` and the preferences calls return after a `401` from Den. |
@@ -92,10 +92,11 @@ What changes in the module's API is on [Pairing](pairing.md#the-den-connection-a
 | Function | Use |
 | --- | --- |
 | `authbase.FromEnv(os.Getenv) (Config, error)` | `AUTH_MODE` (default `oidc`) and `APP_ENV` (default `production`); fails for `AUTH_MODE=dev` unless `APP_ENV=development`. |
+| `authbase.NormalizeAppEnv(s)` | How `APP_ENV` is read: trimmed, lower-cased, empty is `production`. `denlink.NormalizeAppEnv` is an identical copy. |
 | `cfg.AllowedHeaders(extra...)`, `cfg.CORS(CORSOptions)` | CORS: `X-Dev-User` and `X-Dev-Groups` are allowed only in dev mode. |
 | `cfg.StripDevHeaders(next)` | Middleware that deletes the dev headers from every request outside dev mode. |
 | `authbase.DecodeJSON(w, r, &dst, DecodeOptions{MaxBytes, DisallowUnknownFields, RequireJSONContentType})` | Decode a request body with `http.MaxBytesReader` (default 1 MiB). Errors are `413 request_too_large`, `415 unsupported_media_type` or `400 bad_request`; write them with `authbase.WriteDecodeError`. |
-| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. |
+| `authbase.NewRateLimiter(RateLimitOptions{Rate, Burst, Key})`, `.Middleware` | An in-memory token bucket per client IP (`authbase.ClientIP`: each IPv4 address on its own, IPv6 addresses per `/64` network, since one home or phone usually holds a whole `/64`) or per person (`authbase.BySubject`). Answers `429 rate_limited` with `Retry-After`. Each replica counts on its own. `authbase.ParseRate("60/m")` reads a rate from a setting. |
 | `authbase.SecurityHeaders(next)` | `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` on every API response. |
 | `authbase.UserKey{Issuer, Subject}` | A person's identity across Con Services (`iss` + `sub`), with `String`, `ParseUserKey` and `IsZero`. |
 
@@ -134,7 +135,7 @@ lists the same rows on its own configuration page.
 
 | Variable | Default | Required | Package | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `production` | no | `authbase`, `denlink` | Only `development` relaxes the rules: allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to the development hosts. Anything else counts as production. |
+| `APP_ENV` | `production` | no | `authbase`, `denlink` | Only `development` relaxes the rules: allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to the development hosts. Anything else counts as production. Both packages trim spaces and ignore case the same way (`NormalizeAppEnv`), so ` Development ` is `development`. |
 | `AUTH_MODE` | `oidc` | no | `authbase` | `oidc` verifies Keycloak tokens. `dev` trusts `X-Dev-User`/`X-Dev-Groups` and is refused unless `APP_ENV=development`. |
 | `OIDC_GROUPS_CLAIM` | `groups` | no | `groupmatch` | The token claim that holds the person's groups. `roles` is never read in addition. A dotted name such as `realm_access.roles` is followed into nested objects when no claim has that exact name. |
 | `OIDC_GROUP_MATCH` | `full` | no | `groupmatch` | `full`: the whole group path must match. `last`: only the last path segment is compared. |
@@ -260,6 +261,19 @@ defaults to `AUTH_MODE=oidc` and `APP_ENV=production`; the module's
 explicitly), mount `StripDevHeaders` and `SecurityHeaders` first on the API
 router, and use `DecodeJSON` for request bodies.
 
+**Frontend lint (every module)**: the shared module CI runs
+`npm run --if-present lint` in the frontend folder, so a module whose
+`package.json` has a `lint` script must also have an ESLint configuration
+(`eslint.config.js`, the flat config of ESLint 9). Without one the job
+stops with `ESLint couldn't find an eslint.config.(js|mjs|cjs) file`.
+Check it locally before pushing:
+
+```sh
+cd frontend
+npm ci
+npm run lint
+```
+
 **gworkspace**: mount the key file from a Secret, add the three settings,
 and add a NetworkPolicy egress rule to `oauth2.googleapis.com`,
 `admin.googleapis.com` and `gmail.googleapis.com` on port 443 (with a row on
@@ -330,27 +344,173 @@ every package into a scratch module that must build and pass its tests.
 
 ## Nginx security headers
 
-The web apps' nginx gets its headers from one snippet,
-`shared/nginx/security-headers.conf`: a Content Security Policy
-(`default-src 'self'`, with placeholders for the Keycloak and Den origins),
-`X-Frame-Options: DENY` and `frame-ancestors 'none'`, `nosniff`,
+The nginx that serves each web app (the React frontend) sends the same
+browser security headers: a **Content Security Policy** (CSP, the list of
+places the page may load scripts, images and data from:
+`default-src 'self'`, `script-src 'self'`, `frame-ancestors 'none'`),
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: strict-origin-when-cross-origin` and a
-`Permissions-Policy`. HSTS is set at the Gateway or Caddy, not here. The
-comments in the file say how to fill in the placeholders and where to
-`include` it; nginx forgets inherited `add_header` lines in every
-`location` that has its own, so include it there too. Check the result:
+`Permissions-Policy`. HSTS is set at the Gateway or Caddy, not here, and
+API responses get their own stricter headers from the backend
+(`authbase.SecurityHeaders`).
 
-```sh
-curl -sI https://hr.conservices.test/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
-```
+The headers come in two forms in `shared/nginx/`:
+
+| File | Use |
+| --- | --- |
+| `security-headers.conf.template` | **Preferred.** The origins are environment variables that the official nginx image fills in when the container starts, so one image works for any domain. |
+| `security-headers.conf` | The same headers with placeholders you replace by hand, for an app whose origins are fixed at build time. |
+
+The CSP allows these origins besides the app itself. Each is scheme, host
+and optional port, no path (`https://auth.con.example.org`); several are
+separated by spaces; an empty value leaves the origin out.
+
+| Variable | What it is | Where it appears in the CSP |
+| --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | The sign-in server (for Rally's submission site, the attendee realm's server). | `connect-src`, `frame-src` (silent token renewal), `form-action` |
+| `DEN_ORIGIN` | Den, when the browser calls Den or loads assets from it. Most apps leave it empty: they serve Den's brand through their own API. | `connect-src` |
+| `S3_ORIGIN` | The S3 storage, for apps whose browser uploads files straight to a bucket (presigned URLs) or shows images from it. | `connect-src`, `img-src` |
+| `EXTRA_CONNECT_SRC` | Anything else the browser must call. | `connect-src` |
+
+### Use the template in a web app
+
+1. Copy `shared/nginx/security-headers.conf.template` into the app, for
+   example to `infra/security-headers.conf.template`.
+2. In the frontend Dockerfile, put it into the image's template folder and
+   tell the image where to write the result. The official `nginx` and
+   `nginxinc/nginx-unprivileged` images run `envsubst` at start-up on every
+   `/etc/nginx/templates/*.template` file and write it, without the
+   `.template` suffix, to `NGINX_ENVSUBST_OUTPUT_DIR`. The filter limits the
+   substitution to the four variables, so nginx's own `$uri` and the like
+   are left alone; the empty defaults keep an unset variable from ending up
+   in the policy as literal text.
+
+    ```dockerfile
+    FROM nginxinc/nginx-unprivileged:1.30.6-alpine
+    COPY infra/nginx.conf /etc/nginx/conf.d/default.conf
+    COPY infra/security-headers.conf.template /etc/nginx/templates/security-headers.conf.template
+    USER root
+    # A copy without outside origins, used when /etc/nginx/snippets is read-only.
+    RUN mkdir -p /etc/nginx/snippets \
+     && sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/security-headers.conf.template \
+          > /etc/nginx/snippets/security-headers.conf \
+     && chown -R 101:101 /etc/nginx/snippets
+    USER 101
+    ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/snippets \
+        NGINX_ENVSUBST_FILTER='^(KEYCLOAK_ORIGIN|DEN_ORIGIN|S3_ORIGIN|EXTRA_CONNECT_SRC)$' \
+        KEYCLOAK_ORIGIN="" \
+        DEN_ORIGIN="" \
+        S3_ORIGIN="" \
+        EXTRA_CONNECT_SRC=""
+    ```
+
+3. Include the snippet in **every `location` that serves the app**, not
+   at `server` level, and not in the `location /api/` that proxies to the
+   backend. nginx drops inherited `add_header` lines in a `location` that
+   has its own, so each serving `location` needs the `include`; and a
+   `server`-level include would also be inherited by `/api/`, which would
+   then send two Content Security Policies (the backend's and the app's).
+
+    ```nginx
+    location /api/ {
+        proxy_pass http://backend;   # no include: the backend sets its headers
+    }
+
+    location = /config.json {
+        alias /etc/conservices/config.json;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+    ```
+
+4. **Move inline scripts into files.** `script-src 'self'` blocks every
+   `<script>…</script>` written into `index.html` or `silent-callback.html`
+   (for example a theme initialiser). Put the code into a file under
+   `public/` and load it with `<script src="/theme-init.js"></script>`.
+5. **Stash only:** Stash scans barcodes with the camera, so its copy says
+   `camera=(self)` in `Permissions-Policy`. Every other app keeps
+   `camera=()`.
+6. Set the variables on the frontend container. With a read-only root file
+   system on Kubernetes, mount an `emptyDir` at `/etc/nginx/snippets` so
+   the start-up step can write the file.
+
+    === "Docker Compose"
+
+        ```yaml
+        rally-frontend:
+          environment:
+            KEYCLOAK_ORIGIN: https://auth.conservices.test
+            S3_ORIGIN: https://s3.conservices.test
+        ```
+
+    === "Kubernetes"
+
+        ```yaml
+        env:
+          - name: KEYCLOAK_ORIGIN
+            value: https://auth.con.example.org
+          - name: S3_ORIGIN
+            value: https://s3.con.example.org
+        volumeMounts:
+          - name: nginx-snippets
+            mountPath: /etc/nginx/snippets
+        # volumes: - name: nginx-snippets
+        #            emptyDir: {}
+        ```
+
+7. Check the result:
+
+    ```sh
+    curl -sI https://events.conservices.test/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+    ```
+
+    ```text
+    content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.conservices.test; font-src 'self' data:; connect-src 'self' https://auth.conservices.test   https://s3.conservices.test ; frame-src 'self' https://auth.conservices.test; frame-ancestors 'none'; form-action 'self' https://auth.conservices.test; base-uri 'self'; object-src 'none'
+    x-frame-options: DENY
+    x-content-type-options: nosniff
+    referrer-policy: strict-origin-when-cross-origin
+    permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+    ```
+
+    The extra spaces left by empty variables are harmless. `curl -sI
+    https://events.conservices.test/api/health` must show the backend's
+    `default-src 'none'` policy **only**.
+
+The container log shows the start-up step:
 
 ```text
-content-security-policy: default-src 'self'; script-src 'self'; … frame-ancestors 'none'; …
-x-frame-options: DENY
-x-content-type-options: nosniff
-referrer-policy: strict-origin-when-cross-origin
-permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/security-headers.conf.template to /etc/nginx/snippets/security-headers.conf
 ```
+
+#### Troubleshooting the headers
+
+**The browser console says *Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self'"***
+: An inline `<script>` is left in an HTML file. Move it into a file
+  (step 4).
+
+**Sign-in or uploads fail with *Refused to connect to 'https://…'***
+: The origin is missing from `connect-src`. Set `KEYCLOAK_ORIGIN`,
+  `S3_ORIGIN` or `EXTRA_CONNECT_SRC` on the frontend container and
+  restart it.
+
+**The policy contains `${S3_ORIGIN}` literally**
+: The variable is not defined in the container and has no empty default.
+  Add the `ENV … S3_ORIGIN=""` defaults from step 2.
+
+**The log says `/etc/nginx/templates exists, but /etc/nginx/snippets is not writable`**
+: The root file system is read-only. Mount an `emptyDir` at
+  `/etc/nginx/snippets` (step 6). Until then nginx uses the copy baked
+  into the image, which allows no outside origins.
+
+**API responses carry two `Content-Security-Policy` headers**
+: The snippet is included at `server` level or in `location /api/`. Include
+  it only in the locations that serve the app (step 3).
 
 ## Google Workspace service account
 

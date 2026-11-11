@@ -1,5 +1,5 @@
 #!/bin/bash
-# Patch an already-imported conservices realm (import-realm skips existing realms).
+# Patch already-imported conservices and attendees realms (import-realm skips existing realms).
 # Run: docker exec conservices-keycloak bash /opt/keycloak/data/import/apply-mvp.sh
 set -euo pipefail
 KC=/opt/keycloak/bin/kcadm.sh
@@ -231,6 +231,38 @@ if ! $KC get groups -r conservices -q search=den-member --fields name --format c
     $KC update "users/$uid/groups/$MEMBER_GID" -r conservices -s realm=conservices -s userId="$uid" -s groupId="$MEMBER_GID" -n
   done
 fi
+
+# Token contract: each web app's access tokens name its own API in "aud"
+# (an audience mapper per client). ID tokens are not changed, so backends
+# that still take ID tokens keep working. The list is on
+# docs/concepts/authentication.md (Audiences per API). Idempotent.
+audience_mapper() {
+  local realm=$1 client=$2 aud=$3 id names
+  id=$($KC get clients -r "$realm" -q clientId="$client" --fields id --format csv --noquotes 2>/dev/null | tail -n1 || true)
+  [ -n "$id" ] || return 0
+  names=$($KC get "clients/$id/protocol-mappers/models" -r "$realm" --fields name --format csv --noquotes)
+  if printf '%s\n' "$names" | grep -qx "audience $aud"; then
+    return 0
+  fi
+  $KC create "clients/$id/protocol-mappers/models" -r "$realm" \
+    -s "name=audience $aud" \
+    -s protocol=openid-connect \
+    -s protocolMapper=oidc-audience-mapper \
+    -s "config.\"included.custom.audience\"=$aud" \
+    -s 'config."id.token.claim"=false' \
+    -s 'config."access.token.claim"=true' \
+    -s 'config."introspection.token.claim"=true'
+}
+audience_mapper conservices den-spa den-api
+audience_mapper conservices hr-spa hr-api
+audience_mapper conservices stash-spa stash-api
+audience_mapper conservices events-spa events-api
+audience_mapper conservices learn-spa learn-api
+audience_mapper conservices finance-spa finance-api
+audience_mapper conservices desk-spa desk-api
+audience_mapper conservices tasks-spa tasks-api
+audience_mapper conservices wiki-spa wiki-api
+audience_mapper attendees rally-submit events-public-api
 
 # Declare the attributes HR mirrors (undeclared attributes are dropped).
 $KC update users/profile -r conservices -f /opt/keycloak/data/profile/user-profile.json

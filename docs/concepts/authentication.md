@@ -111,7 +111,9 @@ until then they work as described above.
    whose audience (`aud`) names its own API (for example `hr-api`), not the
    ID token. Keycloak adds the audience with an *audience mapper* on the
    app's client; the backend checks it through `OIDC_AUDIENCE`. A token for
-   HR is then refused by Stash, and an ID token is refused everywhere.
+   HR is then refused by Stash, and an ID token is refused everywhere. The
+   name per API and who adds the mappers are in
+   [Audiences per API](#audiences-per-api).
 2. **Tokens only in memory.** The web app keeps tokens in memory (in
    `oidc-client-ts`, an `InMemoryWebStorage` user store), never in
    `localStorage` or `sessionStorage`, so a script injected into the page
@@ -127,6 +129,82 @@ until then they work as described above.
    Den's client in `OIDC_EXTRA_AUDIENCES` or Den's address in
    `CORS_ALLOWED_ORIGINS` for to-dos. The details of the credential are
    decided in Den's ADR when it is implemented.
+
+#### Audiences per API
+
+An **audience mapper** is a Keycloak setting on a client that adds a name
+to the `aud` claim of the tokens Keycloak issues to that client. Each web
+app's client gets exactly one, naming the app's own API; the mapper writes
+to the **access token only**, so ID tokens keep their old audience (the
+client id) and backends that still take ID tokens are not affected.
+
+| App | Web app client (realm) | Audience its access tokens carry | Backend setting that checks it |
+| --- | --- | --- | --- |
+| Den | `den-spa` (`conservices`) | `den-api` | `OIDC_AUDIENCE=den-api` |
+| HR | `hr-spa` (`conservices`) | `hr-api` | `OIDC_AUDIENCE=hr-api` |
+| Stash | `stash-spa` (`conservices`) | `stash-api` | `OIDC_AUDIENCE=stash-api` |
+| Rally, staff app | `events-spa` (`conservices`) | `events-api` | `OIDC_AUDIENCE` (default `events-api`) |
+| Rally, submission site | `rally-submit` (`attendees`) | `events-public-api` | `ATTENDEE_OIDC_AUDIENCE` (default `events-public-api`) |
+| Learn | `learn-spa` (`conservices`) | `learn-api` | `OIDC_AUDIENCE=learn-api` |
+| Finance | `finance-spa` (`conservices`) | `finance-api` | `OIDC_AUDIENCE=finance-api` |
+| Desk | `desk-spa` (`conservices`) | `desk-api` | `OIDC_AUDIENCE=desk-api` |
+| Tasks | `tasks-spa` (`conservices`) | `tasks-api` | `OIDC_AUDIENCE=tasks-api` |
+| Wiki | `wiki-spa` (`conservices`) | `wiki-api` | `OIDC_AUDIENCE=wiki-api` |
+
+The names follow `<module>-api`; Rally keeps the `events` name of its
+client and host. A client never gets another app's audience: Den's web app
+needs only `den-api`, because no user token leaves Den (portal to-dos are
+fetched by Den's backend, point 3 above). A module's backend switches to
+access tokens and its new `OIDC_AUDIENCE` in the module's own release; its
+changelog says so.
+
+**Who adds the mappers: the realm, not the modules.**
+
+- **Development:** the realm files `infra/keycloak/realm-conservices.json`
+  and `infra/keycloak/realm-attendees.json` have the mappers, so a fresh
+  Docker stack gets them. A stack whose realms already exist gets them from
+  `infra/keycloak/apply-mvp.sh` (idempotent):
+
+    ```sh
+    docker exec conservices-keycloak bash /opt/keycloak/data/import/apply-mvp.sh
+    ```
+
+    ```text
+    Created new model with id '…'
+    …
+    conservices MVP patch applied
+    ```
+
+- **Production:** the realm imports in the GitOps repository
+  (`charts/keycloak/templates/realm-*.yaml`) are generated from those
+  development files by `bootstrap/scripts/keycloak-realm.py`, which copies
+  protocol mappers unchanged. Maintainers of the GitOps template
+  regenerate them so new installations get the mappers
+  ([Identity: the realms](../deploy/identity.md#the-realms)). Keycloak
+  imports a realm only once, so a **running** installation adds each mapper
+  by hand before the module that needs it is upgraded: in the admin
+  console, **conservices → Clients → hr-spa → Client scopes →
+  hr-spa-dedicated → Configure a new mapper → Audience**, name
+  `audience hr-api`, *Included Custom Audience* `hr-api`, *Add to ID token*
+  **off**, *Add to access token* **on**. Do the same for `rally-submit` in
+  the `attendees` realm with `events-public-api`.
+
+Check an access token (the password grant works on the development realm
+only):
+
+```sh
+TOKEN=$(curl -s -d grant_type=password -d client_id=hr-spa -d username=admin -d password=adminadmin \
+  https://auth.conservices.test/realms/conservices/protocol/openid-connect/token | jq -r .access_token)
+python3 -c 'import base64,json,sys; p=sys.argv[1].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["aud"]))' "$TOKEN"
+```
+
+```text
+["hr-api", "account"]
+```
+
+A token without the expected audience is refused with `401`
+`{"error":{"code":"unauthorized","message":"invalid token"}}`: add the
+mapper (above), sign out and in again.
 
 ### What Den's backend checks
 
