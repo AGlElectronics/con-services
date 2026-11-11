@@ -105,7 +105,8 @@ This changes with the [token contract](#tokens-the-10-contract) below.
 
 The way web apps hold and send tokens is being tightened for 1.0. Den and
 each module adopt it in their own release (their changelogs say when);
-until then they work as described above.
+until then they work as described above. Finance follows points 1 and 2
+from its first release, 1.0.0 ([Finance API: authentication](../modules/finance/api.md#authentication-and-roles)).
 
 1. **An access token per API.** Each web app sends an **access token**
    whose audience (`aud`) names its own API (for example `hr-api`), not the
@@ -465,7 +466,8 @@ curl -H "X-Dev-User: alice" http://localhost:8090/api/v1/me
 ### Defaults: AUTH_MODE and APP_ENV
 
 From the release in which a backend adopts the shared package `authbase`
-([Shared code](shared-code.md)), the defaults are safe:
+([Shared code](shared-code.md)), the defaults are safe (Finance: from
+1.0.0):
 
 | Setting | Default | Rule |
 | --- | --- | --- |

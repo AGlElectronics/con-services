@@ -280,6 +280,14 @@ led by Den's MAJOR; see
 - [Shared code](docs/concepts/shared-code.md#what-adopting-a-package-involves)
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
+- Docker Compose: `finance-backend` checks access tokens with the audience
+  `finance-api` (`OIDC_AUDIENCE`), as Finance follows the token contract,
+  and `finance-frontend` sets `KEYCLOAK_ORIGIN=https://auth.conservices.test`
+  for its Content Security Policy. A dev realm created before the audience
+  mappers needs `infra/keycloak/apply-mvp.sh` once, or Finance answers
+  `401 invalid token`.
+- `scripts/smoke-finance.ps1` signs in with the access token instead of the
+  ID token.
 
 ### Security
 

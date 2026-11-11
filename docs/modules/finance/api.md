@@ -40,27 +40,41 @@ In the examples ([how to get a token](../../concepts/api-conventions.md#get-a-to
 
 ```sh
 export FIN=https://finance.example.org
-export TOKEN=eyJhbGciOi...   # ID token from Keycloak for the client finance-spa (see below)
+export TOKEN=eyJhbGciOi...   # access token from Keycloak for the client finance-spa (see below)
 ```
 
 ## Authentication and roles
 
 | Caller | How | Accepted on |
 | --- | --- | --- |
-| Staff (production, `AUTH_MODE=oidc`) | `Authorization: Bearer <ID token>` from Keycloak, client `finance-spa`, verified against `OIDC_ISSUER_URL` | everything under `/api/` except the role catalog, brand and Den state |
-| Local development (`AUTH_MODE=dev`, the default) | `X-Dev-User: <name>` and `X-Dev-Groups: <groups>`, or nothing (`DEV_DEFAULT_USER`, `DEV_DEFAULT_GROUPS`) | the same routes |
-| Anyone | nothing | `/livez`, `/readyz`, `/api/role-catalog`, `/api/brand…`, `/api/den/state` |
+| Staff (production, `AUTH_MODE=oidc`, the default) | `Authorization: Bearer <access token>` from Keycloak, client `finance-spa`, with `finance-api` in its audience, verified against `OIDC_ISSUER_URL` | everything under `/api/` except brand and Den state |
+| HR | `Authorization: Bearer <HR_SERVICE_TOKEN>` | `/api/role-catalog` only |
+| Local development (`AUTH_MODE=dev`, only with `APP_ENV=development`) | `X-Dev-User: <name>` and `X-Dev-Groups: <groups>`, or nothing (`DEV_DEFAULT_USER`, `DEV_DEFAULT_GROUPS`) | the same routes as staff |
+| Anyone | nothing | `/livez`, `/readyz`, `/api/brand…`, `/api/den/state` |
 
-!!! note "Token type: ID token today"
-    Finance currently checks an **OpenID Connect ID token** whose audience is
-    `finance-spa` (`OIDC_AUDIENCE`), which is what the web app sends. A
-    Keycloak *access* token is refused with `401 invalid token`. Accepting
-    access tokens is planned for the whole suite at once; until then scripts
-    send the `id_token` field of Keycloak's token answer.
+!!! note "Token type: access tokens with the audience `finance-api`"
+    Finance follows the [token contract](../../concepts/authentication.md#tokens-the-10-contract):
+    it accepts only a Keycloak **access token** whose audience (`aud`)
+    contains `finance-api` (`OIDC_AUDIENCE`). Keycloak adds that audience
+    with the audience mapper on the `finance-spa` client
+    ([Audiences per API](../../concepts/authentication.md#audiences-per-api)).
+    An **ID token**, or an access token meant for another module, is
+    refused with `401 invalid token`. Scripts send the `access_token` field
+    of Keycloak's token answer. The web app keeps its tokens in memory only.
 
-Your token's `groups` claim decides your **roles** (a leading `/` and letter
-case are ignored); the [Configuration](configuration.md#roles) page says
-how groups map to roles. Each route checks one **permission**:
+    ```sh
+    TOKEN=$(curl -s -d grant_type=password -d client_id=finance-spa -d scope=openid \
+      -d username=bob -d password=bobbob \
+      https://auth.conservices.test/realms/conservices/protocol/openid-connect/token | jq -r .access_token)
+    ```
+
+    The password grant works on the development realm only (dev-only
+    password); in production get a token through the sign-in page.
+
+Your token's groups claim (`OIDC_GROUPS_CLAIM`, default `groups`; Keycloak
+`roles` are never merged in) decides your **roles**; the
+[Configuration](configuration.md#roles) page says how groups map to roles.
+Each route checks one **permission**:
 
 | Permission | Roles | Allows |
 | --- | --- | --- |
@@ -78,9 +92,31 @@ get in.
 
 !!! danger "Dev mode lets anyone claim any role"
     With `AUTH_MODE=dev` every caller is whoever `X-Dev-User` says, with the
-    groups `X-Dev-Groups` says. `AUTH_MODE` defaults to `dev`, so production
-    **must** set `AUTH_MODE=oidc`. See [Configuration](configuration.md) and
-    [Authentication](../../concepts/authentication.md).
+    groups `X-Dev-Groups` says. That is why the backend refuses to start with
+    `AUTH_MODE=dev` unless `APP_ENV=development`, and deletes the two headers
+    from every request in `oidc` mode. See [Configuration](configuration.md)
+    and [Authentication](../../concepts/authentication.md).
+
+## Limits
+
+- **Request bodies** are at most 1 MiB; a larger one is refused with
+  `413 request_too_large` before it is read.
+- **Rate limit:** each signed-in person (signed out: each address, IPv6 per
+  `/64`) may make `API_RATE_LIMIT` requests (default `300/m`, bursts of
+  `API_RATE_BURST`, default `60`). Over it:
+
+    ```text
+    HTTP/1.1 429 Too Many Requests
+    Retry-After: 2
+    Content-Type: application/json
+
+    {"error":{"code":"rate_limited","message":"Too many requests; try again in 2 seconds."}}
+    ```
+
+- **Response headers:** every API answer carries
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `X-Frame-Options: DENY` and
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`.
 
 ## Idempotency keys
 
@@ -135,7 +171,7 @@ before it is stored, and again when it is approved.
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, unknown field, empty body, bad id, bad `limit`/`offset`, unknown `status` filter. |
 | 400 | `idempotency_key_required` | A create or payment request without `Idempotency-Key`. |
-| 401 | `unauthorized` | `missing bearer token` or `invalid token` (including an access token instead of an ID token). |
+| 401 | `unauthorized` | `missing bearer token` or `invalid token` (including an ID token, or an access token without the audience `finance-api`). |
 | 403 | `forbidden` | No Finance role, or a role without the route's permission. |
 | 403 | `approver_is_requester` | Approving your own request. |
 | 404 | `not_found` | `customer not found`, `invoice not found`, `credit note not found`, `expense not found`, `approval not found`. |
@@ -143,11 +179,14 @@ before it is stored, and again when it is approved.
 | 409 | `period_closed` | A date in a closed month: `2026-10 is closed; an admin must reopen it first`. |
 | 422 | `validation_failed` | Field problems; `details` maps field to problem. |
 | 422 | `idempotency_key_reused` | The key was used before for a different request. |
+| 413 | `request_too_large` | A request body over 1 MiB. |
+| 429 | `rate_limited` | Over `API_RATE_LIMIT`; wait for `Retry-After` seconds. |
 | 503 | `storage_unavailable` | Issuing while S3 is not configured or not reachable; nothing was issued. Downloading a PDF while S3 is down. |
 | 500 | `internal` | Unexpected failure, including a stored PDF that no longer matches its SHA-256; see the backend log with the request id. |
 
-The Den pairing routes add `pairing_failed` (422) and `sync_failed` (409 when
-not paired, 502 when Den cannot be reached).
+The Den pairing routes add `pairing_failed` (422), `sync_failed` (409 when
+not paired, 502 when Den cannot be reached) and `den_credential_revoked`
+(409 when Den rejected Finance's credential; pair again).
 
 ## Endpoint overview
 
@@ -155,7 +194,7 @@ not paired, 502 when Den cannot be reached).
 | --- | --- | --- | --- |
 | 1 | GET | `/livez` | anyone |
 | 2 | GET | `/readyz` | anyone |
-| 3 | GET | `/api/role-catalog` | anyone (HR) |
+| 3 | GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or signed in |
 | 4 | GET | `/api/brand` | anyone |
 | 5 | GET | `/api/brand/{role}` | anyone |
 | 6 | GET | `/api/den/state` | anyone |
@@ -234,27 +273,55 @@ when the database cannot be reached.
 
 ### `GET /api/role-catalog`
 
-Anyone; HR reads it to offer Finance's roles in its access picker. `group`
-is the first group configured for the role (`FINANCE_*_GROUPS`), which is
-the one HR adds people to.
+HR's service token (`Authorization: Bearer <HR_SERVICE_TOKEN>`) or any
+staff sign-in (no Finance role needed); otherwise `401`
+`authentication required`. HR reads it to offer Finance's roles in its
+access picker. The answer follows the
+[role catalog contract](../../concepts/role-catalog.md) 1.0:
+
+| Field | Meaning |
+| --- | --- |
+| `revision` | Changes whenever the list changes; also sent as the `ETag`. Send it back in `If-None-Match` to get `304 Not Modified` while nothing changed. |
+| `group` | The first group configured for the role (`FINANCE_*_GROUPS`) in its stored, normalised form; HR adds people to it. |
+| `group_display` | The same group as configured, for display. |
+| `privileged` | `true` for `finance_admin` and `finance_approver`: they change settings or release money. HR asks for extra confirmation before assigning them. |
+| `dynamic` | Always `false`: Finance's roles are fixed. |
+| `permissions` | What the role allows ([permissions above](#authentication-and-roles)). |
 
 ```sh
-curl -s --cacert /etc/conservices-internal-ca/ca.crt https://finance-backend.conservices-finance.svc.cluster.local:8080/api/role-catalog
+curl -s -i --cacert /etc/conservices-internal-ca/ca.crt \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN" \
+  https://finance-backend.conservices-finance.svc.cluster.local:8080/api/role-catalog
+```
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-cache
+Content-Type: application/json; charset=utf-8
+Etag: "122c7447222b253b"
 ```
 
 ```json
-{"module":"finance","display_name":"Finance","description":"Invoices and money tracking.",
+{"module":"finance","display_name":"Finance","description":"Invoices and money tracking.","revision":"122c7447222b253b",
  "roles":[
   {"key":"finance_admin","label":"Finance admin","description":"Everything a bookkeeper and an approver can do, plus reopening closed months, Finance settings and the Den connection.",
-   "group":"finance_admin","assignable":true,"scope":"global",
-   "permissions":["finance.read","finance.write","finance.approve","finance.audit","finance.admin"]},
+   "group":"finance_admin","group_display":"finance_admin","assignable":true,"default":false,"scope":"organization",
+   "privileged":true,"dynamic":false,"permissions":["finance.read","finance.write","finance.approve","finance.audit","finance.admin"]},
   {"key":"finance_approver","label":"Finance approver","description":"Approves or rejects voids, payments, expenses, credit notes and refunds requested by someone else, and closes months. Cannot record money itself.",
-   "group":"finance_approver","assignable":true,"scope":"global","permissions":["finance.read","finance.approve","finance.audit"]},
+   "group":"finance_approver","group_display":"finance_approver","assignable":true,"default":false,"scope":"organization",
+   "privileged":true,"dynamic":false,"permissions":["finance.read","finance.approve","finance.audit"]},
   {"key":"finance_bookkeeper","label":"Finance bookkeeper","description":"Keeps customers, invoices and expenses, and requests payments, voids, credit notes and refunds.",
-   "group":"finance_bookkeeper","assignable":true,"scope":"global","permissions":["finance.read","finance.write"]},
+   "group":"finance_bookkeeper","group_display":"finance_bookkeeper","assignable":true,"default":false,"scope":"organization",
+   "privileged":false,"dynamic":false,"permissions":["finance.read","finance.write"]},
   {"key":"finance_read-only","label":"Finance read-only","description":"Sees invoices, expenses, the ledger and the audit log; changes nothing. For accountants and auditors.",
-   "group":"finance_read-only","assignable":true,"scope":"global","permissions":["finance.read","finance.audit"]}],
- "source":"self","status":"ok"}
+   "group":"finance_read-only","group_display":"finance_read-only","assignable":true,"default":false,"scope":"organization",
+   "privileged":false,"dynamic":false,"permissions":["finance.read","finance.audit"]}]}
+```
+
+Without a token:
+
+```json
+{"error":{"code":"unauthorized","message":"authentication required"}}
 ```
 
 ## Brand and Den state
@@ -286,14 +353,23 @@ curl -s -o logo.png $FIN/api/brand/logo
 
 ### `GET /api/den/state`
 
-Anyone. Whether the backend waits for Den (`DEN_MODE`) and is paired.
+Anyone. Whether the backend waits for Den (`DEN_MODE`), is paired, and
+whether Den rejected its credential (`revoked`).
 
 ```sh
 curl -s $FIN/api/den/state
 ```
 
 ```json
-{"mode":"required","paired":true}
+{"mode":"required","paired":true,"revoked":false}
+```
+
+After Den rejected the credential (the module was removed in Den, or its
+credential revoked), Finance keeps its last settings from Den and the web
+app tells admins to pair again:
+
+```json
+{"mode":"required","paired":true,"revoked":true}
 ```
 
 ## You
@@ -1074,17 +1150,34 @@ log.
 
 ### `GET /api/den`
 
-```json
-{"paired":true,"den_base_url":"https://den-backend.conservices-den.svc.cluster.local:8080",
- "module_id":"3c9d…","paired_at":"2026-11-01T09:00:00Z","synced_at":"2026-11-06T11:55:00Z"}
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" $FIN/api/den/
 ```
 
-Unpaired: `{"paired":false}`. `last_error` appears when the last sync failed.
+```json
+{"paired":true,"den_base_url":"https://den-backend.conservices-den.svc.cluster.local:8080",
+ "module_id":"3c9d…","paired_at":"2026-11-01T09:00:00Z","synced_at":"2026-11-06T11:55:00Z","revoked":false}
+```
+
+Unpaired: `{"paired":false,"revoked":false}`. `last_error` appears when the
+last sync failed. After Den rejected the credential, `revoked` is `true`
+with the time in `revoked_at`; it stays so across restarts until an admin
+pairs again (`POST /api/den/pair` clears it):
+
+```json
+{"paired":true,"den_base_url":"https://den-backend.conservices-den.svc.cluster.local:8080",
+ "module_id":"3c9d…","paired_at":"2026-11-01T09:00:00Z","synced_at":"2026-11-06T11:55:00Z",
+ "last_error":"Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair",
+ "revoked":true,"revoked_at":"2026-11-10T22:42:00Z"}
+```
 
 ### `POST /api/den/pair`
 
 Body `{"pairing_url":"…"}` with the one-time link from Den's **Modules**
-page. `200` with the status; `422` `pairing_failed` with Den's reason.
+page. `200` with the status; `422` `pairing_failed` with Den's reason, or
+`pairing with Den at … is not allowed here` when the URL's host is neither
+`DEN_INTERNAL_URL` (which replaces it) nor in `DEN_ALLOWED_HOSTS`. Also the
+way to pair again after a revoked credential.
 
 ```sh
 curl -s -X POST $FIN/api/den/pair \
@@ -1095,7 +1188,12 @@ curl -s -X POST $FIN/api/den/pair \
 ### `POST /api/den/sync`
 
 Fetches brand and settings now. `200` with the status; `409` `sync_failed`
-when not paired; `502` when Den cannot be reached.
+when not paired; `409` `den_credential_revoked` when Den rejected the
+credential (pair again); `502` when Den cannot be reached.
+
+```json
+{"error":{"code":"den_credential_revoked","message":"Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair"}}
+```
 
 ### `DELETE /api/den/pair`
 
@@ -1105,7 +1203,9 @@ Forgets the pairing. `204`.
 
 | Symptom | Likely cause and fix |
 | --- | --- |
-| `401` `invalid token` with a token that works elsewhere | You sent a Keycloak **access** token; Finance checks the **ID token** (audience `finance-spa`) for now. Use the `id_token` of the token answer. |
+| `401` `invalid token` with a token that works elsewhere | You sent an **ID token**, or an access token for another module. Finance needs an access token with the audience `finance-api`: use the `access_token` of the token answer for the client `finance-spa`, and check that the client has the audience mapper ([Audiences per API](../../concepts/authentication.md#audiences-per-api)). |
+| `401` `authentication required` on `/api/role-catalog` | The catalog needs `HR_SERVICE_TOKEN` or a staff sign-in. Check that HR and Finance have the same `HR_SERVICE_TOKEN`. |
+| `429` `rate_limited` | Too many requests; wait `Retry-After` seconds, or raise `API_RATE_LIMIT` for scripts. |
 | `403` `you don't have access to Finance` | `GET /api/me` shows your `groups` and `roles`. Give the person a Finance role in HR (or add them to a group in `FINANCE_*_GROUPS`) and get a fresh token. If `groups` is empty, the Keycloak client is missing the groups mapper. |
 | `403` `this needs the permission finance.write` | Your role may not do that: approvers do not record money, bookkeepers do not approve. |
 | `403` `approver_is_requester` | Someone else with the approver role must approve it. |

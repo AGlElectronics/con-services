@@ -183,7 +183,7 @@ with each module's docs):
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
 | Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
-| Finance | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read and write on the PDF bucket; delete is not needed) | `conservices-finance` |
+| Finance | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read and write on the PDF bucket; delete is not needed), `DEN_LINK_ENCRYPTION_KEY` (required; see below), `HR_SERVICE_TOKEN` (optional, lets HR read the role catalog) | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
 
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
@@ -200,7 +200,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | Planned with the [role catalog contract](../concepts/role-catalog.md); not used by any release yet. Same value on every side; allows only catalog reads. |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | The [role catalog contract](../concepts/role-catalog.md). Finance reads it from its first release (`finance-secrets`); other modules when they adopt the contract. Same value on every side; allows only catalog reads. |
 
 ### Den link encryption key
 

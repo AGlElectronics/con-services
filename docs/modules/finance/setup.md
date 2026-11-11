@@ -18,7 +18,8 @@ The Argo CD path installs Finance together with Den and the other modules; see [
 | --- | --- |
 | PostgreSQL 16 database and a login that owns it | Everything except the PDFs. |
 | An S3-compatible bucket and a key with read and write on it | The PDFs of issued invoices and credit notes, stored once and never rewritten. Without it Finance runs, but nothing can be issued (`503 storage_unavailable`). Invoices are legal records: back the bucket up (Den's operator does, when the bucket is in its `FILES_S3_BUCKETS`). |
-| An OpenID Connect sign-in server (Keycloak) | Public client `finance-spa` and the groups of the four roles: `finance_admin`, `finance_approver`, `finance_bookkeeper`, `finance_read-only` (or the groups you set in `FINANCE_*_GROUPS`). |
+| An OpenID Connect sign-in server (Keycloak) | Public client `finance-spa` with an **audience mapper** that adds `finance-api` to its access tokens ([Audiences per API](../../concepts/authentication.md#audiences-per-api); realms from `con-services` have it), and the groups of the four roles: `finance_admin`, `finance_approver`, `finance_bookkeeper`, `finance_read-only` (or the groups you set in `FINANCE_*_GROUPS`). |
+| A Den link encryption key | 32 random bytes (`openssl rand -base64 32`) in `DEN_LINK_ENCRYPTION_KEY`, kept in your secret manager. Finance encrypts its Den credential with it and does not start without it outside development. |
 | Seller details | The name, address and VAT number printed on invoices, from Den → Module settings → Finance or Finance's Settings page. Issuing needs at least the name and address. |
 
 Finance has **no access config file**: a person's groups decide their role
@@ -64,8 +65,15 @@ Den must be running first: [How the platform starts](../../getting-started/how-t
     vault kv put secret/conservices/finance/backend \
       DATABASE_URL='postgres://finance:change-me@postgres.conservices-data.svc.cluster.local:5432/finance?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt' \
       S3_ACCESS_KEY_ID='change-me' \
-      S3_SECRET_ACCESS_KEY='change-me'
+      S3_SECRET_ACCESS_KEY='change-me' \
+      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+      HR_SERVICE_TOKEN='change-me'
     ```
+
+    `DEN_LINK_ENCRYPTION_KEY` is required: the backend pod does not start
+    without it ([Den link encryption key](../../operations/secrets.md#den-link-encryption-key)).
+    `HR_SERVICE_TOKEN` is optional and must equal HR's value; it lets HR
+    read Finance's role catalog.
 
     ```yaml
     apiVersion: external-secrets.io/v1
@@ -265,6 +273,8 @@ in `not_after`.
 | `internalTLS.ingressNginxAnnotations` | `false` | Legacy, only with `ingress.enabled: true`: adds the ingress-nginx annotations for HTTPS to the web app (`backend-protocol: HTTPS`, `proxy-ssl-verify`). The Gateway API route uses a `BackendTLSPolicy` instead. ingress-nginx is no longer maintained; do not use it. |
 | `route.enabled`, `route.host`, `route.parentRefs`, `route.timeout` | `true`, `finance.conservices.test`, Gateway `public` in `conservices-gateway` (listener `https`), `60s` | Exposes the web app through the Gateway API: an `HTTPRoute` and, with internal TLS, a `BackendTLSPolicy` that makes the gateway check `finance-frontend`'s certificate. See [Exposing the web app](../../operations/helm.md#exposing-the-web-app-gateway-api). |
 | `frontend.config` | `{}` | The web app's `/config.json` (sign-in address, client id; see [Web app settings](configuration.md#web-app-settings-configjson)), written to the ConfigMap `<release>-frontend-config`. Keys left out come from `config.AUTH_MODE`, `config.OIDC_ISSUER_URL` and `config.OIDC_CLIENT_ID` (else `finance-spa`). |
+| `frontend.securityHeaders.keycloakOrigin`, `.denOrigin`, `.s3Origin`, `.extraConnectSrc` | `""` (Keycloak: scheme and host of the sign-in address) | Origins the browser may contact, for the web app's Content Security Policy; see [Web app security headers](configuration.md#web-app-security-headers). |
+| `existingSecret` | `finance-secrets` | The Secret with `DATABASE_URL`, the `S3_*` keys and `DEN_LINK_ENCRYPTION_KEY` (required unless `config.APP_ENV` is `development`; without it the backend pod stays in `CreateContainerConfigError`). |
 | `ingress.enabled` | `false` | Plain `Ingress` for another controller instead of the route. |
 | `ha.podDisruptionBudget`, `ha.topologySpread`, `priorityClassName` | `true`, `true`, `""` | PodDisruptionBudget and spreading over nodes for the web app (two replicas); see [High availability](../../operations/helm.md#high-availability). |
 | `networkPolicy.gateway.cilium` | `true` | Adds a `CiliumNetworkPolicy` that admits Cilium's gateway to the web app; see [Network policy values](../../operations/helm.md#network-policy-values). |
@@ -324,7 +334,7 @@ then add:
     <<: *hardening
     restart: "no"
     networks: [internal, egress]
-    env_file: /etc/conservices/finance-backend.env   # DATABASE_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY
+    env_file: /etc/conservices/finance-backend.env   # DATABASE_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, DEN_LINK_ENCRYPTION_KEY
     environment:
       APP_ENV: production
 
@@ -342,7 +352,7 @@ then add:
       AUTH_MODE: oidc
       OIDC_ISSUER_URL: https://auth.con.example.org/realms/conservices
       OIDC_CLIENT_ID: finance-spa
-      OIDC_AUDIENCE: finance-spa
+      OIDC_AUDIENCE: finance-api
       CORS_ALLOWED_ORIGINS: https://finance.con.example.org
       DEN_INTERNAL_URL: http://den-backend:8080
       # Managed S3 for the PDFs (keys in finance-backend.env).
@@ -353,6 +363,9 @@ then add:
     image: ghcr.io/aglelectronics/finance-frontend:1.0.0-1
     restart: unless-stopped
     networks: [internal]
+    environment:
+      # Content Security Policy: the browser may call the sign-in server.
+      KEYCLOAK_ORIGIN: https://auth.con.example.org
     volumes:
       # infra/nginx.stack.conf from the Finance repository: forwards /api/ to finance-backend:8080.
       - ./finance/nginx.stack.conf:/etc/nginx/conf.d/default.conf:ro
@@ -404,10 +417,13 @@ docker compose -f infra/docker-compose.yml up --build
 | Adminer (with `infra/docker-compose.local.yml`) | 8083 |
 
 !!! note "Backend and web app must use the same sign-in mode"
-    Finance's `.env.example` sets `AUTH_MODE=oidc` against a Keycloak on
-    `localhost:8085`, while the web app gets `infra/frontend-config/compose.json`
-    (dev sign-in) as its `/config.json`. For header-only local work set
-    `AUTH_MODE=dev`. For real sign-in keep `oidc`, copy `compose.json`, set
+    Finance's `infra/docker-compose.yml` runs the backend with
+    `APP_ENV=development` and `AUTH_MODE=dev`, matching the web app's
+    `infra/frontend-config/compose.json` (dev sign-in). Finance's
+    `.env.example` sets `AUTH_MODE=oidc` against a Keycloak on
+    `localhost:8085` for running the backend on the host. `AUTH_MODE=dev`
+    works only with `APP_ENV=development`; both default to the safe values
+    (`oidc`, `production`). For real sign-in keep `oidc`, copy `compose.json`, set
     `"authMode": "oidc"`, `"oidcAuthority": "http://localhost:8085/realms/conservices"`
     and `"oidcClientId": "finance-spa"`, and point `FRONTEND_CONFIG` in `.env`
     at the copy (see [Web app settings](configuration.md#web-app-settings-configjson)).
@@ -417,8 +433,47 @@ docker compose -f infra/docker-compose.yml up --build
 **Signed in, but "you don't have access to Finance" (`403`).** None of
 your groups grants a Finance role. `GET /api/me` lists your `groups`; give
 the person a role in HR or check `FINANCE_*_GROUPS`. Group names match with
-or without Keycloak's leading `/`. After the update from the single
+or without Keycloak's leading `/`. Only the `OIDC_GROUPS_CLAIM` claim counts
+(default `groups`): a role given as a Keycloak *role* instead of a group
+no longer works. After the update from the single
 `finance-admin` group, move its members to `finance_admin`.
+
+**The backend does not start: `DEN_LINK_ENCRYPTION_KEY is required unless
+APP_ENV=development`.** Generate a key (`openssl rand -base64 32`), add it to
+`finance-secrets` through your secret manager and restart
+([Den link encryption key](../../operations/secrets.md#den-link-encryption-key)).
+On Kubernetes the pod shows `CreateContainerConfigError` with
+`couldn't find key DEN_LINK_ENCRYPTION_KEY in Secret` instead. For local
+work set `APP_ENV=development`.
+
+**The backend does not start: `AUTH_MODE=dev lets anyone sign in as anyone
+and is only allowed with APP_ENV=development`.** `APP_ENV` now defaults to
+`production`. For local work set `APP_ENV=development`; anywhere else use
+`AUTH_MODE=oidc`.
+
+**Every API call answers `401` `invalid token` after the upgrade.** Finance
+now accepts only access tokens with the audience `finance-api`. Add the
+audience mapper to the `finance-spa` client
+([Audiences per API](../../concepts/authentication.md#audiences-per-api)),
+then sign out and in again. A script that sends the `id_token` must send the
+`access_token` instead.
+
+**Sign-in does not start, and the browser console says *Refused to connect
+to 'https://auth…'*.** The web app's Content Security Policy does not list
+the sign-in server. Set `KEYCLOAK_ORIGIN` on the web app container (Helm:
+`frontend.securityHeaders.keycloakOrigin`, or a correct `oidcAuthority`)
+and restart it ([Web app security headers](configuration.md#web-app-security-headers)).
+
+**Pairing fails with `pairing with Den at … is not allowed here`.** The
+backend has no `DEN_INTERNAL_URL` and Den's host is not in
+`DEN_ALLOWED_HOSTS`. Set one of them; outside development the pasted URL
+must use `https://`.
+
+**Settings says *Den rejected this module's credential*.** The Finance
+module was removed in Den or its credential revoked. Finance keeps its last
+settings from Den but gets no changes. In Den, open **Modules → Pair** on
+the Finance row, then paste the new URL under **Settings → Den connection
+→ Pair again**. Finance never pairs again by itself.
 
 **The backend does not start: "S3_ENDPOINT is required when any S3_* var is
 set".** Set all of `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` and
