@@ -117,19 +117,13 @@ Each module states the oldest Den it works with, in two places:
       conservices.io/den-major: "1"
     ```
 
-The table of current releases (maintainers update it with every release):
+The table of current releases is generated every time this site is built,
+so nobody updates it by hand. *Latest release* is the app's highest chart
+tag `<app>/vX.Y.Z` in `con-services`; *Needs Den* is read from the
+*Needs Den* line of that release in the app's changelog. The site is
+rebuilt whenever a chart tag is pushed.
 
-| App | Latest release | Den MAJOR | Needs Den |
-| --- | --- | --- | --- |
-| Den | `1.0.0` | 1 | — |
-| HR | `1.0.0` | 1 | `1.0.0` or later |
-| Rally | `1.0.0` | 1 | `1.0.0` or later |
-| Stash | `1.0.0` | 1 | `1.0.0` or later |
-| Finance | `1.0.0` | 1 | `1.0.0` or later |
-| Learn | `1.0.0` | 1 | `1.0.0` or later |
-| Wiki | `1.0.0` | 1 | `1.0.0` or later |
-| Desk | `1.0.0` | 1 | `1.0.0` or later |
-| Tasks | `1.0.0` | 1 | `1.0.0` or later |
+<!-- release-table -->
 
 ## Worked examples
 

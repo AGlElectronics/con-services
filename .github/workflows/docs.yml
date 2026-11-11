@@ -8,7 +8,11 @@ on:
       - "mkdocs.yml"
       - "CHANGELOG.md"
       - "scripts/mkdocs_changelog.py"
+      - "scripts/mkdocs_releases.py"
+      - "deploy/charts/*/Chart.yaml"
       - ".github/workflows/docs.yml"
+  # Also started on main by chart-release.yml after every chart release, for
+  # the table of current releases (scripts/mkdocs_releases.py).
   workflow_dispatch:
 
 permissions:
@@ -26,6 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Every tag, for the table of current releases.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:

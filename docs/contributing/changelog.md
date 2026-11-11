@@ -148,8 +148,9 @@ release:
    same tag.
 4. In `con-services`, set the chart's `version` and `appVersion` to
    `<version>`, its image tags in `values.yaml` to `<version>-1`, the
-   pinned tags in `deploy/kubernetes/overlays/*` if the app has any, and
-   the compatibility table; then tag `<app>/v<version>`. The steps with
+   pinned tags in `deploy/kubernetes/overlays/*` if the app has any; then
+   tag `<app>/v<version>`. The compatibility table on the docs site is
+   generated from that tag and the *Needs Den* line, so it needs no edit. The steps with
    commands are in [CI and releases](ci.md#cut-a-release).
 
 Only the app that changed is released. The suite's `CHANGELOG.md` gets an

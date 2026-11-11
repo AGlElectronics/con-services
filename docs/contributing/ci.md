@@ -206,8 +206,9 @@ The example releases HR `1.12.1`.
     ```
 
     and every image tag set in its `values.yaml` to `1.12.1-1` (HR and Rally
-    ship empty tags; leave them empty). Update the compatibility table on
-    [Versions and upgrades](../operations/versioning.md#compatibility-table).
+    ship empty tags; leave them empty). The compatibility table on
+    [Versions and upgrades](../operations/versioning.md#compatibility-table)
+    updates itself once the chart tag is pushed (step 7).
     The **Chart versions** check fails if the chart changed without a higher
     version, or if the annotation does not match the MAJOR.
 7. After the merge, tag the merge commit on `main` and push:

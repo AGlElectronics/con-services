@@ -60,10 +60,12 @@ plugins:
 
 hooks:
   - scripts/mkdocs_changelog.py
+  - scripts/mkdocs_releases.py
 
 watch:
   - CHANGELOG.md
   - scripts/mkdocs_changelog.py
+  - scripts/mkdocs_releases.py
 
 markdown_extensions:
   - abbr

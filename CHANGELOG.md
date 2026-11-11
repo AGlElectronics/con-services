@@ -23,7 +23,12 @@ led by Den's MAJOR; see
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
   `2.5.0`); every module then releases the new MAJOR, also when unchanged
   (`1.3.0` → `2.3.0`). A module that uses something new in Den says so on
-  its *Needs Den* line. Images are
+  its *Needs Den* line.
+- The table of current releases on
+  [Versions and upgrades](docs/operations/versioning.md#compatibility-table)
+  is generated when the docs are built: the latest release of each app comes
+  from its chart tag `<app>/vX.Y.Z`, *Needs Den* from that release's
+  changelog. *Chart release* rebuilds the site after every chart tag. Images are
   `ghcr.io/aglelectronics/<app>-<component>:MAJOR.MINOR.PATCH-BUILD`, never
   `latest`. Each app's chart is released by the tag `<app>/vX.Y.Z` in this
   repository (for example `hr/v1.0.0`) and carries the annotation
