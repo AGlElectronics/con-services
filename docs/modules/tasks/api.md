@@ -332,18 +332,20 @@ person's token.
 
 **Who may call it:** Den, with `Authorization: Bearer <pairing credential>`
 — the same credential Tasks received when an admin pasted the pairing URL.
-Tasks compares it in constant time with the stored credential. A missing
-credential, a wrong one, or a link Den has rejected (`revoked_at` set)
-answers `401`. While `DEN_MODE=required` and Tasks is not paired yet, the
-route answers `503 den_pairing_required` like the rest of the API.
+Tasks hashes that token and the stored credential, then compares the
+digests, so a shorter token does not return at the first different byte.
+A missing credential, a wrong one, or a link Den has rejected
+(`revoked_at` set) answers `401`. While `DEN_MODE=required` and Tasks is
+not paired yet, the route answers `503 den_pairing_required` like the
+rest of the API.
 
-Den sends the person in headers (these are what Den sends today). The same
-names as query parameters are accepted when the header is empty:
+Den sends the person in two headers. Query parameters are ignored; Den
+does not send the person there.
 
-| Header | Query | Meaning |
-| --- | --- | --- |
-| `X-Den-User-Issuer` | `issuer` | The identity provider's issuer (`iss`), for example `https://auth.example.org/realms/conservices`. In development sign-in it is `dev`. |
-| `X-Den-User-Subject` | `subject` | The person's subject (`sub`). In development sign-in it is the `X-Dev-User` name. |
+| Header | Meaning |
+| --- | --- |
+| `X-Den-User-Issuer` | The identity provider's issuer (`iss`), for example `https://auth.example.org/realms/conservices`. In development sign-in it is `dev`. |
+| `X-Den-User-Subject` | The person's subject (`sub`). In development sign-in it is the `X-Dev-User` name. |
 
 **Response:** `200` with the open tasks assigned to that person (not done,
 not in the trash, not in an archived space or list), soonest due date
@@ -381,8 +383,8 @@ the due date is in the past, `warning` when it falls inside
 
 | Status | Code | When |
 | --- | --- | --- |
-| `400` | `bad_request` | `issuer` or `subject` is missing, or longer than 512 characters. |
-| `401` | `unauthorized` | No pairing credential, the wrong one, or the link is revoked. |
+| `400` | `bad_request` | `X-Den-User-Issuer` or `X-Den-User-Subject` is missing, blank, or longer than 512 bytes. A `?issuer=&subject=` query string does not count. |
+| `401` | `unauthorized` | No pairing credential, the wrong one, or the link is revoked. The message is the same in every case. |
 | `503` | `den_pairing_required` | `DEN_MODE=required` and Tasks is not paired. |
 
 ```sh
@@ -392,9 +394,24 @@ curl -s -i "https://tasks.example.org/api/portal/todos" \
 
 ```text
 HTTP/1.1 401 Unauthorized
-Content-Type: application/json; charset=utf-8
+Content-Type: application/json
 
 {"error":{"code":"unauthorized","message":"invalid or revoked credential"}}
+```
+
+The same call with a valid credential but the person only in the query
+string (no identity headers) answers `400`:
+
+```sh
+curl -s -i "https://tasks.example.org/api/portal/todos?issuer=https://auth.example.org/realms/conservices&subject=6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60" \
+  -H "Authorization: Bearer $TASKS_PAIRING_CREDENTIAL"
+```
+
+```text
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":{"code":"bad_request","message":"issuer and subject are required"}}
 ```
 
 The example above goes through the public web address, which your proxy

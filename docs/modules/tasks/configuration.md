@@ -340,6 +340,12 @@ starts:
 | `DEN_ORIGIN` | none | no | Den's origin, only if the browser calls Den itself. Tasks serves Den's brand through its own API, so leave it empty. |
 | `S3_ORIGIN` | none | no | Only for direct browser uploads to S3. Tasks uploads through its backend, so leave it empty. |
 | `EXTRA_CONNECT_SRC` | none | no | Any other origin the browser must call. |
+| `EXTRA_FRAME_SRC` | none | no | Extra `frame-src` tokens. Tasks leaves it empty. It is not an origin: Desk sets `about:srcdoc` for a sandboxed mail frame, and no other app sets it. |
+
+`/silent-callback.html` is the one page the app may frame itself, so
+silent sign-in can run in a hidden iframe. That exact location uses
+`frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`. Every other
+response keeps `frame-ancestors 'none'` and `DENY`.
 
 Check the result:
 
@@ -348,14 +354,40 @@ curl -sI https://tasks.example.org/ | grep -i -E 'content-security|x-frame|permi
 ```
 
 ```text
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self'  https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
 x-frame-options: DENY
 permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+The extra spaces are the empty `EXTRA_FRAME_SRC` and the empty Den and S3
+origins. Check the silent sign-in page on its own. `frame-ancestors` is
+`'self'` and `X-Frame-Options` is `SAMEORIGIN`. The home page still says
+`'none'` and `DENY`.
+
+```sh
+curl -sI https://tasks.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ; font-src 'self' data:; connect-src 'self' https://auth.example.org   ; frame-src 'self'  https://auth.example.org; frame-ancestors 'self'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+x-frame-options: SAMEORIGIN
 ```
 
 The live-update stream (`/api/v1/stream`) is proxied without these headers
 and without buffering, as before. Details and troubleshooting:
 [nginx security headers](../../concepts/shared-code.md#nginx-security-headers).
+
+### Troubleshooting
+
+- **A reload asks for the password again, and the console says framing
+  `/silent-callback.html` violated `frame-ancestors 'none'`:** that
+  location is still using the normal snippet. The exact location
+  `= /silent-callback.html` has to include
+  `security-headers-frame-self.conf`. See
+  [Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
+- **The policy contains `${EXTRA_FRAME_SRC}` literally:** the variable is
+  not set on the web app container. The image default is empty; the Helm
+  chart sets `EXTRA_FRAME_SRC` from `frontend.securityHeaders.extraFrameSrc`.
 
 ## Frontend build settings
 
