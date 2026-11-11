@@ -634,6 +634,44 @@ curl -s http://localhost:8080/api/health
 {"status":"ok","database":"ok","version":"dev","uptime_sec":5}
 ```
 
+### Check it works: the smoke script
+
+`scripts/smoke-stash.ps1` (in the `con-services` checkout) runs Stash's
+main flows end to end against a running backend: the role catalog, settings
+validation, an item with a generated code, a sign-out that goes out, is
+refused when too many units are asked for, comes back with one damaged unit
+and is closed, a Lost & Found report (public view and audit log redaction),
+CSV formula escaping, safe file downloads and the audit page cap. It leaves
+a retired item, a removed report and a department named `Smoke dept …`
+behind; use a development installation.
+
+1. **Full local stack** (Keycloak sign-in). The script creates two
+   throwaway Keycloak users in the groups `stash-admin` and
+   `stash-readonly` and deletes them at the end. It signs in to Keycloak's
+   admin console with the dev default password; set
+   `KEYCLOAK_ADMIN_PASSWORD` in your shell if yours differs.
+
+    ```powershell
+    ./scripts/smoke-stash.ps1
+    ```
+
+2. **Stash on its own** (`AUTH_MODE=dev`, header sign-in):
+
+    ```powershell
+    ./scripts/smoke-stash.ps1 -BaseUrl http://localhost:8080 -Auth dev
+    ```
+
+Each check prints a line; the last one is:
+
+```text
+stash smoke: OK
+```
+
+The public Lost & Found check is skipped (and says so) when
+`PUBLIC_LOSTFOUND_CLAIM_ENABLED` is off. A failing check stops the script
+with the reason, for example `the guest name leaks into the audit log for a
+read-only user`.
+
 ## Troubleshooting
 
 **The backend exits with `invalid config: …`.** It lists every missing
