@@ -721,7 +721,7 @@ separated by spaces; an empty value leaves the origin out.
     # Copies without outside origins, used when /etc/nginx/snippets is read-only.
     RUN mkdir -p /etc/nginx/snippets \
      && for t in security-headers security-headers-frame-self; do \
-          sed -E 's/ *\$\{[A-Z_]+\}//g' /etc/nginx/templates/$t.conf.template \
+          sed -E 's/ *\$\{[A-Z0-9_]+\}//g' /etc/nginx/templates/$t.conf.template \
             > /etc/nginx/snippets/$t.conf; \
         done \
      && chown -R 101:101 /etc/nginx/snippets
