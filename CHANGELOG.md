@@ -191,6 +191,13 @@ led by Den's MAJOR; see
 - Docs: [Wiring a new module](docs/contributing/new-module.md), a checklist
   for adding a module to the dev stack, the Helm charts and Argo CD
   template, Docker production, secrets and docs.
+- Finance gets its own S3 bucket for invoice PDFs and receipts: in the
+  Argo CD template `<prefix>-conservices-finance` with the key
+  `conservices/modules/finance/s3`, backed up by Den
+  ([Data](docs/deploy/data.md)); in Docker production
+  `FINANCE_S3_BUCKET`, `FINANCE_S3_ACCESS_KEY_ID` and
+  `FINANCE_S3_SECRET_ACCESS_KEY` (without them Finance received
+  `S3_ENDPOINT` alone and refused to start).
 ### Security
 
 - Default-deny NetworkPolicies in every namespace with an explicit allow

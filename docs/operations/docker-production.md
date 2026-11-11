@@ -64,8 +64,8 @@ How it differs from the development stack:
 4. Managed S3 storage (AWS S3, Hetzner Object Storage, Cloudflare R2,
    Backblaze B2, ...; see
    [Production](production.md#object-storage-use-managed-s3)): one bucket
-   for Den and one per module that stores files (Stash, Rally, Learn,
-   Wiki, Tasks), each with its own key that may only read and write that
+   for Den and one per module that stores files (Stash, Rally, Finance,
+   Learn, Wiki, Tasks), each with its own key that may only read and write that
    bucket; one read-only key on all of them for Den's backups; and a
    **backup bucket at another provider or account** with its own key.
 5. An SMTP account for Keycloak's password resets and the modules' mail.

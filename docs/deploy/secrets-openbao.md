@@ -481,7 +481,7 @@ while the entry is missing.
 | `conservices/infra/keycloak/bootstrap-admin` | `password` | password of Keycloak's temporary admin `temp-admin` (only used on the first start) | generated | `keycloak` | always |
 | `conservices/infra/keycloak/clients` | `den-keycloak`, `hr-provisioner`, `learn-provisioner` | secrets of Keycloak's confidential clients | generated | `keycloak`, `den`, `hr`, `learn` | always |
 | `conservices/modules/den/s3` | `access_key`, `secret_key` | S3 access key ID and secret key, read and write on bucket `<prefix>-conservices-den` only | you | `den` | always |
-| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
+| `conservices/modules/<module>/s3` | `access_key`, `secret_key` | the same for bucket `<prefix>-conservices-<module>` only: `stash`, `rally`, `finance`, `learn`, `wiki`, `tasks` | you | that module | that module enabled |
 | `conservices/modules/den/files-s3` | `access_key`, `secret_key` | S3 key with **read only** access to all module buckets (Den copies files into its backups) | you | `den` | always |
 | `conservices/modules/den/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-den-backups` only | you | `den` | always |
 | `conservices/infra/postgres/backup-s3` | `access_key`, `secret_key` | S3 key, read and write on `<prefix>-pg-backups` only (CloudNativePG) | you | `postgres` | always |
