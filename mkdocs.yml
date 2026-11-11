@@ -106,6 +106,9 @@ nav:
       - Architecture: concepts/architecture.md
       - Authentication: concepts/authentication.md
       - Pairing: concepts/pairing.md
+      - Role catalog: concepts/role-catalog.md
+      - Module settings: concepts/module-settings.md
+      - Shared code: concepts/shared-code.md
       - API conventions: concepts/api-conventions.md
       - Glossary: concepts/glossary.md
   - Proposals:

@@ -28,6 +28,7 @@ The checks, as separate jobs:
 | Job | What it does | Fails when |
 | --- | --- | --- |
 | **Go** | `gofmt -l`, `sqlc generate` (if `backend/sqlc.yaml` exists), `go mod verify`, `go vet`, [golangci-lint](https://golangci-lint.run) (the module's `.golangci.yml` if it has one), `go test -race ./...`, [govulncheck](https://go.dev/doc/security/vuln/) | A file is not gofmt-formatted, lint or vet finds a problem, a test fails, or code calls a function with a known vulnerability |
+| **Shared code drift** | Compares the module's generated copies of `con-services` `shared/go` packages with their source (`scripts/sync-shared.sh --check`); passes at once when the module has none. Inputs `shared-check` (`error`, `warn`, `off`), `shared-ref`, `shared-repository`. See [Shared code](../concepts/shared-code.md#the-drift-check). | A generated copy differs from `shared/go` (with `shared-check: error`) |
 | **Frontend** | `npm ci`, then `lint`, `typecheck`, `test` and `build`, each only if `package.json` has that script | Any of those scripts fails |
 | **Trivy (repository)** | [Trivy](https://trivy.dev) scans dependencies (`go.sum`, `package-lock.json`), committed secrets and the Dockerfiles | A HIGH or CRITICAL finding that has a fix |
 | **Image *name*** (one per image) | Builds the image for `linux/amd64`, checks the image policy (below), scans it with Trivy and writes an SBOM | The policy is broken, or a HIGH or CRITICAL vulnerability with a fix is found |

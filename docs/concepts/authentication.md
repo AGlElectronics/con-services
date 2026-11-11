@@ -18,6 +18,10 @@ and a ready-made `curl` token recipe, see
   reads the person's **groups** from it.
 - In Den, groups become **roles** (`admin` or `member`) on every request, so
   removing someone from a group takes effect immediately.
+- Every backend compares groups with the same rule
+  ([How groups are matched](#how-groups-are-matched)) and, from 1.0.0 on,
+  starts only in OIDC mode unless `APP_ENV=development`
+  ([Defaults](#defaults-auth_mode-and-app_env)).
 
 ## Words you need
 
@@ -95,6 +99,34 @@ audience (`aud`) is always the app's own client id, which is what Den checks;
 Keycloak access tokens often carry a different audience. Den's portal also
 sends the same ID token to paired modules when it collects
 [portal to-dos](../modules/den/admin-guide.md#portal-to-dos).
+This changes with the [token contract](#tokens-the-10-contract) below.
+
+### Tokens: the 1.0 contract
+
+The way web apps hold and send tokens is being tightened for 1.0. Den and
+each module adopt it in their own release (their changelogs say when);
+until then they work as described above.
+
+1. **An access token per API.** Each web app sends an **access token**
+   whose audience (`aud`) names its own API (for example `hr-api`), not the
+   ID token. Keycloak adds the audience with an *audience mapper* on the
+   app's client; the backend checks it through `OIDC_AUDIENCE`. A token for
+   HR is then refused by Stash, and an ID token is refused everywhere.
+2. **Tokens only in memory.** The web app keeps tokens in memory (in
+   `oidc-client-ts`, an `InMemoryWebStorage` user store), never in
+   `localStorage` or `sessionStorage`, so a script injected into the page
+   cannot read a stored token. After a reload, the app signs in again
+   silently through the Keycloak session; nobody has to type a password.
+3. **No user token leaves Den.** Den's portal no longer sends the person's
+   token to modules. Den's **backend** asks each paired module for the
+   person's to-dos, server to server:
+   `GET <module>/api/portal/todos?issuer=<iss>&subject=<sub>`, authenticated
+   with Den's side of the pairing credential (a secret exchanged when the
+   module redeems its pairing URL, stored only as a hash by the module).
+   The module answers for that person only. Modules then no longer need
+   Den's client in `OIDC_EXTRA_AUDIENCES` or Den's address in
+   `CORS_ALLOWED_ORIGINS` for to-dos. The details of the credential are
+   decided in Den's ADR when it is implemented.
 
 ### What Den's backend checks
 
@@ -153,8 +185,8 @@ Den then reads these claims from the token:
 | `sub` | Together with the issuer, the person's permanent identity. |
 | `email` | The local user's email. |
 | `name`, `preferred_username`, `nickname` | The display name (the first one that is set; otherwise the email, otherwise `sub`). |
-| `groups` | Group membership, used for roles. |
-| `roles` | Merged into the groups list, so either claim works. |
+| `groups` | Group membership, used for roles. The claim name is `OIDC_GROUPS_CLAIM` once a backend uses the shared rule. |
+| `roles` | Today merged into the groups list, so either claim works. With the [shared rule](#how-groups-are-matched) it is **not** read: only the claim named by `OIDC_GROUPS_CLAIM` counts. |
 
 The first time someone calls Den, Den creates a local user for them
 (*just-in-time provisioning*), keyed by issuer and subject. On later calls it
@@ -184,8 +216,9 @@ groups:
    refuses them everything except `/api/v1/me` and their preferences.
 
 Group names are compared case-insensitively, and a leading `/` (Keycloak's
-full-path form) is ignored. An `owner` membership is never changed or
-removed by this sync.
+full-path form) is ignored; the full rule is in
+[How groups are matched](#how-groups-are-matched). An `owner` membership is
+never changed or removed by this sync.
 
 So to give someone admin access, add them to `den-admin` in Keycloak; to
 take it away, remove them. Because Den reads the groups from the token, the
@@ -200,11 +233,61 @@ renews tokens in the background, and tokens in the local realm are valid for
     map groups to roles and permissions in their access configuration. Each
     module's configuration page lists its groups and roles.
 
+### How groups are matched
+
+Every backend decides "is this person in group X?" with the same rule, from
+the shared package `groupmatch` ([Shared code](shared-code.md)). Modules
+switch to it in their own release; before that, a module's configuration
+page describes its current rule.
+
+1. **Where groups come from.** Only from the claim named by
+   `OIDC_GROUPS_CLAIM` (default `groups`). The claim may be a list of
+   strings or a single string (one group). The `roles` claim is never merged
+   in, so a Keycloak realm role cannot grant access by accident.
+2. **Normalising.** Both the token's group and the configured group are
+   trimmed, lose **one** leading `/` and are lower-cased:
+   ` /Departments/Security ` becomes `departments/security`. The original is
+   kept for display.
+3. **Prefix.** With `OIDC_GROUP_PREFIX` (for example `/con2026`), a group
+   that starts with that parent loses it before comparing:
+   `/con2026/departments/security` becomes `departments/security`. Groups
+   outside the parent are compared as they are; the parent group itself
+   matches nothing.
+4. **Full path or last segment.** By default (`OIDC_GROUP_MATCH=full`) the
+   whole path must be equal. With `OIDC_GROUP_MATCH=last` only the last
+   segment is compared.
+
+| Token group | Configured group | `full` | `last` |
+| --- | --- | --- | --- |
+| `/den-admin` | `den-admin` | match | match |
+| `/Departments/Security` | `departments/security` | match | match |
+| `/departments/security` | `security` | **no** | match |
+| `/teams/security` | `departments/security` | no | match |
+| `/departments/security-lead` | `departments/security` | no | no |
+| `/con2026/den-admin` (prefix `/con2026`) | `den-admin` | match | match |
+| `/con2025/den-admin` (prefix `/con2026`) | `den-admin` | no | no |
+
+Use `last` only when group names are unique across the whole tree:
+otherwise `/teams/security` and `/departments/security` grant the same
+roles.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `OIDC_GROUPS_CLAIM` | `groups` | The claim that holds the groups. |
+| `OIDC_GROUP_MATCH` | `full` | `full` or `last`. |
+| `OIDC_GROUP_PREFIX` | none | Parent group removed before matching. |
+
+When an admin types a group into a module's access settings, the module
+stores the normalised form (for comparisons and uniqueness) and shows what
+was typed.
+
 ### The role catalog
 
 Every module publishes the roles it understands at `GET /api/role-catalog`.
-It is public and read-only. HR collects these catalogs to build its access
+It is public and read-only today. HR collects these catalogs to build its access
 picker: assigning a role in HR adds the person to that role's Keycloak group.
+For 1.0 the endpoint gains dynamic roles, a `privileged` flag and an
+authentication requirement; see [Role catalog](role-catalog.md).
 
 Den's catalog, with the default groups:
 
@@ -261,9 +344,32 @@ curl -H "X-Dev-User: alice" http://localhost:8090/api/v1/me
 
 !!! danger "Never use dev mode outside your own computer"
     In dev mode anyone can be anyone, and everyone is an admin.
-    **`AUTH_MODE` defaults to `dev` when it is not set**, so always set
+    **Today `AUTH_MODE` defaults to `dev` when it is not set**, so always set
     `AUTH_MODE=oidc` explicitly in every real deployment. The Kubernetes
     manifests (`den-config`) and the suite's `docker-compose.yml` already do.
+
+### Defaults: AUTH_MODE and APP_ENV
+
+From the release in which a backend adopts the shared package `authbase`
+([Shared code](shared-code.md)), the defaults are safe:
+
+| Setting | Default | Rule |
+| --- | --- | --- |
+| `AUTH_MODE` | `oidc` | `dev` is accepted **only** together with `APP_ENV=development`; otherwise the backend refuses to start. |
+| `APP_ENV` | `production` | Only `development` enables development conveniences (dev sign-in, an unencrypted Den credential, `http://` pairing URLs). |
+
+In dev mode the backend allows the `X-Dev-User` and `X-Dev-Groups` headers
+through CORS; in OIDC mode it does not, and it deletes them from incoming
+requests so no handler can trust them by mistake.
+
+A backend started with `AUTH_MODE=dev` on a cluster stops with:
+
+```text
+AUTH_MODE=dev lets anyone sign in as anyone and is only allowed with APP_ENV=development (got APP_ENV="production")
+```
+
+Fix it by removing `AUTH_MODE` (or setting it to `oidc`). For local work,
+set both `AUTH_MODE=dev` and `APP_ENV=development`.
 
 ## Attendees: a separate realm
 

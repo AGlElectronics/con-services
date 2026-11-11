@@ -140,6 +140,14 @@ in the redeem response, and keeps only its hash. The module stores it in its
 every call to Den's integration API. Each credential gets a label such as
 `pairing-20261106-101500 v1.2.0`, and Den records when it was last used.
 
+Modules that use the shared `denlink` package ([Shared code](shared-code.md))
+store the credential **encrypted** (AES-256-GCM) with the module's
+`DEN_LINK_ENCRYPTION_KEY`, so a copy of the module's database alone does
+not reveal it. Outside `APP_ENV=development` such a module refuses to start
+without the key. A credential stored in plain text by an older version is
+encrypted the first time it is read; nobody has to pair again. Generating
+and rotating the key: [Secrets](../operations/secrets.md#den-link-encryption-key).
+
 ### When the browser and the module see Den at different addresses
 
 The pairing URL contains the address *your browser* uses for Den. Inside
@@ -160,6 +168,18 @@ against the internal certificate authority before it sends the pairing
 token or its credential ([Internal TLS](../operations/internal-tls.md)).
 In the Docker Compose development stack the
 value is `http://den-backend:8080`.
+
+Without `DEN_INTERNAL_URL`, a module using the shared `denlink` sends the
+pairing request only to a host in **`DEN_ALLOWED_HOSTS`** (comma-separated;
+`*.example.org` allows every subdomain), and only over `https://`. This stops
+an admin account (or someone who stole one) from making the module's
+backend call an arbitrary internal address. With `APP_ENV=development`,
+`localhost`, `127.0.0.1`, `::1` and `*.conservices.test` are always
+allowed, also over `http://`. The module never follows redirects from Den.
+
+```text
+DEN_ALLOWED_HOSTS=den.con.example.org
+```
 
 ## What a paired module receives
 
@@ -224,7 +244,15 @@ page.
 
 **The credential was revoked.** If Den answers `401` (for example because the
 module was removed from Den), the module reports that Den rejected its
-credential and that it should be paired again.
+credential and that it should be paired again. A module using the shared
+`denlink` also records this: it marks the link **revoked** (kept across
+restarts), shows `"revoked": true` in
+[`GET /api/den/state`](#den-mode-and-pairing-state) and its status, and its
+web app tells the module's admins to pair again. It **never pairs again by
+itself**; an admin mints a new pairing URL in Den and pastes it. Meanwhile
+the module keeps its last bundle and keeps serving its API. If a later sync
+is accepted (Den's credential table was restored, for example), the mark
+is cleared.
 
 **Unpaired from the module's side.** Disconnecting in the module deletes the
 stored credential, and the module goes back to its local settings and look.
@@ -270,6 +298,29 @@ The status object:
 | `module_id` | The module's id in Den's registry. |
 | `paired_at`, `synced_at` | When it was paired, and when the last bundle arrived. |
 | `last_error` | The last problem talking to Den, or absent when all is well. |
+| `revoked`, `revoked_at` | Shared `denlink` only: `true` (and since when) after Den rejected the credential. Pair again to clear it. |
+
+With the shared `denlink`, `POST …/den/sync` answers a rejected credential
+with `409 den_credential_revoked` instead of `502 sync_failed`:
+
+```json
+{"error":{"code":"den_credential_revoked","message":"Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair"}}
+```
+
+And the status of a revoked link:
+
+```json
+{
+  "paired": true,
+  "den_base_url": "https://den-backend.conservices-den.svc.cluster.local:8080",
+  "module_id": "5d0c1b9e-3f7a-4c2e-9b1d-8a6f2e4c7d10",
+  "paired_at": "2026-11-06T10:15:02Z",
+  "synced_at": "2026-11-10T22:41:00Z",
+  "last_error": "Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair",
+  "revoked": true,
+  "revoked_at": "2026-11-10T22:42:00Z"
+}
+```
 
 Pair Wiki with a URL you minted in Den → Modules → Pair:
 
@@ -303,6 +354,9 @@ Other `pairing_failed` messages you may see:
 | `paste the full pairing URL from Den (Admin → Modules → Pair)` | The text is not a URL with a `token=` in it. Copy the whole URL. |
 | `could not reach Den at …` | The module cannot reach Den's backend. Check `DEN_INTERNAL_URL` and the network policies. |
 | `Den refused the pairing URL: pairing token expired` | More than 15 minutes passed. Mint a new URL. |
+| `pairing with Den at … is not allowed here; add the host to DEN_ALLOWED_HOSTS or set DEN_INTERNAL_URL` | Shared `denlink` only. The pasted URL points at a host the module may not call. |
+| `the pairing URL must start with https://` | Shared `denlink` only, outside development. |
+| `DEN_LINK_ENCRYPTION_KEY is required unless APP_ENV=development …` | Shared `denlink` only. The module has no encryption key; see [Secrets](../operations/secrets.md#den-link-encryption-key). |
 
 A module that is not paired answers `GET /api/v1/den` with
 `{"paired": false}`.
@@ -322,6 +376,7 @@ module waits for Den. Every module serves it at this path.
 | --- | --- |
 | `mode` | `required` or `standalone`, the module's `DEN_MODE`. |
 | `paired` | `true` when the module holds a credential from Den. |
+| `revoked` | Shared `denlink` only: `true` when Den rejected that credential. The web app then asks the module's admins to pair again. |
 
 - **Errors:** none of its own; `5xx` only when the backend itself is broken.
 
@@ -339,6 +394,13 @@ After pairing:
 
 ```json
 {"mode":"required","paired":true}
+```
+
+A module using the shared `denlink` always includes `revoked`; after Den
+rejected its credential:
+
+```json
+{"mode":"required","paired":true,"revoked":true}
 ```
 
 The web app reads it at start-up: with `"mode":"required"` and

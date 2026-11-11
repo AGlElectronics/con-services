@@ -19,7 +19,12 @@ A good reading order for newcomers:
    authenticate.
 4. [Pairing](pairing.md): how a module connects to Den, what it receives,
    and what happens when Den is not there.
-5. [API conventions](api-conventions.md): the rules every module's API
+5. [Role catalog](role-catalog.md) and [Module settings](module-settings.md):
+   the 1.0 contracts for the roles every module publishes to HR and the
+   settings Den hands to every module.
+6. [Shared code](shared-code.md): the Go packages every module copies from
+   `con-services` `shared/go`, how to sync them and how CI catches drift.
+7. [API conventions](api-conventions.md): the rules every module's API
    shares: URL prefixes, tokens, the error format, health endpoints,
    versioning, and how to get a token for `curl`. Every module's API
    reference builds on this page.

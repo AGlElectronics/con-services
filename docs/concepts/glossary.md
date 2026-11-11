@@ -168,7 +168,13 @@ too, with a link to where they are explained.
 
 **Dev mode**
 :   `AUTH_MODE=dev`. A backend trusts the `X-Dev-User` header instead of
-    checking tokens. For local development only.
+    checking tokens. For local development only; backends using the shared
+    `authbase` refuse it unless `APP_ENV=development`.
+
+**Drift (shared code)**
+:   A module's generated copy of a `shared/go` package no longer matching
+    its source, usually because someone edited the copy. The drift check
+    in CI fails then. See [Shared code](shared-code.md#the-drift-check).
 
 **Edition** { #edition }
 :   In Rally, one occurrence of an event, such as "Example Con 2027". Calls
@@ -464,7 +470,10 @@ too, with a link to where they are explained.
     other modules have their own.
 
 **Role catalog**
-:   The public list of roles a module understands, at `GET /api/role-catalog`.
+:   The list of roles a module understands, at `GET /api/role-catalog`.
+    Public today; the 1.0 contract adds dynamic and privileged roles and
+    requires HR's service token or a staff sign-in. See
+    [Role catalog](role-catalog.md).
 
 **S3, S3-compatible storage**
 :   Amazon's object storage protocol for files, also offered by Hetzner
@@ -502,6 +511,11 @@ too, with a link to where they are explained.
 **Share link**
 :   In Wiki, a link that lets anyone read a page without an account, when
     public links are switched on.
+
+**Shared code (`shared/go`)**
+:   Go packages (`denlink`, `groupmatch`, `authbase`, `gworkspace`) kept once
+    in the `con-services` repository and copied into every module by
+    `scripts/sync-shared`. See [Shared code](shared-code.md).
 
 **Slug**
 :   A module's short, lowercase name, such as `hr` or `stash`. Rally's slug
