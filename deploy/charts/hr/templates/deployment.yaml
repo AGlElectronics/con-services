@@ -22,7 +22,7 @@ metadata:
     {{- include "hr.labels" . | nindent 4 }}
 automountServiceAccountToken: false
 ---
-# The HR server never migrates (ADR-0003); the migrate initContainer applies
+# The HR server never migrates; the migrate initContainer applies
 # pending migrations and exits before the server starts.
 apiVersion: apps/v1
 kind: Deployment
