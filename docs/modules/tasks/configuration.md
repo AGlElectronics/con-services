@@ -30,7 +30,7 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL, for example `postgres://tasks:change-me@db.example.org:5432/tasks?sslmode=require`. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests to finish. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3009` | no | no | Comma-separated browser origins allowed to call the API. |
-| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
+| `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses, and the request's address becomes that client (shared `authbase` trusted proxies). Per-person rate limits still count the signed-in person. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
 | `AUTH_MODE` | `oidc` | no | no | `oidc` signs people in through the identity provider (then `OIDC_ISSUER_URL` is required). `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers: **local development only**, and only accepted with `APP_ENV=development`; anywhere else the backend refuses to start. Outside dev mode the backend drops both headers from every request and leaves them out of CORS. With neither variable set the backend is production with OIDC and refuses to start until OIDC is configured (it fails closed). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer, for example `https://auth.example.org/realms/conservices`. |
 | `OIDC_AUDIENCE` | `tasks-api` | no | no | The audience (`aud`) every access token must carry. The Keycloak audience mapper on the `tasks-spa` client adds `tasks-api` to access tokens; ID tokens are refused. See [Token contract](../../concepts/authentication.md). The backend no longer reads `OIDC_CLIENT_ID`. |
@@ -139,23 +139,54 @@ is shown as "set in Den" (read-only in Tasks).
     organisation's data-protection rules require.
 
 What Tasks reads from Den's integration bundle (`GET
-/api/v1/integrations/bundle`, synced every minute while paired):
+/api/v1/integrations/bundle`, synced every minute while paired), through
+the shared `denlink` client (`ModuleSettings()`), not by querying the
+stored bundle:
 
 ```json
 {
   "brand": {"…": "…"},
   "settings": {"data": {"…": "…"}},
   "module_settings": {
-    "retention": {"trash_days": 30, "notification_days": 90, "audit_days": 730, "automation_run_days": 90},
-    "reminders": {"due_soon_days": 1}
-  },
-  "smtp": {"host": "smtp.example.org", "port": 587, "username": "tasks", "password": "change-me",
-           "from": "tasks@example.org", "from_name": "Tasks", "security": "starttls"}
+    "updated_at": "2026-11-11T09:30:00Z",
+    "data": {
+      "tasks": {
+        "trash_days": 30,
+        "notification_days": 90,
+        "audit_days": 730,
+        "automation_run_days": 90,
+        "due_soon_days": 1
+      },
+      "smtp": {
+        "host": "smtp.example.org",
+        "port": 587,
+        "security": "starttls",
+        "username": "tasks",
+        "password_set": true,
+        "from": "tasks@example.org",
+        "from_name": "Tasks"
+      }
+    }
+  }
 }
 ```
 
-Missing keys fall back to Tasks' own values; values outside a setting's
-range are ignored. The retention job runs every hour, reminders every 15
+The contract names live under `tasks.*`. A bundle that still uses Tasks'
+own names (`retention.trash_days`, `reminders.due_soon_days`) is accepted
+too; when both are set, `tasks.*` wins. The shared `retention.*` keys
+(`inactive_users_days` and the others on
+[Module settings](../../concepts/module-settings.md)) are a different
+contract and do not change these five settings. Missing keys fall back to
+Tasks' own values; a value of the wrong type or outside the setting's
+range is ignored.
+
+Mail comes from `smtp` inside `module_settings` when `smtp.host` is set.
+The password is not in the bundle: when `password_set` is true, Tasks
+fetches it from `GET /api/v1/integrations/module-settings/secrets` at the
+moment it sends, and does not store it. A bundle that puts `smtp` next to
+`module_settings`, or a password inside the bundle, is not read.
+
+The retention job runs every hour, reminders every 15
 minutes, the email outbox every minute (one backend replica runs them all;
 see [ADR 0001](https://github.com/AGlElectronics/tasks/blob/main/docs/adr/0001-single-backend-replica.md)).
 

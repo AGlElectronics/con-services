@@ -145,11 +145,16 @@ TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid
 | 403 | `forbidden` | You can see it, but your level or role is too low. |
 | 404 | `not_found` | It does not exist, **or you may not see it**. |
 | 409 | `conflict` | Stale `version`, a duplicate space key, tag or field name, deleting a space's last list, a test email without SMTP. |
-| 413 | | Body over the size limit. |
+| 413 | `request_too_large` | Body over the size limit. |
 | 422 | `validation_failed` | Field problems; `details` maps field to reason. |
 | 429 | `rate_limited` | Rate limit, or more than 5 live-update streams. |
 | 503 | `unavailable` | Attachments without object storage (`S3_ENDPOINT` unset), live updates off, the mail server refused a test email. |
 | 500 | `internal` | Unexpected; quote the `X-Request-ID` response header. |
+
+`bad_request`, `request_too_large` and `rate_limited` are the shared
+[authbase error codes](../../concepts/shared-code.md#error-codes). Tasks
+returns them unchanged. `X-Request-ID` and `X-Next-Cursor` are exposed to
+the browser (`Access-Control-Expose-Headers`).
 
 ### Common objects
 
@@ -235,6 +240,7 @@ belongs to (set by the [department hook](#department-hook-hr)).
 | `GET /readyz` | anyone | `200 {"status":"ok","database":"ok"}`, or `503` with `"database":"down"`. |
 | `GET /api/health` | anyone | `{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5231}` |
 | `GET /api/role-catalog` | HR (`HR_SERVICE_TOKEN`) or signed in | Roles HR can grant, with their groups and permissions. See [Role catalog](#role-catalog). |
+| `GET /api/portal/todos` | Den's backend, with the pairing credential | Open tasks assigned to the person Den names. See [Portal to-dos](#portal-to-dos). |
 | `GET /api/v1/brand`, `GET /api/v1/brand/{role}` | anyone | Brand from Den once paired (`"source":"den"`), else `"standalone"`; `{role}` streams a logo or login background. |
 
 ### Role catalog
@@ -317,6 +323,84 @@ Content-Type: application/json; charset=utf-8
 
 {"error":{"code":"unauthorized","message":"missing bearer token"}}
 ```
+
+### Portal to-dos
+
+`GET /api/portal/todos` is how Den's portal home lists this person's open
+tasks. Den's **backend** calls it, server to server. It does not send the
+person's token.
+
+**Who may call it:** Den, with `Authorization: Bearer <pairing credential>`
+— the same credential Tasks received when an admin pasted the pairing URL.
+Tasks compares it in constant time with the stored credential. A missing
+credential, a wrong one, or a link Den has rejected (`revoked_at` set)
+answers `401`. While `DEN_MODE=required` and Tasks is not paired yet, the
+route answers `503 den_pairing_required` like the rest of the API.
+
+Den sends the person in headers (these are what Den sends today). The same
+names as query parameters are accepted when the header is empty:
+
+| Header | Query | Meaning |
+| --- | --- | --- |
+| `X-Den-User-Issuer` | `issuer` | The identity provider's issuer (`iss`), for example `https://auth.example.org/realms/conservices`. In development sign-in it is `dev`. |
+| `X-Den-User-Subject` | `subject` | The person's subject (`sub`). In development sign-in it is the `X-Dev-User` name. |
+
+**Response:** `200` with the open tasks assigned to that person (not done,
+not in the trash, not in an archived space or list), soonest due date
+first, at most 50. Someone Tasks has never seen gets an empty list.
+
+```sh
+curl -s "https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/portal/todos" \
+  -H "Authorization: Bearer $TASKS_PAIRING_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.example.org/realms/conservices" \
+  -H "X-Den-User-Subject: 6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60"
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "CREW-42",
+      "title": "Pack radios",
+      "detail": "General · Crew",
+      "due_at": "2026-11-12T00:00:00Z",
+      "url": "https://tasks.example.org/t/CREW-42",
+      "severity": "danger"
+    }
+  ]
+}
+```
+
+`id` is the task key. `url` is `TASKS_PUBLIC_URL` plus `/t/<key>`; it is
+empty when that variable is unset, and Den then drops the item. `due_at`
+is midnight UTC on the due date, or `null`. `severity` is `danger` when
+the due date is in the past, `warning` when it falls inside
+`reminders.due_soon_days` (including today), and `info` otherwise.
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `bad_request` | `issuer` or `subject` is missing, or longer than 512 characters. |
+| `401` | `unauthorized` | No pairing credential, the wrong one, or the link is revoked. |
+| `503` | `den_pairing_required` | `DEN_MODE=required` and Tasks is not paired. |
+
+```sh
+curl -s -i "https://tasks.example.org/api/portal/todos" \
+  -H "Authorization: Bearer wrong"
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+
+{"error":{"code":"unauthorized","message":"invalid or revoked credential"}}
+```
+
+The example above goes through the public web address, which your proxy
+must allow Den's backend to reach. On Kubernetes Den calls the in-cluster
+address, and the chart admits `den-backend` on the backend port. See
+[Network policies](../../operations/network-policies.md#calls-between-modules).
 
 ---
 
@@ -1494,6 +1578,7 @@ pairing URL in Den (*Admin → Modules → Pair*) and paste it there.
 | --- | --- | --- |
 | GET | `/livez`, `/readyz`, `/api/health` | anyone |
 | GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or signed in |
+| GET | `/api/portal/todos` | Den's pairing credential |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | anyone |
 | POST | `/api/internal/departments` | `TASKS_SERVICE_TOKEN` |
 | GET | `/api/v1/me` | signed in |
@@ -1580,6 +1665,14 @@ a second per person, and honour `Retry-After`.
 
 **`503` on attachments.** `S3_ENDPOINT` is not set; attachments are
 optional and everything else works. See [Configuration](configuration.md).
+
+**Den's portal shows no Tasks to-dos.** Den calls
+`GET /api/portal/todos` with the pairing credential. `401` means pair
+again (the credential was revoked or never stored). An empty list means
+that person has no open assigned task, or `TASKS_PUBLIC_URL` is unset so
+Den drops every item (the link would not be a full `http` address). On
+Kubernetes, Den's backend must be allowed to reach Tasks on port 8080
+(the Tasks chart admits it when `networkPolicy.den.enabled` is true).
 
 **`POST /api/internal/departments` answers `404`.** `TASKS_SERVICE_TOKEN`
 is empty on Tasks. Set the same value in Tasks and HR
