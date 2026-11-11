@@ -133,6 +133,9 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      # The conservices login theme fetches the brand from Den in the browser
+      # (theme property denPublicUrl). Empty = Keycloak's neutral look.
+      DEN_PUBLIC_URL: https://den.conservices.test
     ports:
       - "8085:8080"
     volumes:
@@ -532,9 +535,19 @@ services:
       SSL_CERT_DIR: /caddy-ca
       OIDC_CLIENT_ID: den-spa
       OIDC_AUDIENCE: den-spa
-      # Den pushes the login branding into the realm (service account den-keycloak).
+      # Optional: keeps the realm display name (Keycloak's e-mails) equal to the
+      # organisation name (service account den-keycloak). The sign-in page
+      # pulls the rest of the brand itself.
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: den-keycloak-dev-secret
+      IDENTITY_STAFF_MODE: own
+      # Roles from Keycloak groups; den-ops may run backups and drop databases.
+      DEN_ADMIN_GROUPS: den-admin
+      DEN_MEMBER_GROUPS: den-member
+      DEN_OPS_GROUPS: den-ops
+      # DEV ONLY: derives module credentials so Den can fetch portal to-dos
+      # from paired modules. Production: a generated secret (docs: Secrets).
+      DEN_CREDENTIAL_KEY: dev-only-den-credential-key-change-me
       # Module databases + backups (docs/operations.md). Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
       OPERATOR_TOKEN: den-operator-dev-token
@@ -546,6 +559,13 @@ services:
       - "8090:8080"
     extra_hosts:
       - "localhost:host-gateway"
+    # The image is distroless: the binary probes its own /livez.
+    healthcheck:
+      test: ["CMD", "/den-server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # Den operator — the only service with the Postgres admin login. Creates and
   # drops module databases for Den and backs up the whole suite (all
@@ -582,6 +602,12 @@ services:
       FILES_S3_ACCESS_KEY_ID: conservices
       FILES_S3_SECRET_ACCESS_KEY: conservicesdev
       FILES_S3_BUCKETS: den-data-dev,hr-data-dev,stash-data-dev,events-data-dev,wiki-data-dev
+    healthcheck:
+      test: ["CMD", "den-operator", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   den-frontend:
     profiles: ["den"]
@@ -596,9 +622,16 @@ services:
       - ./infra/frontend-config/den.json:/etc/conservices/config.json:ro
     restart: unless-stopped
     depends_on:
-      - den-backend
+      den-backend:
+        condition: service_healthy
     ports:
       - "3001:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/config.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   events-migrate:
     profiles: ["events"]
