@@ -201,6 +201,14 @@ led by Den's MAJOR; see
   `OIDC_GROUP_PREFIX` or `OIDC_GROUP_MATCH=last` is set.
   [Authentication](docs/concepts/authentication.md#refusing-id-tokens)
   explains that refusing ID tokens relies on Keycloak's `typ` claim.
+- Docker stack: the Tasks backends (`tasks` and `tasks-dev` profiles) send
+  email notifications to Mailpit (`SMTP_HOST=mailpit`, port 1025, no TLS,
+  dev-only) and link to the web app through `TASKS_PUBLIC_URL`. Open
+  Mailpit to see them.
+- Docs: [Network policies](docs/operations/network-policies.md) lists the
+  HR → Tasks department hook (ingress in the Tasks chart; HR's egress needs
+  `conservices-tasks`) and the Tasks backend's egress to the mail server;
+  [Secrets](docs/operations/secrets.md) lists Tasks' optional SMTP login.
 
 ### Changed
 

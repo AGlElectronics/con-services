@@ -168,7 +168,7 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | every module | `GET /api/role-catalog` (roles HR can grant) | Ingress rule on Stash done; HR's manifests (egress) not written yet. |
 | HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Planned with HR and Learn manifests. |
 | HR | Wiki | `/api/internal/offboarded` (offboarding hook) | Planned. |
-| HR | Tasks | `/api/internal/departments` (department hook) | Planned. |
+| HR | Tasks | `POST /api/internal/departments` (department hook, with `TASKS_SERVICE_TOKEN`) and `GET /api/role-catalog`, port 8080 | Ingress rule in the Tasks Helm chart (`networkPolicy.allowFromNamespaces`, default `conservices-hr`). HR's egress: add `conservices-tasks` to the HR chart's `networkPolicy.moduleEgressNamespaces`. |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
 | Den backend | every paired module | `GET /api/portal/todos` (server to server, [token contract](../concepts/authentication.md#tokens-the-10-contract)) | Planned for 1.0: egress in `conservices-den`, ingress in each module's namespace, both on port 8080, added with the Den and module releases that implement it. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Covered by the existing rule from every module backend to Den's backend on port 8080. |
@@ -178,6 +178,16 @@ Calls that come from the **browser**, not from a pod, go through the
 Gateway and need no policy of their own: Den's portal fetching
 `/api/portal/todos` from each module (until the server-to-server call
 above replaces it), and Den's web app calling Learn's API.
+Tasks' live-update stream (`GET /api/v1/stream`) is such a browser call
+too; it only needs the Gateway not to time it out (the Tasks chart routes
+it without a request timeout).
+
+Module backends that send email need egress to the mail server, which is
+outside the cluster:
+
+| From | To | Port | Policy | Why |
+| --- | --- | --- | --- | --- |
+| `tasks-backend` (`conservices-tasks`) | your mail server (Tasks' own `SMTP_HOST`, or the SMTP server Den sends) | 587 (STARTTLS) or 465 (TLS) | Tasks Helm chart: `networkPolicy.smtp.cidrs` and `.port`; no rule while `cidrs` is empty | Email notifications and due-soon reminders. |
 
 Example: HR's egress rule to call Stash (goes into `conservices-hr`):
 

@@ -59,6 +59,11 @@ Den must be running and checked first: see
       TASKS_SERVICE_TOKEN="$(openssl rand -hex 32)"
     ```
 
+    If Tasks sends email through its own mail server (not one Den
+    provides), add `SMTP_USERNAME=change-me SMTP_PASSWORD=change-me` to the
+    same entry and set the rest in step 6 (see
+    [Configuration → Email](configuration.md#email)).
+
     ```yaml
     apiVersion: external-secrets.io/v1
     kind: ExternalSecret
@@ -91,11 +96,15 @@ Den must be running and checked first: see
       migrate:  { tag: "1.0.0-1" }
     config:
       APP_BASE_URL: https://tasks.example.org
+      TASKS_PUBLIC_URL: https://tasks.example.org
       OIDC_ISSUER_URL: https://auth.example.org/realms/conservices
       CORS_ALLOWED_ORIGINS: https://tasks.example.org
       S3_BUCKET: tasks-data
     route:
       host: tasks.example.org
+    # Only if Tasks sends email: the mail server's address.
+    # networkPolicy:
+    #   smtp: { cidrs: ["203.0.113.25/32"], port: 587 }
     ```
 
     ```sh
@@ -122,8 +131,9 @@ Den must be running and checked first: see
    row. Tasks (as `tasks-admin`): **Settings → Den connection**, paste the
    URL, **Connect**.
 
-8. **Connect HR** (only if you run HR). HR tells Tasks about departments.
-   In HR's settings:
+8. **Connect HR** (only if you run HR). HR tells Tasks when a department
+   is created, saved or archived (the contract is on the
+   [API reference](api.md#department-hook-hr)). In HR's settings:
 
     ```text
     DEPARTMENT_HOOKS=https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments|<TASKS_SERVICE_TOKEN>
@@ -399,14 +409,20 @@ docker compose -f infra/docker-compose.yml up --build
 ## Why the backend runs one replica
 
 - The **per-user rate limiter** (about 20 requests a second per person)
-  lives in the backend's memory; with two replicas each would count
-  separately.
-- The **due-date automation sweep** runs every minute in every backend
-  process. The run history prevents most double runs, but two replicas
-  would race each other.
+  and the limit of 5 live-update streams per person live in the backend's
+  memory; with two replicas each would count separately.
+- The **background jobs** run on timers in every backend process: due-date
+  automations and the email outbox every minute, due-soon reminders every
+  15 minutes, retention every hour. Two replicas would race each other
+  (for example, email the same notification twice).
 
 So the Helm chart refuses any `backend.replicas` other than 1 and uses the
-`Recreate` strategy. The frontend can run several replicas.
+`Recreate` strategy. The frontend can run several replicas. Live updates
+already work across replicas (they come from PostgreSQL), so scaling out
+later needs only the jobs and limits moved into the database; the
+decision record
+[ADR 0001](https://github.com/AGlElectronics/tasks/blob/main/docs/adr/0001-single-backend-replica.md)
+lists the steps.
 
 ## Troubleshooting
 
@@ -415,7 +431,22 @@ So the Helm chart refuses any `backend.replicas` other than 1 and uses the
 
 **HR's department hook fails.** Timeout: HR has no egress rule to
 `conservices-tasks`. `401` "invalid service token": the tokens differ.
-`404`: `TASKS_SERVICE_TOKEN` is empty on Tasks.
+`404`: `TASKS_SERVICE_TOKEN` is empty on Tasks. `503
+den_pairing_required`: Tasks runs with `DEN_MODE=required` and is not
+paired yet; pair it, then save the department in HR again.
+
+**The backend exits with `OIDC_ISSUER_URL is required when AUTH_MODE=oidc`.**
+Without `APP_ENV` and `AUTH_MODE` the backend starts as production with
+OIDC. Set `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID`; on a developer machine set
+`APP_ENV=development` and `AUTH_MODE=dev` explicitly instead.
+
+**Boards only update every 15 seconds.** The live-update stream
+(`/api/v1/stream`) does not get through. With the chart, keep
+`frontend.websocketPathRegex` at `^/api/v1/stream$` (it removes the
+Gateway's request timeout for that path); behind your own proxy, turn off
+buffering and allow idle reads of at least 30 seconds for it.
+
+**No emails.** See [Configuration → Email](configuration.md#troubleshooting-email).
 
 **Saving a task says it was changed by someone else (`409`).** Someone
 saved the task in the meantime; reload it and apply your change again. This

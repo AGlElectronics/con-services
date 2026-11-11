@@ -13,7 +13,7 @@ every problem.
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` (from `values.yaml` `config:`) | Every setting below that is not a secret. The chart adds `ACCESS_CONFIG_PATH`. |
-| Secret `tasks-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `TASKS_SERVICE_TOKEN`. |
+| Secret `tasks-secrets` (`existingSecret`, from your secret manager) | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `TASKS_SERVICE_TOKEN`, and `SMTP_USERNAME`, `SMTP_PASSWORD` when Tasks uses its own mail server. |
 | ConfigMap `tasks-access-config` | The access config file. |
 | Secrets `tasks-backend-tls`, `tasks-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -24,14 +24,14 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. |
+| `APP_ENV` | `production` | no | no | `development` only on a developer machine; together with `AUTH_MODE=dev`. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address, for example `https://tasks.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | no | Listen address inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL URL, for example `postgres://tasks:change-me@db.example.org:5432/tasks?sslmode=require`. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
 | `SHUTDOWN_TIMEOUT` | `15s` | no | no | How long a stopping backend waits for requests to finish. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3009` | no | no | Comma-separated browser origins allowed to call the API. |
 | `TRUSTED_PROXY_CIDRS` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7` | no | no | Comma-separated CIDRs of the proxies in front of the API (Gateway, nginx, Caddy). `X-Forwarded-For` is only believed on connections from these addresses; the resulting client IP is what rate limits count. Add a proxy that sits outside the private ranges; `none` trusts no proxy. See [Client IP addresses](../../operations/production.md#client-ip-addresses). |
-| `AUTH_MODE` | `dev` | no | no | `oidc` for real sign-in. `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers: **local development only**. |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` signs people in through the identity provider (then `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID` are required). `dev` trusts `X-Dev-User`/`X-Dev-Groups` headers: **local development only**, and only accepted with `APP_ENV=development`. With neither variable set the backend is production with OIDC and refuses to start until OIDC is configured (it fails closed). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer, for example `https://auth.example.org/realms/conservices`. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `tasks-spa`. |
 | `OIDC_AUDIENCE` | none | no | no | Expected token audience, normally `tasks-spa`. |
@@ -48,6 +48,110 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 | `S3_SECRET_ACCESS_KEY` | none | with S3 | **yes** | Secret for the key. |
 | `S3_REGION` | `us-east-1` | no | no | Region of the bucket. |
 | `S3_USE_PATH_STYLE` | `true` | no | no | `true` for the local S3 server (SeaweedFS) and most self-hosted S3. |
+| `TASKS_PUBLIC_URL` | none | no | no | The web app's address, for example `https://tasks.example.org`; links in notification emails point there. Empty: emails name the task key without a link. |
+| `SMTP_HOST` | none | no | no | Mail server for [email notifications](#email) when Den sends none. Empty: no email unless Den provides SMTP. |
+| `SMTP_PORT` | `587` (`465` with `tls`) | no | no | Port of the mail server. |
+| `SMTP_USERNAME` | none | no | **yes** | Login, if the server needs one. |
+| `SMTP_PASSWORD` | none | no | **yes** | Password for `SMTP_USERNAME`. See [Secrets](../../operations/secrets.md). |
+| `SMTP_FROM` | none | with `SMTP_HOST` | no | Sender address, for example `tasks@example.org`. |
+| `SMTP_FROM_NAME` | `Tasks` | no | no | Sender name. |
+| `SMTP_SECURITY` | `starttls` | no | no | `starttls` (upgrade a plain connection; refuses servers without STARTTLS), `tls` (TLS from the start, usually port 465), or `none` (plain; **only** for a local mail catcher such as Mailpit). Anything else stops the backend. |
+
+## Email
+
+Tasks emails people about their Inbox notifications, if they want it
+(*Inbox → Email settings*; by default for assignments, mentions and
+due-soon reminders). Notifications wait two minutes and go out bundled,
+one email per person with up to 20 notifications; anything read in the
+app meanwhile is not emailed.
+
+**Which mail server is used:**
+
+1. When Tasks is paired with Den and Den's integration bundle contains
+   SMTP settings, those (see [Settings from Den](#settings-from-den)).
+2. Otherwise the `SMTP_*` variables above.
+3. Otherwise no email; notifications stay in the Inbox.
+
+To set up Tasks' own server:
+
+1. Put the login in your secret manager and expose it as `SMTP_USERNAME`
+   and `SMTP_PASSWORD` in the Secret `tasks-secrets`.
+2. Set the rest in Helm values:
+
+    ```yaml
+    config:
+      SMTP_HOST: smtp.example.org
+      SMTP_PORT: "587"
+      SMTP_FROM: tasks@example.org
+      SMTP_SECURITY: starttls
+      TASKS_PUBLIC_URL: https://tasks.example.org
+    networkPolicy:
+      smtp:
+        cidrs: ["203.0.113.25/32"]   # the mail server's address
+        port: 587
+    ```
+
+3. Restart the backend. It logs `own SMTP configured`.
+4. Sign in as a Tasks admin, open *Settings*, and press **Send a test email
+   to me**. You should get "[Tasks] Test email" within a minute.
+
+For local development, run Mailpit and set `SMTP_HOST=mailpit` (or
+`host.docker.internal`), `SMTP_PORT=1025`, `SMTP_SECURITY=none`; mails show
+in Mailpit's web UI.
+
+### Troubleshooting email
+
+- **Test email: `409 email is not configured`.** Neither Den nor `SMTP_HOST`
+  provides a server. Check `GET /api/v1/settings` → `email.source`.
+- **Test email: `503 … smtp dial … i/o timeout`.** The NetworkPolicy blocks
+  the mail server: set `networkPolicy.smtp.cidrs`.
+- **`smtp: the server does not offer STARTTLS`.** Use `SMTP_SECURITY=tls`
+  with port 465, or ask the provider for a STARTTLS port.
+- **`smtp auth: 535`.** Wrong `SMTP_USERNAME` or `SMTP_PASSWORD`.
+- **Test works, people get nothing.** They have no address in their
+  sign-in token (`has_address: false` in `GET /api/v1/me/notifications`),
+  switched email off, or read the notification in the app within two
+  minutes.
+
+## Settings from Den
+
+Retention and reminders are module settings. An admin changes them on
+*Settings* in Tasks (stored in Tasks' database, audit-logged), or, when
+Tasks is paired, in Den's module settings. **A value Den sends wins** and
+is shown as "set in Den" (read-only in Tasks).
+
+| Setting | Default | What it does (`0` = keep forever / off) |
+| --- | --- | --- |
+| `retention.trash_days` | 30 | Deleted tasks stay in the trash this long, then are purged with their attachment files. |
+| `retention.notification_days` | 90 | Read Inbox notifications are kept this long. |
+| `retention.audit_days` | 730 | Audit log entries are kept this long. |
+| `retention.automation_run_days` | 90 | Automation run history is kept this long. |
+| `reminders.due_soon_days` | 1 | Assignees are reminded this many days before a due date and on the day. |
+
+!!! warning "Pending legal review"
+    The retention defaults are placeholders, not legal advice. Set what your
+    organisation's data-protection rules require.
+
+What Tasks reads from Den's integration bundle (`GET
+/api/v1/integrations/bundle`, synced every minute while paired):
+
+```json
+{
+  "brand": {"…": "…"},
+  "settings": {"data": {"…": "…"}},
+  "module_settings": {
+    "retention": {"trash_days": 30, "notification_days": 90, "audit_days": 730, "automation_run_days": 90},
+    "reminders": {"due_soon_days": 1}
+  },
+  "smtp": {"host": "smtp.example.org", "port": 587, "username": "tasks", "password": "change-me",
+           "from": "tasks@example.org", "from_name": "Tasks", "security": "starttls"}
+}
+```
+
+Missing keys fall back to Tasks' own values; values outside a setting's
+range are ignored. The retention job runs every hour, reminders every 15
+minutes, the email outbox every minute (one backend replica runs them all;
+see [ADR 0001](https://github.com/AGlElectronics/tasks/blob/main/docs/adr/0001-single-backend-replica.md)).
 
 ## Internal TLS
 
@@ -203,3 +307,7 @@ Read once at start (restart after editing). Roles and their permissions:
 
 Working on tasks is not a role: it comes from sharing spaces and lists
 inside Tasks. See the [Admin guide](admin-guide.md#sharing).
+
+Group names in grants are matched case-insensitively, with one leading `/`
+ignored and the whole path compared, the same rule every Con Services
+module uses (see the [API reference](api.md#sharing-grants)).

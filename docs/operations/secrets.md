@@ -181,7 +181,7 @@ with each module's docs):
 | HR | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, SMTP password if any | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-learn` |
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN` | `conservices-wiki` |
-| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
+| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN`, `SMTP_USERNAME` and `SMTP_PASSWORD` if Tasks uses its own mail server | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `DESK_SECRET_KEY` (encrypts stored mailbox passwords), SMTP password if any | `conservices-desk` |
 | Finance | `DATABASE_URL` | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
@@ -189,6 +189,18 @@ with each module's docs):
 Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
+
+**Tasks' SMTP login** (`SMTP_USERNAME`, `SMTP_PASSWORD` in `tasks-secrets`,
+namespace `conservices-tasks`) is only needed when Tasks sends email
+through its own mail server; when it is paired with a Den that sends SMTP
+settings, Den's login is used and these stay empty. Source: your mail
+provider, ideally an account only for Tasks. Rotate: change the password at
+the provider, update it in your secret manager, then
+`kubectl rollout restart -n conservices-tasks deploy/tasks-backend`. For a
+local trial only: Mailpit needs no login. The GitOps reference does not
+have an OpenBao path for it yet; add one under
+`conservices/modules/tasks/smtp` if you use it.
+See [Tasks configuration → Email](../modules/tasks/configuration.md#email).
 
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;

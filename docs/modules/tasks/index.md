@@ -44,7 +44,16 @@ Concretely, Tasks aims to:
 - **Spaces, folders, lists, tasks, subtasks.** Each space has its own
   statuses (the board columns) and a short key, so tasks get IDs such as
   `CREW-42`.
-- **List and board views** with drag and drop, filters and bulk actions.
+- **List, board, calendar, timeline and workload views** with drag and
+  drop, a sort you choose, filters remembered per list and bulk actions,
+  plus a **calendar across every space**.
+- **Planning:** custom fields per space, dependencies ("waits for"),
+  recurring tasks, estimates and time tracking.
+- **Live updates:** boards and task pages refresh within a second when
+  someone else changes something.
+- **Email** for the notifications each person picks, and due-soon
+  reminders.
+- **Import** from a CSV, ClickUp or Vikunja.
 - **Minimal task creation:** a title is enough; everything else is
   optional.
 - **My Work** (your tasks grouped by due date) and an **Inbox** with
@@ -56,9 +65,10 @@ Concretely, Tasks aims to:
 - **Automations:** "when X happens, do Y" rules per space or per list, with
   a visible run history.
 - **Safety:** version checks against lost updates, a trash with restore and
-  purge, archived lists, and an audit log of destructive actions.
-- **Departments:** HR tells Tasks when a department is created or renamed;
-  Tasks keeps exactly one space per department.
+  purge, archived lists and spaces, an audit log admins can read, and
+  retention settings for old data.
+- **Departments:** HR tells Tasks when a department is created, saved or
+  archived; Tasks keeps exactly one space per department.
 
 **Who uses it:** everyone works on tasks in spaces and lists shared with
 them. Tasks admins (Keycloak group `tasks-admin`) manage every space and
@@ -93,9 +103,9 @@ from `/config.json`; see
 
 On Kubernetes, Tasks is its own namespace (`conservices-tasks`), its own
 Helm chart (`deploy/charts/tasks`), its own database (`tasks`) and bucket
-(`tasks-data`). Its network policies let it reach only PostgreSQL, S3, Den
-and the sign-in server, and let only HR call it (role catalog and the
-department hook). It talks to other parts only over HTTP and pairs with Den
+(`tasks-data`). Its network policies let it reach only PostgreSQL, S3, Den,
+the sign-in server and (when you allow it) your mail server, and let only
+HR call it (role catalog and the department hook). It talks to other parts only over HTTP and pairs with Den
 for the brand and settings ([Pairing](../../concepts/pairing.md)). Den
 comes first: [How the platform starts](../../getting-started/how-the-platform-starts.md).
 
