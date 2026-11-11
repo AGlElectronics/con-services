@@ -402,6 +402,18 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- toPrettyJson $out -}}
 {{- end -}}
 
+{{/* KEYCLOAK_ORIGIN of the web app: frontend.securityHeaders.keycloakOrigin,
+else the origin (scheme://host[:port]) of the issuer the web app signs in at. */}}
+{{- define "tasks.keycloakOrigin" -}}
+{{- $sh := .Values.frontend.securityHeaders | default dict -}}
+{{- if $sh.keycloakOrigin -}}
+{{- $sh.keycloakOrigin -}}
+{{- else -}}
+{{- $issuer := (.Values.frontend.config | default dict).oidcAuthority | default .Values.config.OIDC_ISSUER_URL | default "" -}}
+{{- regexFind "^https?://[^/]+" $issuer -}}
+{{- end -}}
+{{- end -}}
+
 {{/* DEN_MODE of the backend from den.mode: "required" or "standalone". */}}
 {{- define "tasks.denMode" -}}
 {{- $mode := (.Values.den | default dict).mode | default "required" -}}

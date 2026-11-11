@@ -26,8 +26,14 @@ image:
 
 # Name of an existing Secret (created by your secret manager, for example an
 # ExternalSecret) with the keys DATABASE_URL, S3_ACCESS_KEY_ID,
-# S3_SECRET_ACCESS_KEY and TASKS_SERVICE_TOKEN. This chart never creates
-# Secrets.
+# S3_SECRET_ACCESS_KEY, TASKS_SERVICE_TOKEN and DEN_LINK_ENCRYPTION_KEY
+# (base64 of 32 bytes, encrypts the Den credential; the backend pod does not
+# start without it), plus the optional HR_SERVICE_TOKEN (HR reads the role
+# catalog with it), DEN_LINK_ENCRYPTION_KEY_PREVIOUS (during a key rotation)
+# and SMTP_USERNAME and SMTP_PASSWORD when Tasks sends email with its own
+# SMTP server. Every key is listed on the Secrets page:
+# https://aglelectronics.github.io/con-services/operations/secrets/
+# This chart never creates Secrets.
 existingSecret: tasks-secrets
 
 # Tasks' access config (roles, permissions, OIDC group bindings).
@@ -47,8 +53,18 @@ config:
   HTTP_ADDR: ":8080"
   AUTH_MODE: oidc
   OIDC_ISSUER_URL: https://auth.conservices.test/realms/conservices
+  # The web app's client (default for frontend.config.oidcClientId); the
+  # backend does not read it.
   OIDC_CLIENT_ID: tasks-spa
-  OIDC_AUDIENCE: tasks-spa
+  # The audience access tokens must carry: the Keycloak audience mapper on
+  # tasks-spa adds tasks-api. ID tokens are refused.
+  OIDC_AUDIENCE: tasks-api
+  # Groups come only from this claim. OIDC_GROUP_MATCH: full (the whole
+  # path must match a binding or grant) or last (last path segment).
+  # OIDC_GROUP_PREFIX: a parent group stripped first, e.g. /con2026.
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_GROUP_MATCH: full
+  OIDC_GROUP_PREFIX: ""
   CORS_ALLOWED_ORIGINS: https://tasks.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
@@ -59,6 +75,21 @@ config:
   S3_REGION: us-east-1
   S3_USE_PATH_STYLE: "true"
   DEN_INTERNAL_URL: https://den-backend.conservices-den.svc.cluster.local:8080
+  # Hosts a pasted pairing URL may name (comma-separated, *.example.org
+  # allowed). Not needed while DEN_INTERNAL_URL is set.
+  DEN_ALLOWED_HOSTS: ""
+  # Links in notification emails point here.
+  TASKS_PUBLIC_URL: https://tasks.conservices.test
+  # Tasks' own SMTP server for email notifications, used when Den sends no
+  # SMTP settings. Empty SMTP_HOST: no email unless Den provides it. The
+  # username and password go in existingSecret. SMTP_SECURITY: starttls
+  # (default), tls (implicit TLS, port 465) or none. Allow the connection in
+  # networkPolicy.smtp. Docs: https://aglelectronics.github.io/con-services/modules/tasks/configuration/#email
+  SMTP_HOST: ""
+  SMTP_PORT: ""
+  SMTP_FROM: ""
+  SMTP_FROM_NAME: Tasks
+  SMTP_SECURITY: starttls
 
 # Den pairing. Docs: https://aglelectronics.github.io/con-services/concepts/pairing/#required-or-standalone
 #   required:   until an admin pairs the module from Den's Modules page, its
@@ -100,12 +131,14 @@ internalTLS:
   ingressNginxAnnotations: false
 
 backend:
-  # MUST stay 1. The per-user rate limiter lives in the process, and the
-  # due-date automation sweep runs on a one-minute timer in every process;
-  # two replicas would race. The chart refuses any other value.
+  # MUST stay 1. The per-user rate limiter and the live-update connection
+  # limit live in the process, and the background jobs (due-date
+  # automations, reminders, email, retention) run on timers in every
+  # process; two replicas would race. The chart refuses any other value.
+  # Why, and what scaling out needs: tasks docs/adr/0001-single-backend-replica.md
   replicas: 1
   singleReplica: true
-  singleReplicaReason: "in-process rate limiter and due-date sweep (tasks README, Operations notes)"
+  singleReplicaReason: "in-process rate limiter and background jobs (tasks ADR 0001)"
   port: 8080
   terminationGracePeriodSeconds: 30
   resources:
@@ -123,7 +156,11 @@ frontend:
   port: 8080
   # Attachments are up to 25 MB.
   clientMaxBodySize: 27m
-  websocketPathRegex: ""
+  # Long-lived requests: the live-update stream (Server-Sent Events). This
+  # path gets nginx read timeouts of 1 h, no buffering, and no Gateway
+  # request timeout (route.websocketTimeout). Do not empty it, or the
+  # gateway's route.timeout cuts every stream after two minutes.
+  websocketPathRegex: "^/api/v1/stream$"
   terminationGracePeriodSeconds: 30
   # nginx keeps serving this long after it is told to stop, while the
   # gateway removes the pod from its endpoints. 0 turns it off.
@@ -142,6 +179,25 @@ frontend:
   #   productName    "Tasks" (shown until the brand loads)
   # Docs: https://aglelectronics.github.io/con-services/modules/tasks/configuration/#web-app-settings-configjson
   config: {}
+  # Origins the browser may reach besides the web app, for its
+  # Content-Security-Policy (shared nginx security headers). Scheme, host
+  # and optional port, no path; several separated by spaces.
+  # extraFrameSrc is not an origin; Tasks leaves it empty.
+  # Docs: https://aglelectronics.github.io/con-services/concepts/shared-code/#nginx-security-headers
+  securityHeaders:
+    # The sign-in server. Empty: the origin of frontend.config.oidcAuthority
+    # or config.OIDC_ISSUER_URL.
+    keycloakOrigin: ""
+    # Den, only if the browser calls Den itself (Tasks serves Den's brand
+    # through its own API, so usually empty).
+    denOrigin: ""
+    # S3, only for browser uploads straight to a bucket (Tasks uploads
+    # through its backend, so usually empty).
+    s3Origin: ""
+    extraConnectSrc: ""
+    # Extra frame-src tokens. Empty for Tasks. Not an origin: Desk sets
+    # about:srcdoc so a sandboxed mail frame can render. No other app sets it.
+    extraFrameSrc: ""
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the
@@ -216,6 +272,8 @@ networkPolicy:
       app: keycloak
     port: 8443
   den:
+    # Egress to Den (the bundle) and ingress from den-backend
+    # (GET /api/portal/todos). Both use this namespace and port.
     enabled: true
     namespace: conservices-den
     port: 8080
@@ -246,11 +304,17 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
-  # HR reads GET /api/role-catalog and calls POST /api/internal/departments
-  # (the department hook, bearer TASKS_SERVICE_TOKEN). HR's namespace needs
-  # a matching egress rule.
+  # HR reads GET /api/role-catalog (bearer HR_SERVICE_TOKEN) and calls
+  # POST /api/internal/departments (the department hook, bearer
+  # TASKS_SERVICE_TOKEN). HR's namespace needs a matching egress rule.
   allowFromNamespaces:
     - conservices-hr
+  # Email: the backend connects to the SMTP server (Tasks' own SMTP_HOST or
+  # the one Den sends). List the server's addresses; empty renders no rule
+  # and email fails with a connection timeout.
+  smtp:
+    cidrs: []  # e.g. ["203.0.113.25/32"]
+    port: 587
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false

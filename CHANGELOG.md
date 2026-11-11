@@ -360,6 +360,28 @@ led by Den's MAJOR; see
   secret key and the Google service account key (Secret `desk-google`, with
   an ExternalSecret example); the network policy flow table lists Desk's
   egress to Google APIs and to mail servers.
+- Docker stack: the Tasks backends (`tasks` and `tasks-dev` profiles) send
+  email notifications to Mailpit (`SMTP_HOST=mailpit`, port 1025, no TLS,
+  dev-only) and link to the web app through `TASKS_PUBLIC_URL`. Open
+  Mailpit to see them.
+- Docs: [Network policies](docs/operations/network-policies.md) lists the
+  HR → Tasks department hook (ingress in the Tasks chart; HR's egress needs
+  `conservices-tasks`) and the Tasks backend's egress to the mail server;
+  [Secrets](docs/operations/secrets.md) lists Tasks' optional SMTP login.
+- Docker stack: the Tasks backends check the access-token audience
+  `tasks-api` (`OIDC_AUDIENCE`; `OIDC_CLIENT_ID` is gone), `tasks-backend`
+  has a dev-only `HR_SERVICE_TOKEN` for the role catalog, and both Tasks web
+  apps set `KEYCLOAK_ORIGIN=https://auth.conservices.test` for their
+  Content-Security-Policy. Recreate the Tasks containers to pick it up.
+- Docs: [Secrets](docs/operations/secrets.md) lists Tasks'
+  `DEN_LINK_ENCRYPTION_KEY` and `HR_SERVICE_TOKEN`; the HR → Tasks row on
+  [Network policies](docs/operations/network-policies.md) names the token
+  for the role catalog.
+- Tasks serves `GET /api/portal/todos` for Den's portal. The Tasks chart
+  admits `den-backend` on the backend port (`networkPolicy.den`), and the
+  Den chart's `networkPolicy.allowToModules` (default on) lets
+  `den-backend` reach module backends on 8080. The same egress is in
+  `deploy/kubernetes/base/den`.
 
 ### Changed
 

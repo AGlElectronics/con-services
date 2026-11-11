@@ -185,11 +185,12 @@ namespace and an *ingress* rule in the target's namespace.
 | HR | Learn | `/api/qualification-catalog`, `/api/internal/holdings` (with `LEARN_SERVICE_TOKEN`) | Done in the HR and Learn charts. |
 | HR | Wiki | `GET /api/role-catalog`, `POST /api/internal/offboarded` (offboarding hook, `WIKI_SERVICE_TOKEN`) | Done in the HR and Wiki charts. Wiki ingress is `networkPolicy.allowFromNamespaces` (`conservices-hr` by default); HR egress is `networkPolicy.moduleEgressNamespaces` (includes `conservices-wiki`). Still set `ROLE_CATALOG_SOURCES` and `OFFBOARD_HOOKS` (see [Set up Wiki](../modules/wiki/setup.md#option-1-kubernetes-platform-recommended), step 8). |
 | Wiki | HR | `GET /api/internal/directory/groups` (group picker, `HR_DIRECTORY_TOKEN`) | Egress in the Wiki chart (`networkPolicy.hr`: namespace `conservices-hr`, HR's backend, port 8080). Ingress in the HR chart (`networkPolicy.allowFromNamespaces` includes `conservices-wiki`). HR serves the directory when `HR_DIRECTORY_TOKEN` is set; the contract is on [Wiki configuration](../modules/wiki/configuration.md#group-picker). |
-| HR | Tasks | `/api/internal/departments` (department hook) | Done in the HR and Tasks charts. |
+| HR | Tasks | `POST /api/internal/departments` (`TASKS_SERVICE_TOKEN`) and `GET /api/role-catalog` (`HR_SERVICE_TOKEN`) | Done in the HR and Tasks charts. Tasks ingress is `networkPolicy.allowFromNamespaces` (default `conservices-hr`); HR egress is `networkPolicy.moduleEgressNamespaces` (includes `conservices-tasks`). |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash (Kustomize) and the Learn and Desk charts admit `den-backend` from `conservices-den`; the other modules' charts must do the same. |
+| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash (Kustomize) and the Learn, Desk and Tasks charts admit `den-backend` from `conservices-den` (Tasks: `networkPolicy.den`); the other modules' charts must do the same. |
 | Den backend | Learn | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Ingress in the Learn chart (`networkPolicy.den`). Egress from `conservices-den` is Den's rule to every module backend on 8080 (Helm: `networkPolicy.allowToModules`). |
 | Den backend | Desk | `GET /api/role-catalog`, `GET /api/portal/todos` | Desk's chart admits `den-backend` from `conservices-den` on 8080. Den's egress is in Den's chart. |
+| Den backend | Tasks | `GET /api/portal/todos` | Ingress in the Tasks chart (`networkPolicy.den`, admits `den-backend` on 8080). Egress is Den's `networkPolicy.allowToModules` and the same rule in `deploy/kubernetes/base/den`. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Already allowed on both sides, port 8080: HR chart egress `networkPolicy.den` (on by default) and Den ingress from every module backend (Helm `networkPolicy.allowFromModules`, Kustomize `den-backend`). |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 | Wiki | Keycloak admin API | listing realm groups for the group picker (standalone, `IDP_DIRECTORY_URL`) | Egress in the Wiki chart (`networkPolicy.keycloakAdmin.enabled`, off by default); the ingress rule on Keycloak is the platform's. |
@@ -216,6 +217,20 @@ ingress:
       - protocol: TCP
         port: 8080
 ```
+Gateway and need no policy of their own: Den's web app calling Learn's
+API. Portal to-dos are no longer a browser call; Den's backend fetches
+them (the row above). A module that has not implemented the route yet is
+skipped by Den.
+Tasks' live-update stream (`GET /api/v1/stream`) is such a browser call
+too; it only needs the Gateway not to time it out (the Tasks chart routes
+it without a request timeout).
+
+Module backends that send email need egress to the mail server, which is
+outside the cluster:
+
+| From | To | Port | Policy | Why |
+| --- | --- | --- | --- | --- |
+| `tasks-backend` (`conservices-tasks`) | your mail server (Tasks' own `SMTP_HOST`, or the SMTP server Den sends) | 587 (STARTTLS) or 465 (TLS) | Tasks Helm chart: `networkPolicy.smtp.cidrs` and `.port`; no rule while `cidrs` is empty | Email notifications and due-soon reminders. |
 
 Example: HR's egress rule to call Stash (goes into `conservices-hr`):
 

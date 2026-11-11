@@ -121,7 +121,8 @@ spec:
     {{- end }}
     {{- if ($np.allowToModules | default dict).enabled }}
     # Module backends: role catalog and portal to-dos. Each module's
-    # namespace also needs an ingress rule admitting den-backend.
+    # namespace also needs an ingress rule admitting den-backend
+    # (Tasks, Learn and Desk do).
     - to:
         - namespaceSelector:
             matchLabels:

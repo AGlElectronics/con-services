@@ -9,7 +9,8 @@ comes back and which errors to expect.
 
 The route list is taken from the backend's router,
 [`backend/internal/http/router.go`](https://github.com/AGlElectronics/tasks/blob/main/backend/internal/http/router.go),
-and the handlers next to it (`tasks.go`, `features.go`, `internal_api.go`).
+and the handlers next to it (`tasks.go`, `features.go`, `planning.go`,
+`admin.go`, `stream.go`, `internal_api.go`).
 Conventions shared by every module (error shape, request ids, time formats)
 are described once in [API conventions](../../concepts/api-conventions.md);
 this page only repeats what is specific to Tasks.
@@ -43,12 +44,15 @@ TOKEN=...   # see "Getting a token" below
 
 ### Authentication
 
-- **Production (`AUTH_MODE=oidc`).** Send a Keycloak access token:
-  `Authorization: Bearer <token>`. Tasks creates the person on their first
-  request and reads their roles from the token's `groups` claim **on every
+- **Production (`AUTH_MODE=oidc`).** Send a Keycloak **access token**
+  whose audience includes `tasks-api` (`OIDC_AUDIENCE`):
+  `Authorization: Bearer <token>`. ID tokens are refused with `401`.
+  Tasks creates the person on their first request and reads their groups
+  from the token's `groups` claim (`OIDC_GROUPS_CLAIM`) **on every
   request**. See [Authentication](../../concepts/authentication.md).
-- **Development only (`AUTH_MODE=dev`).** Send `X-Dev-User: alice` and
-  optionally `X-Dev-Groups: tasks-admin`. Never on a reachable server.
+- **Development only (`AUTH_MODE=dev` with `APP_ENV=development`).** Send
+  `X-Dev-User: alice` and optionally `X-Dev-Groups: tasks-admin`. In any
+  other mode the backend removes these headers before reading a request.
 
 **Roles** (granted through Keycloak groups; see
 [Configuration](configuration.md)):
@@ -88,16 +92,25 @@ to another space.
 
 | Limit | Value |
 | --- | --- |
-| Rate limit | About 20 requests a second per person, bursts of 100. Above: `429`, `Retry-After: 1`. Applies to `/api/v1/*` after sign-in. |
-| Request body | 1 MB; attachment uploads 25 MB plus 1 MB of form overhead. |
-| Request time | 60 seconds. |
+| Rate limit | About 20 requests a second per person, bursts of 100. Above: `429 rate_limited` with `Retry-After`. Applies to `/api/v1/*` after sign-in. |
+| Request body | 1 MB; attachment uploads 25 MB plus 1 MB of form overhead; imports 11 MB (a 5 MB file, JSON-escaped). A larger body answers `413 request_too_large`. |
+| Request time | 60 seconds, except the live-update stream (`GET /api/v1/stream`), which stays open up to 30 minutes. |
+| Live-update streams | 5 open streams per person; the 6th is `429`. |
 | Task title / description / comment | 500 / 100,000 / 20,000 characters. |
 | Tag name | 50 characters. |
+| Custom fields | 50 per space, 100 options per select field, 5,000 characters per text value. |
+| Dependencies | 50 per task. |
+| Time entry | 1 to 1,440 minutes (one day). |
+| Calendar | At most 120 days and 2,000 tasks per request. |
+| Import | 5 MB and 2,000 tasks per file. |
+| Sidebar | `GET /api/v1/spaces` returns at most 1,000 spaces (`"truncated": true` when there are more). |
+| Task detail | The newest 100 comments and 200 activity entries; page through the rest with `…/comments` and `…/events`. |
 
 ### Paging
 
-`GET /api/v1/lists/{list}/tasks` and `GET /api/v1/my-work` return at most
-`limit` tasks (default 200, max 500). When there are more, the response has
+`GET /api/v1/lists/{list}/tasks`, `GET /api/v1/my-work`,
+`GET /api/v1/tasks/{task}/comments`, `GET /api/v1/tasks/{task}/events` and
+`GET /api/v1/audit` return at most `limit` rows (default 200, max 500). When there are more, the response has
 an **`X-Next-Cursor`** header; send it back as `?cursor=` to get the next
 page. The body shape never changes, so a client that ignores paging still
 works on small lists.
@@ -131,12 +144,17 @@ TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid
 | 401 | `unauthorized` | No token, an invalid or expired one, or a wrong service token. |
 | 403 | `forbidden` | You can see it, but your level or role is too low. |
 | 404 | `not_found` | It does not exist, **or you may not see it**. |
-| 409 | `conflict` | Stale `version`, a duplicate space key or tag name, deleting a space's last list. |
-| 413 | | Body over the size limit. |
+| 409 | `conflict` | Stale `version`, a duplicate space key, tag or field name, deleting a space's last list, a test email without SMTP. |
+| 413 | `request_too_large` | Body over the size limit. |
 | 422 | `validation_failed` | Field problems; `details` maps field to reason. |
-| 429 | `too_many_requests` | Rate limit. |
-| 503 | `unavailable` | Attachments without object storage (`S3_ENDPOINT` unset). |
+| 429 | `rate_limited` | Rate limit, or more than 5 live-update streams. |
+| 503 | `unavailable` | Attachments without object storage (`S3_ENDPOINT` unset), live updates off, the mail server refused a test email. |
 | 500 | `internal` | Unexpected; quote the `X-Request-ID` response header. |
+
+`bad_request`, `request_too_large` and `rate_limited` are the shared
+[authbase error codes](../../concepts/shared-code.md#error-codes). Tasks
+returns them unchanged. `X-Request-ID` and `X-Next-Cursor` are exposed to
+the browser (`Access-Control-Expose-Headers`).
 
 ### Common objects
 
@@ -152,6 +170,8 @@ TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid
   "created_by": "5b1e7c2d-…",
   "created_at": "2026-11-01T10:00:00Z",
   "everyone_level": null,
+  "archived": false,
+  "department_id": null,
   "lists": [
     {"id": "8e2f0c1d-…", "space_id": "3c1b2a90-…", "folder_id": null, "name": "General",
      "description": "", "position": 1, "private": false, "archived": false,
@@ -171,7 +191,9 @@ TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid
 ```
 
 `shared_only: true` appears when you have no access to the space itself
-and only see lists shared with you directly.
+and only see lists shared with you directly. `archived` spaces are hidden
+from the sidebar and search; `department_id` is the HR department a space
+belongs to (set by the [department hook](#department-hook-hr)).
 
 **Task**
 
@@ -189,7 +211,11 @@ and only see lists shared with you directly.
   "assignees": [{"id": "0f3c…", "display_name": "Alice Example"}],
   "tags": [{"id": "t1…", "name": "printing", "color": "#f59e0b"}],
   "subtask_count": 0, "subtask_done": 0, "comment_count": 0,
-  "checklist_total": 0, "checklist_done": 0
+  "checklist_total": 0, "checklist_done": 0,
+  "fields": {"c7d1…": 1250.5, "c7d2…": "o1…"},
+  "recurrence": {"freq": "weekly", "interval": 1},
+  "blocked_by_open": 1,
+  "estimate_minutes": 120, "time_spent_minutes": 45
 }
 ```
 
@@ -199,6 +225,10 @@ and only see lists shared with you directly.
 | `start_at`, `due_at` | Dates, `YYYY-MM-DD`, or `null`. |
 | `version` | Increases on every change. Send it back on `PATCH` (see [version check](#patch-apiv1taskstask)). |
 | `completed_at` | Set while the task is in a `done` status. |
+| `fields` | [Custom field](#custom-fields) id → value: a string (text, URL, `YYYY-MM-DD` date, or the id of a select option), a number or a boolean. Unset fields are left out. |
+| `recurrence` | `null`, or how the task [repeats](#recurring-tasks). |
+| `blocked_by_open` | How many unfinished tasks this one [waits for](#dependencies). |
+| `estimate_minutes`, `time_spent_minutes` | Planned effort (or `null`) and the [logged time](#time-tracking). |
 
 ---
 
@@ -209,28 +239,185 @@ and only see lists shared with you directly.
 | `GET /livez` | anyone | `{"status":"ok"}` while the process runs. |
 | `GET /readyz` | anyone | `200 {"status":"ok","database":"ok"}`, or `503` with `"database":"down"`. |
 | `GET /api/health` | anyone | `{"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5231}` |
-| `GET /api/role-catalog` | anyone | Roles HR can grant, with their groups and permissions. |
+| `GET /api/role-catalog` | HR (`HR_SERVICE_TOKEN`) or signed in | Roles HR can grant, with their groups and permissions. See [Role catalog](#role-catalog). |
+| `GET /api/portal/todos` | Den's backend, with the pairing credential | Open tasks assigned to the person Den names. See [Portal to-dos](#portal-to-dos). |
 | `GET /api/v1/brand`, `GET /api/v1/brand/{role}` | anyone | Brand from Den once paired (`"source":"den"`), else `"standalone"`; `{role}` streams a logo or login background. |
 
+### Role catalog
+
+`GET /api/role-catalog` lists the roles HR can give people in Tasks, one
+entry per Keycloak group bound to a role in the
+[access config](configuration.md#access-config-file). It follows the
+[role catalog contract](../../concepts/role-catalog.md).
+
+**Who may call it:** HR's backend with `Authorization: Bearer
+<HR_SERVICE_TOKEN>` (compared in constant time with Tasks' own
+`HR_SERVICE_TOKEN`; the token allows nothing else), or anyone signed in
+with their usual access token. The path stays open while Tasks waits for
+Den (`DEN_MODE=required`).
+
+**Request body:** none. Send `If-None-Match` with the last `ETag` to get
+`304 Not Modified` while nothing changed.
+
+**Response:** `200`, with `ETag: "<revision>"` and `Cache-Control:
+private, no-cache`.
+
+| Field | Meaning |
+| --- | --- |
+| `module`, `display_name`, `description` | `tasks`, `Tasks`, and a one-line description for HR's access picker. |
+| `revision` | Changes whenever the catalog changes (a hash of it; the access config is read at start-up). Also the `ETag`. |
+| `roles[].key` | `organization_admin` or `space_creator` (or a role of your own access config). Tasks has no dynamic roles. |
+| `roles[].label`, `roles[].description` | Human-readable. |
+| `roles[].group` | The Keycloak group that grants the role, normalised (no leading `/`, lower case). |
+| `roles[].group_display` | The group as written in the access config. |
+| `roles[].assignable` | Always `true`. |
+| `roles[].default` | Always `false`: HR gives no Tasks role to new people by default. |
+| `roles[].scope` | `organization`. |
+| `roles[].privileged` | `true` for roles with `space.manage` or `settings.manage` (they see every space or change settings and the Den pairing). |
+| `roles[].dynamic` | Always `false`. |
+| `roles[].permissions` | What the role allows, sorted. |
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `401` | `unauthorized` | No token, a wrong service token, or an invalid or expired sign-in token. |
+
 ```sh
-curl -s $TASKS/api/role-catalog
+curl -s https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/role-catalog \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN"
 ```
 
 ```json
 {
-  "module": "tasks", "display_name": "Tasks",
+  "module": "tasks",
+  "display_name": "Tasks",
+  "description": "Projects, lists, boards and tasks.",
+  "revision": "5f0c2a9d41be7e13",
   "roles": [
     {"key": "organization_admin", "label": "Organization Admin",
      "description": "Manages every space, its lists and statuses, and the module settings.",
-     "group": "tasks-admin", "assignable": true, "scope": "organization:demo-org",
+     "group": "tasks-admin", "group_display": "tasks-admin",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": true, "dynamic": false,
      "permissions": ["settings.manage", "space.create", "space.manage"]},
     {"key": "space_creator", "label": "Space Creator",
      "description": "Creates new spaces and manages the spaces they created.",
-     "group": "tasks-creator", "assignable": true, "scope": "organization:demo-org",
+     "group": "tasks-creator", "group_display": "tasks-creator",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": false, "dynamic": false,
      "permissions": ["space.create"]}
   ]
 }
 ```
+
+Without a token:
+
+```sh
+curl -s -i $TASKS/api/role-catalog
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+
+{"error":{"code":"unauthorized","message":"missing bearer token"}}
+```
+
+### Portal to-dos
+
+`GET /api/portal/todos` is how Den's portal home lists this person's open
+tasks. Den's **backend** calls it, server to server. It does not send the
+person's token.
+
+**Who may call it:** Den, with `Authorization: Bearer <pairing credential>`
+— the same credential Tasks received when an admin pasted the pairing URL.
+Tasks hashes that token and the stored credential, then compares the
+digests, so a shorter token does not return at the first different byte.
+A missing credential, a wrong one, or a link Den has rejected
+(`revoked_at` set) answers `401`. While `DEN_MODE=required` and Tasks is
+not paired yet, the route answers `503 den_pairing_required` like the
+rest of the API.
+
+Den sends the person in two headers. Query parameters are ignored; Den
+does not send the person there.
+
+| Header | Meaning |
+| --- | --- |
+| `X-Den-User-Issuer` | The identity provider's issuer (`iss`), for example `https://auth.example.org/realms/conservices`. In development sign-in it is `dev`. |
+| `X-Den-User-Subject` | The person's subject (`sub`). In development sign-in it is the `X-Dev-User` name. |
+
+**Response:** `200` with the open tasks assigned to that person (not done,
+not in the trash, not in an archived space or list), soonest due date
+first, at most 50. Someone Tasks has never seen gets an empty list.
+
+```sh
+curl -s "https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/portal/todos" \
+  -H "Authorization: Bearer $TASKS_PAIRING_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.example.org/realms/conservices" \
+  -H "X-Den-User-Subject: 6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60"
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "CREW-42",
+      "title": "Pack radios",
+      "detail": "General · Crew",
+      "due_at": "2026-11-12T00:00:00Z",
+      "url": "https://tasks.example.org/t/CREW-42",
+      "severity": "danger"
+    }
+  ]
+}
+```
+
+`id` is the task key. `url` is `TASKS_PUBLIC_URL` plus `/t/<key>`; it is
+empty when that variable is unset, and Den then drops the item. `due_at`
+is midnight UTC on the due date, or `null`. `severity` is `danger` when
+the due date is in the past, `warning` when it falls inside
+`reminders.due_soon_days` (including today), and `info` otherwise.
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `bad_request` | `X-Den-User-Issuer` or `X-Den-User-Subject` is missing, blank, or longer than 512 bytes. A `?issuer=&subject=` query string does not count. |
+| `401` | `unauthorized` | No pairing credential, the wrong one, or the link is revoked. The message is the same in every case. |
+| `503` | `den_pairing_required` | `DEN_MODE=required` and Tasks is not paired. |
+
+```sh
+curl -s -i "https://tasks.example.org/api/portal/todos" \
+  -H "Authorization: Bearer wrong"
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{"error":{"code":"unauthorized","message":"invalid or revoked credential"}}
+```
+
+The same call with a valid credential but the person only in the query
+string (no identity headers) answers `400`:
+
+```sh
+curl -s -i "https://tasks.example.org/api/portal/todos?issuer=https://auth.example.org/realms/conservices&subject=6f1c2d7e-0b7a-4e57-9a7e-2b1d3c4e5f60" \
+  -H "Authorization: Bearer $TASKS_PAIRING_CREDENTIAL"
+```
+
+```text
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":{"code":"bad_request","message":"issuer and subject are required"}}
+```
+
+The example above goes through the public web address, which your proxy
+must allow Den's backend to reach. On Kubernetes Den calls the in-cluster
+address, and the chart admits `den-backend` on the backend port. See
+[Network policies](../../operations/network-policies.md#calls-between-modules).
 
 ---
 
@@ -259,7 +446,37 @@ Who may call: signed in. Theme shared across modules through Den:
 
 Who may call: signed in. People picker, sorted by name, default 50 (max
 200). `q` filters by name. **Emails are only included for callers who hold
-`space.manage`**; everyone else gets names only.
+`space.manage` in the organization**; everyone else gets names only.
+
+### `GET /api/v1/me/notifications`, `PUT /api/v1/me/notifications`
+
+Who may call: signed in. Which [Inbox](#inbox-notifications) notifications
+also come **by email**. Defaults: email on, for `assigned`, `mention` and
+`due_soon`.
+
+| Field | Rules |
+| --- | --- |
+| `email` | `true` or `false`: email at all. |
+| `email_kinds` | Any of `assigned`, `mention`, `comment`, `status`, `due_soon`, `automation`. |
+| `has_address` | Response only: `false` when the sign-in token carried no email address (then nothing is emailed). |
+
+```sh
+curl -s -X PUT $TASKS/api/v1/me/notifications -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"email":true,"email_kinds":["assigned","mention","due_soon","comment"]}'
+```
+
+```json
+{"email":true,"email_kinds":["assigned","mention","due_soon","comment"],"has_address":true}
+```
+
+Errors: `422 details.email_kinds = "unknown kind …"`.
+
+How email works: a notification waits **two minutes**, so a burst of
+changes arrives as one email (up to 20 notifications each) and anything you
+read in the app meanwhile is not emailed. Notifications older than a day
+are never emailed. Failed sends are retried twice. Email needs an SMTP
+server, from Den or from Tasks' `SMTP_*` settings (see
+[Configuration](configuration.md#email)).
 
 ```json
 {"users":[{"id":"0f3c9a52-…","display_name":"Alice Example"}]}
@@ -289,6 +506,69 @@ curl -s "$TASKS/api/v1/search?q=crew-4" -H "Authorization: Bearer $TOKEN"
 ```json
 {"results":[{"id":"f04d6e2a-…","key":"CREW-43","title":"Print badges","list_name":"General","space_name":"Crew","status":"To do","done":false}]}
 ```
+
+### `GET /api/v1/calendar?from=&to=&mine=1`
+
+Who may call: signed in. Every task you can see (same rules as search;
+archived spaces left out) whose start-to-due span overlaps `from`–`to`
+(both `YYYY-MM-DD`, required, at most 120 days apart). A task with only
+one of the two dates counts on that day. `mine=1` keeps only tasks
+assigned to you. At most 2,000 tasks, soonest first; `"truncated": true`
+when there were more.
+
+```sh
+curl -s "$TASKS/api/v1/calendar?from=2026-11-01&to=2026-11-30" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"tasks":[{"id":"f04d6e2a-…","key":"CREW-43","title":"Print badges","start_at":null,"due_at":"2026-11-20","…":"all Task fields"}],"truncated":false}
+```
+
+Errors: `422 details.from`/`details.to` (missing, not a date, `to` before
+`from`, or more than 120 days).
+
+### Live updates: `GET /api/v1/stream`
+
+Who may call: signed in. A [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
+stream that says **what changed** — never the content — so the client can
+refetch it through the normal API. You only hear about lists and spaces you
+can see.
+
+```sh
+curl -sN $TASKS/api/v1/stream -H "Authorization: Bearer $TOKEN"
+```
+
+```text
+retry: 5000
+event: ready
+data: {}
+
+event: change
+data: {"type":"list","list_id":"8e2f0c1d-…","space_id":"3c1b2a90-…"}
+
+: ping
+
+event: change
+data: {"type":"inbox"}
+```
+
+| `type` | Means | Refetch |
+| --- | --- | --- |
+| `list` | A task in that list, or something on it (comment, checklist, assignee, tag, field value, dependency, time, attachment), changed. | The list's tasks, open task pages, My Work, the sidebar counts. |
+| `space` | The space, its lists, statuses, folders, tags, fields, automations or sharing changed. Also sent when you just lost access. | The sidebar and the space. |
+| `inbox` | Your notifications changed. | The Inbox and its badge. |
+| `resync` | Changes may have been missed (the server fell behind or lost its database connection). | Everything. |
+
+A `: ping` comment arrives every 25 seconds. The server ends the stream
+after 30 minutes; reconnect (with a fresh token). `EventSource` cannot send
+an `Authorization` header, so browsers read the stream with `fetch`.
+`GET /api/v1/stream/status` answers `{"enabled": true}` when live updates
+are available.
+
+| Status | When |
+| --- | --- |
+| `429` | You already have 5 streams open (`Retry-After: 30`). |
+| `503` | Live updates are not available on this server. |
 
 ### Favourites
 
@@ -327,8 +607,11 @@ Who may call: signed in. Newest first; `unread=1` for unread only; default
 }]}
 ```
 
-`kind` is `status`, `assigned`, `comment`, `mention`, or `automation`
-(from a rule's `notify` action).
+`kind` is `status`, `assigned`, `comment`, `mention`, `automation` (from a
+rule's `notify` action) or `due_soon` (an open task of yours is due within
+`reminders.due_soon_days`, see [Settings](#settings); `actor_name` is
+`"Someone"`). Due-soon reminders go out once per task, person and due
+date; moving the due date reminds again.
 
 ### `GET /api/v1/inbox/unread-count`
 
@@ -353,10 +636,12 @@ curl -s -X POST $TASKS/api/v1/inbox/read -H "Authorization: Bearer $TOKEN" \
 
 Who may call: signed in. Every space you can enter (with the lists you may
 see), plus spaces that only show up because a list in them is shared with
-you (`shared_only: true`), as `{"spaces": [Space…]}`.
+you (`shared_only: true`), as `{"spaces": [Space…], "truncated": false}`.
+Archived spaces are left out unless you add `?archived=1`. At most 1,000
+spaces; `truncated` is `true` when there are more.
 
 ```sh
-curl -s $TASKS/api/v1/spaces -H "Authorization: Bearer $TOKEN"
+curl -s "$TASKS/api/v1/spaces?archived=1" -H "Authorization: Bearer $TOKEN"
 ```
 
 ### `POST /api/v1/spaces`
@@ -396,8 +681,16 @@ Who may call: `view`, or a direct grant on one of its lists (then
 
 Who may call: `manage`. Same fields as create, all optional. Changing `key`
 renumbers nothing: existing tasks get the new prefix and old keys keep
-resolving. `"everyone_level": null` closes the space. Response `200`.
+resolving. `"everyone_level": null` closes the space. `"archived": true`
+hides the space from the sidebar and search (tasks stay, My Work still
+shows them), `false` restores it; for a department space HR's next save
+sets it back to the department's state. Response `200`.
 Errors: `409` duplicate key, `422`.
+
+```sh
+curl -s -X PATCH $TASKS/api/v1/spaces/3c1b2a90-… -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"archived":true}'
+```
 
 ### `DELETE /api/v1/spaces/{space}`
 
@@ -460,12 +753,24 @@ curl -s -X PUT $TASKS/api/v1/spaces/3c1b2a90-…/grants -H "Authorization: Beare
 ```
 
 ```json
-{"id":"g1…","space_id":"3c1b2a90-…","subject_type":"group","subject":"dept-crew","display_name":"dept-crew","level":"edit"}
+{"id":"g1…","space_id":"3c1b2a90-…","subject_type":"group","subject":"dept-crew","subject_key":"dept-crew","display_name":"dept-crew","level":"edit"}
 ```
 
+**How group names match.** A group grant matches a person whose token
+lists the same group after both names are **normalised**: spaces trimmed,
+one leading `/` removed (Keycloak's full-path form), lower-cased. The whole
+path must match: a grant to `/Departments/Ops` matches the token group
+`departments/ops`, but not `ops` and not `departments/ops/stage`.
+`subject` is the name as you typed it (shown in the UI); `subject_key` is
+the normalised form that matching uses. Granting the same group again in
+another spelling updates the one existing grant.
+
 For a user grant, `display_name` is the person's name (`"Former user"` if
-they were deleted). Errors: `404 "grant not found"` when deleting a grant
-that does not belong to that space or list; `422` for bad fields.
+they were deleted) and `subject_key` equals `subject`. Giving and removing
+grants is written to the [audit log](#audit-log). Errors: `404 "grant not
+found"` when deleting a grant that does not belong to that space or list;
+`422` for bad fields (a group name that is empty after normalising, such
+as `/`, is `details.subject = "required"`).
 
 ---
 
@@ -539,6 +844,74 @@ in board order, as `{"tasks": [Task…]}`. Paged (see [Paging](#paging)).
 Who may call: `manage`. `{"lists": [List…]}` for the archived lists, so they
 can be restored with `PATCH … {"archived": false}`.
 
+#### `GET /api/v1/lists/{list}/time-report?from=&to=`
+
+Who may call: `view` on the list. Time logged on the list's tasks
+(subtasks included) per person between `from` and `to` (both optional,
+`YYYY-MM-DD`, inclusive).
+
+```sh
+curl -s "$TASKS/api/v1/lists/8e2f0c1d-…/time-report?from=2026-11-01&to=2026-11-30" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"people":[{"user_id":"0f3c…","user_name":"Alice Example","minutes":240},{"user_id":"5b1e…","user_name":"Bob Builder","minutes":90}],"total_minutes":330}
+```
+
+Errors: `422 details.from`/`details.to = "must be YYYY-MM-DD"`.
+
+#### `POST /api/v1/lists/{list}/import`
+
+Who may call: `edit` on the list. Creates tasks in the list from a file you
+send as text.
+
+| Field | Rules |
+| --- | --- |
+| `format` | `csv`, `clickup` (ClickUp's CSV export) or `vikunja` (the `data.json` of a Vikunja export). |
+| `content` | The file's contents, at most 5 MB and 2,000 tasks. |
+| `dry_run` | `true`: check and preview, write nothing. |
+
+**CSV columns** (header row, case-insensitive; only a title column is
+required): `Title`/`Name`/`Task Name`, `Description`/`Task Content`/`Notes`,
+`Status`, `Priority` (`urgent`, `high`, `normal`/`medium`, `low`, or 1–4),
+`Due Date`, `Start Date` (`YYYY-MM-DD`, `DD/MM/YYYY`, `D.M.YYYY`, ISO time,
+Unix milliseconds or ClickUp's `Tuesday, March 5th 2024`),
+`Assignees` (emails or names, separated by `,` `;` or `|`, brackets
+allowed), `Tags`, `Done` (`yes`/`true`/`1`/`x`).
+
+**How values are matched:**
+
+- **Status:** by name in this space; otherwise names like *done*,
+  *closed*, *complete* (and Vikunja's `done: true`) go to the first `done`
+  status, everything else to the first `not_started` one.
+- **People:** by email or display name among people who have signed in to
+  Tasks; anyone else is left unassigned with a warning.
+- **Tags:** by name in this space; missing ones are created if you
+  `manage` the space, otherwise left off with a warning.
+- **Vikunja:** HTML descriptions become plain text; priorities 1–5 map to
+  low, normal, high, urgent, urgent; the zero date means "no date".
+
+```sh
+jq -Rs '{format:"csv", dry_run:true, content:.}' tasks.csv \
+  | curl -s -X POST $TASKS/api/v1/lists/8e2f0c1d-…/import -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" -d @-
+```
+
+```json
+{"dry_run":true,"created":3,"skipped":1,"new_tags":["transport"],
+ "warnings":["line 4: no title, skipped","line 5: \"nobody@example.org\" has never signed in to Tasks, not assigned"],
+ "preview":[{"line":2,"title":"Book bus","status":"In progress","priority":"high","start_at":null,"due_at":"2026-12-01","assignees":["bob@example.org"],"tags":["transport"]}]}
+```
+
+Without `dry_run` the same body creates everything in **one transaction**
+and answers `201` with the same shape (`preview` holds the first 50
+tasks). Each import is in the [audit log](#audit-log) (`list` / `imported`).
+
+| Status | When |
+| --- | --- |
+| `409` | The list is archived. |
+| `422` | Unknown `format`; not valid CSV or JSON; no title column; more than 2,000 tasks; over 5 MB. |
+
 ### Tags
 
 | Method and path | Who | Body | Response |
@@ -556,6 +929,52 @@ curl -s -X POST $TASKS/api/v1/spaces/3c1b2a90-…/tags -H "Authorization: Bearer
 Tag names are unique per space: `409 "this space already has a tag with
 that name"`. Put tags on a task with `PATCH /api/v1/tasks/{task}`
 `{"tag_ids": [...]}`.
+
+### Custom fields
+
+A **custom field** is an extra field every task in a space can fill in:
+cost, vendor, stage, a link to a quote. A space defines its fields; values
+are set per task with `PATCH /api/v1/tasks/{task}` and returned in every
+Task's `fields`.
+
+| Method and path | Who | Body | Response |
+| --- | --- | --- | --- |
+| `GET /api/v1/spaces/{space}/fields` | `view` | none | `{"fields":[Field…]}` in order |
+| `POST /api/v1/spaces/{space}/fields` | `manage` | `name` (1–100), `type`, `options` (select only) | `201` Field |
+| `PATCH /api/v1/fields/{field}` | `manage` on its space | `name`, `options`, `position` | `200` Field |
+| `DELETE /api/v1/fields/{field}` | `manage` on its space | none | `204`; deletes every value; audit-logged |
+
+| `type` | A value is | Example |
+| --- | --- | --- |
+| `text` | a string, up to 5,000 characters | `"Hall B, door 3"` |
+| `number` | a number | `1250.5` |
+| `date` | `YYYY-MM-DD` | `"2026-11-20"` |
+| `select` | the `id` of one of the field's options | `"o1…"` |
+| `checkbox` | `true` or `false` | `true` |
+| `url` | an `http://` or `https://` address | `"https://example.org/quote.pdf"` |
+
+```sh
+curl -s -X POST $TASKS/api/v1/spaces/3c1b2a90-…/fields -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Stage","type":"select","options":[{"name":"Ordered","color":"#22c55e"},{"name":"Delivered"}]}'
+```
+
+```json
+{"id":"c7d2…","space_id":"3c1b2a90-…","name":"Stage","type":"select",
+ "options":[{"id":"o1…","name":"Ordered","color":"#22c55e"},{"id":"o2…","name":"Delivered","color":"#9ca3af"}],"position":2}
+```
+
+A field's type cannot change (`422`; create a new field). Sending
+`options` replaces them: keep an option's `id` to keep it; an option you
+leave out is removed **from every task that had it**. Field names are unique
+per space (`409`). Moving a task to another space drops its values, like
+tags.
+
+Errors: `409 "this space already has a field with that name"`, `422` with
+`details.name`, `details.type` (`"must be text, number, date, select,
+checkbox, url"`), `details.options` (`"a select field needs at least one
+option"`, `"only select fields have options"`), `"a space can have at most
+50 fields"`.
 
 ---
 
@@ -605,13 +1024,37 @@ plus everything the detail panel needs:
   "statuses": [ "…the space's statuses…" ],
   "checklist": [{"id":"k1…","task_id":"f04d6e2a-…","body":"Order lanyards","done":false,"position":1}],
   "watchers": [{"id":"0f3c…","display_name":"Alice Example"}],
-  "attachments": [{"id":"at1…","task_id":"f04d6e2a-…","filename":"badge-template.pdf","content_type":"application/pdf","size_bytes":84211,"uploaded_by":"0f3c…","created_at":"2026-11-06T12:50:00Z"}]
+  "attachments": [{"id":"at1…","task_id":"f04d6e2a-…","filename":"badge-template.pdf","content_type":"application/pdf","size_bytes":84211,"uploaded_by":"0f3c…","created_at":"2026-11-06T12:50:00Z"}],
+  "comments_total": 1, "events_total": 1,
+  "blocked_by": [{"id":"d1…","key":"CREW-40","title":"Order paper","status":{"id":"a2…","name":"In progress","color":"#3b82f6","category":"active"},"done":false,"list_id":"8e2f0c1d-…","space_id":"3c1b2a90-…"}],
+  "blocking": [],
+  "hidden_dependencies": 0,
+  "time_entries": [{"id":"te1…","task_id":"f04d6e2a-…","user_id":"0f3c…","user_name":"Alice Example","minutes":45,"spent_on":"2026-11-06","note":"template","created_at":"2026-11-06T13:10:00Z"}]
 }
 ```
+
+`comments` holds the newest 100 comments and `events` the newest 200
+activity entries, oldest first; `comments_total` and `events_total` count
+all of them. `blocked_by` and `blocking` leave out tasks you cannot see and
+count them in `hidden_dependencies`. `time_entries` holds the latest 500.
 
 ```sh
 curl -s $TASKS/api/v1/tasks/CREW-43 -H "Authorization: Bearer $TOKEN"
 ```
+
+### `GET /api/v1/tasks/{task}/comments`, `GET /api/v1/tasks/{task}/events`
+
+Who may call: `view` on the task. All comments (`{"comments": [...]}`) or
+all activity entries (`{"events": [...]}`), oldest first, paged with
+`limit` and `X-Next-Cursor` (see [Paging](#paging)). Use them when the
+detail's `comments_total` or `events_total` is larger than what it
+embedded.
+
+```sh
+curl -s -D - "$TASKS/api/v1/tasks/CREW-43/comments?limit=100" -H "Authorization: Bearer $TOKEN"
+```
+
+Errors: `400 "invalid cursor"`, `404` as for the task.
 
 ### `PATCH /api/v1/tasks/{task}`
 
@@ -632,10 +1075,19 @@ you read it, the answer is `409` and nothing changes; reload and reapply.
 | `priority`, `start_at`, `due_at` | `null` clears. |
 | `assignee_ids` | The full new set; newly added people are notified. |
 | `tag_ids` | The full new set; tags must belong to the task's space. |
+| `fields` | `{"<field id>": value}` for the [custom fields](#custom-fields) to change; `null` clears one. Fields not named stay as they are. |
+| `recurrence` | `{"freq": "daily"|"weekly"|"monthly"|"yearly", "interval": 1–365}` (interval defaults to 1), or `null` to stop repeating. Top-level tasks only. See [Recurring tasks](#recurring-tasks). |
+| `estimate_minutes` | Planned effort in minutes (0–1,000,000), or `null`. |
 
 ```sh
 curl -s -X PATCH $TASKS/api/v1/tasks/CREW-43 -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"status_id":"a2…","due_at":null,"version":1}'
+```
+
+```sh
+curl -s -X PATCH $TASKS/api/v1/tasks/CREW-43 -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version":2,"fields":{"c7d1…":1250.5,"c7d2…":"o1…"},"recurrence":{"freq":"weekly","interval":2},"estimate_minutes":120}'
 ```
 
 Response `200`: the Task with `version` increased. With a stale version:
@@ -645,7 +1097,79 @@ Response `200`: the Task with `version` increased. With a stale version:
 ```
 
 Errors: `409` stale version; `422 details.version = "required"` and the
-field rules from create.
+field rules from create; `422 details["fields.<id>"]` for a value that
+does not fit its field (`"Cost must be a number"`, `"Stage must be one of
+its options"`, `"not a field of this space"`); `422
+details["recurrence.freq"]`/`details["recurrence.interval"]`, `422
+details.recurrence = "subtasks cannot repeat"`; `422
+details.estimate_minutes`.
+
+### Dependencies
+
+A task can **wait for** other tasks ("blocked by"). The web app shows a
+lock on tasks with unfinished blockers; nothing stops you from finishing a
+blocked task.
+
+| Method and path | Who | Body | Response |
+| --- | --- | --- | --- |
+| `POST /api/v1/tasks/{task}/dependencies` | `edit` on the task, `view` on the other | `{"depends_on": "<uuid or KEY-N>"}` | `201` the other task (DepRef) |
+| `DELETE /api/v1/tasks/{task}/dependencies/{other}` | `edit` on the task | none | `204` |
+
+```sh
+curl -s -X POST $TASKS/api/v1/tasks/CREW-43/dependencies -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"depends_on":"CREW-40"}'
+```
+
+```json
+{"id":"d1…","key":"CREW-40","title":"Order paper","status":{"id":"a2…","name":"In progress","color":"#3b82f6","category":"active"},"done":false,"list_id":"8e2f0c1d-…","space_id":"3c1b2a90-…"}
+```
+
+Tasks in different spaces can depend on each other. Adding an existing
+dependency changes nothing. Both tasks get an activity entry.
+
+| Status | When |
+| --- | --- |
+| `404` | Either task does not exist or you cannot see it; removing a dependency that does not exist. |
+| `422` | `"a task cannot depend on itself"`, `"that would make the tasks wait for each other in a circle"`, `"a task can wait for at most 50 others"`. |
+
+### Recurring tasks
+
+Set `recurrence` on a top-level task with `PATCH /api/v1/tasks/{task}`.
+When the task moves into a `done` status — by hand, on a board or through
+an [automation](#automations) — Tasks creates the **next occurrence**:
+
+- in the same list, in the space's first `not_started` status, with a new key;
+- start and due dates moved on by `interval` days, weeks, months or years
+  (31 January + 1 month is 28 February);
+- with the same title, description, priority, assignees, watchers, tags,
+  custom field values, estimate and checklist (unticked);
+- without subtasks, comments, attachments or time entries.
+
+The rule moves to the new task (the finished one has `recurrence: null`),
+so reopening and finishing the old task again does not create another
+copy. The old task's activity says `recurred` with the new key.
+
+### Time tracking
+
+| Method and path | Who | Body | Response |
+| --- | --- | --- | --- |
+| `GET /api/v1/tasks/{task}/time` | `view` | none | `{"entries":[TimeEntry…],"total_minutes":…,"estimate_minutes":…}` |
+| `POST /api/v1/tasks/{task}/time` | `edit` | `minutes` (1–1,440, required), `spent_on` (`YYYY-MM-DD`, default today), `note` (up to 1,000) | `201` TimeEntry |
+| `DELETE /api/v1/time/{entry}` | the person who logged it (with `edit`), or `manage` on the space | none | `204` |
+
+```sh
+curl -s -X POST $TASKS/api/v1/tasks/CREW-43/time -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"minutes":45,"spent_on":"2026-11-06","note":"template"}'
+```
+
+```json
+{"id":"te1…","task_id":"f04d6e2a-…","user_id":"0f3c…","user_name":"Alice Example","minutes":45,"spent_on":"2026-11-06","note":"template","created_at":"2026-11-06T13:10:00Z"}
+```
+
+Totals per person for a list: [`GET /api/v1/lists/{list}/time-report`](#get-apiv1listslisttime-reportfromto).
+Errors: `422 details.minutes = "1 to 1440 (one day)"`, `details.spent_on`,
+`details.note`; `403 "only the person who logged the time or a space
+manager can remove it"`.
 
 ### `DELETE /api/v1/tasks/{task}`
 
@@ -660,9 +1184,11 @@ space manager can delete it"`.
 | --- | --- | --- |
 | `GET /api/v1/spaces/{space}/trash` | `manage` | `{"tasks":[{"id","key","title","list_name","deleted_at","deleted_by"}]}` |
 | `POST /api/v1/tasks/{task}/restore` | `manage` on its space | `200` Task, back in its list |
-| `DELETE /api/v1/tasks/{task}/purge` | `manage` on its space | `204`; gone for good (audit-logged) |
+| `DELETE /api/v1/tasks/{task}/purge` | `manage` on its space | `204`; gone for good with its attachment files (audit-logged) |
 
-Trashed tasks answer `404` on every normal task endpoint.
+Trashed tasks answer `404` on every normal task endpoint. Tasks that stay
+in the trash longer than `retention.trash_days` (default 30) are purged
+automatically; see [Settings](#settings).
 
 ### Comments
 
@@ -849,24 +1375,42 @@ example `"set_status needs status_id"`, `"tag is not in this space"`).
 
 ### `POST /api/internal/departments`
 
-Who may call: **HR, server to server**, when a department is created or
-renamed. Authenticated with `Authorization: Bearer <TASKS_SERVICE_TOKEN>`
-(constant-time compare), not a user token. The route answers a plain `404`
-while `TASKS_SERVICE_TOKEN` is empty, so it is off by default. The token is
-a secret; see [Secrets](../../operations/secrets.md).
+Who may call: **HR, server to server**. HR sends this request to every
+entry of its `DEPARTMENT_HOOKS` setting when a department is **created**,
+**saved** (renamed, default roles changed) or **archived** (see HR's
+[department hooks](../hr/api.md#department-hooks-outbound)). Authenticated
+with `Authorization: Bearer <TASKS_SERVICE_TOKEN>` (constant-time
+compare), not a user token. The route answers a plain `404` while
+`TASKS_SERVICE_TOKEN` is empty, so it is off by default. The token is a
+secret; see [Secrets](../../operations/secrets.md).
+
+**The contract.** This is the body HR's `DepartmentService` sends; Tasks
+accepts exactly that and **ignores fields it does not know**, so HR can
+add fields before Tasks uses them.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `id` | yes | HR's department id (UUID); the link between the department and its space. |
-| `slug` | yes | For example `front-of-house`; used to pick a free space key. |
+| `slug` | yes | For example `front-of-house`; used to pick a free space key. Never changes in HR. |
 | `name` | yes | For example `Front of House`. |
-| `group` | yes | The department's Keycloak group, for example `dept-front-of-house`. |
+| `group` | yes | The department's Keycloak group, for example `dept-front-of-house`. Used only when the space is created. |
+| `archived` | no | `true` when the department is archived; absent or `false` means active. |
 
 The **first** call for a department creates a **closed** space with the
 default statuses, the lists "To do", "Handoffs" and "Done archive", and an
-`edit` grant for the department's group, then answers `201`. **Later**
-calls only keep the space name in sync and answer `200`; lists, statuses
-and extra grants stay in the department's hands. Safe to repeat.
+`edit` grant for the department's group (normalised like every
+[group grant](#sharing-grants)), then answers `201`. **Later** calls keep
+the space name and archived state in sync with HR and answer `200`;
+lists, statuses and extra grants stay in the department's hands. Safe to
+repeat, and two first calls at the same time still create one space.
+Creating the group grant and archiving or restoring the space are written
+to the [audit log](#audit-log) with the actor *System*.
+
+| HR event | HR sends | Tasks does |
+| --- | --- | --- |
+| Department created | `{id, slug, name, group}` | Creates the space (`201`). |
+| Department saved | `{id, slug, name, group}` | Renames the space if needed; restores it if it was archived (`200`). |
+| Department archived | `{id, slug, name, group, "archived": true}` | Archives the space: hidden from the sidebar and search, nothing deleted (`200`). |
 
 ```sh
 curl -s --cacert /etc/conservices-internal-ca/ca.crt -X POST https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments \
@@ -879,7 +1423,7 @@ Response: the Space (without capability flags).
 | Status | When |
 | --- | --- |
 | `201` | Space created. |
-| `200` | Space already existed; name synced. |
+| `200` | Space already existed; name and archived state synced. |
 | `400` | Malformed JSON. |
 | `401` | `"invalid service token"`. |
 | `404` | `TASKS_SERVICE_TOKEN` empty: endpoint off. |
@@ -891,6 +1435,119 @@ A NetworkPolicy only lets HR's pods reach this path; see
 
 ---
 
+## Admin
+
+Who may call: `settings.manage` (`tasks-admin`). Anyone else gets `403`.
+
+### Audit log
+
+#### `GET /api/v1/audit`
+
+The audit log, **newest first**: deleted and purged tasks, lists, spaces,
+comments, attachments and custom fields; grants given and removed;
+archived and restored spaces; imports; settings changes. Each entry keeps a
+snapshot (key, title, name, counts), so it still makes sense after the
+thing is gone.
+
+| Query | Meaning |
+| --- | --- |
+| `entity` | `task`, `list`, `space`, `comment`, `attachment`, `grant`, `settings` or `field`. |
+| `action` | For example `deleted`, `purged`, `granted`, `revoked`, `archived`, `restored`, `imported`, `updated`. |
+| `actor` | A user id. |
+| `entity_id` | The id of the task, list, space… |
+| `since`, `until` | RFC 3339 or `YYYY-MM-DD`; `since` inclusive, `until` exclusive. |
+| `limit`, `cursor` | [Paging](#paging), towards older entries. |
+
+```sh
+curl -s "$TASKS/api/v1/audit?entity=task&action=deleted&since=2026-11-01" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"entries":[{"id":"al1…","created_at":"2026-11-06T14:02:11Z","actor_id":"0f3c…","actor_name":"Alice Example",
+  "entity":"task","entity_id":"f04d6e2a-…","action":"deleted","data":{"key":"CREW-43","title":"Print badges","subtasks":0}}]}
+```
+
+`actor_id` is `null` and `actor_name` is `"System"` for entries made by
+the retention job or HR's department hook. Errors: `422 details.entity`
+(`"unknown entity"`), `details.actor`/`details.entity_id` (`"must be a
+uuid"`), `details.since`/`details.until`, `400 "invalid cursor"`.
+
+The web app shows the same at *Settings → Audit log*.
+
+### Settings
+
+#### `GET /api/v1/settings`
+
+Retention and reminder settings with where each value comes from, and
+whether email is configured (never the password).
+
+```sh
+curl -s $TASKS/api/v1/settings -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "settings": {
+    "retention": {"trash_days": 30, "notification_days": 90, "audit_days": 730, "automation_run_days": 90},
+    "reminders": {"due_soon_days": 1}
+  },
+  "sources": {"retention.trash_days": "tasks", "retention.audit_days": "den", "…": "default"},
+  "definitions": [{"key": "retention.trash_days", "default": 30, "min": 0, "max": 3650,
+                   "description": "Days a deleted task stays in the trash before it is purged for good. 0 = never purge."}],
+  "email": {"configured": true, "source": "den", "host": "smtp.example.org", "port": 587, "from": "tasks@example.org", "security": "starttls"}
+}
+```
+
+| Setting | Default | Meaning (`0` = keep forever / off) |
+| --- | --- | --- |
+| `retention.trash_days` | 30 | Deleted tasks are purged from the trash after this many days, with their attachment files. |
+| `retention.notification_days` | 90 | Read Inbox notifications are deleted after this many days. Unread ones stay. |
+| `retention.audit_days` | 730 | Audit log entries are deleted after this many days. |
+| `retention.automation_run_days` | 90 | Automation run history is deleted after this many days. |
+| `reminders.due_soon_days` | 1 | Assignees get a due-soon reminder this many days before the due date and on the day. |
+
+!!! warning "Retention defaults are pending legal review"
+    The defaults are placeholders. Set the values your organisation's
+    data-protection rules require, in Den's module settings (when paired)
+    or here.
+
+`sources` says `default`, `tasks` (set here) or `den` (sent by Den in its
+module settings; see [Configuration](configuration.md#settings-from-den)).
+`email.source` is `den`, `tasks` (the `SMTP_*` environment) or `none`.
+
+#### `PUT /api/v1/settings`
+
+Changes Tasks' own values. Send only what changes; `null` resets a setting
+to its default. Recorded in the audit log (`settings` / `updated`).
+
+```sh
+curl -s -X PUT $TASKS/api/v1/settings -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"retention":{"trash_days":14},"reminders":{"due_soon_days":null}}'
+```
+
+Response `200`: the same shape as `GET`. Errors: `422` with
+`details["retention.trash_days"]` = `"out of range"`, `"unknown setting"`,
+or `"managed by Den; change it in Den's module settings"`.
+
+#### `POST /api/v1/settings/email/test`
+
+Sends a test email to **your own** address with the current SMTP settings.
+
+```sh
+curl -s -X POST $TASKS/api/v1/settings/email/test -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+```
+
+```json
+{"sent_to":"alice@example.org"}
+```
+
+| Status | When |
+| --- | --- |
+| `409` | Email is not configured, or your account has no email address. |
+| `503` | The mail server refused or could not be reached; the message says why (for example `smtp auth: 535 …`). |
+
+---
+
 ## Den connection
 
 Who may call: `settings.manage` (`tasks-admin`). The same pairing API as
@@ -898,26 +1555,66 @@ every module; see [Pairing](../../concepts/pairing.md).
 
 | Method and path | Result |
 | --- | --- |
-| `GET /api/v1/den` | `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at"}`, or `{"paired": false}`. |
-| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`; `422 pairing_failed` with the reason. |
+| `GET /api/v1/den` | `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at", "last_error", "revoked": false}`, or `{"paired": false, "revoked": false}`. |
+| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`; `422 pairing_failed` with the reason. The URL's host must be in `DEN_ALLOWED_HOSTS` unless `DEN_INTERNAL_URL` is set (see [Configuration](configuration.md)). Pairing again also clears a revoked state. |
 | `POST /api/v1/den/sync` | Fetch Den's brand and settings now; `409` when not paired, `502` when Den fails. |
 | `DELETE /api/v1/den/pair` | Unpair, `204`. |
+
+**Revoked credential.** When Den answers a sync with `401` (the pairing
+was revoked or the module removed in Den), Tasks marks the link revoked
+and keeps using the last brand and settings it got from Den. It never pairs
+again by itself. `GET /api/v1/den` then says:
+
+```sh
+curl -s $TASKS/api/v1/den -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "paired": true,
+  "den_base_url": "https://den.example.org",
+  "module_id": "3c1f6a2e-8d4b-4f0a-9b7e-2a5d6c8e1f00",
+  "paired_at": "2026-11-02T09:14:03Z",
+  "synced_at": "2026-11-11T15:58:41Z",
+  "last_error": "Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair",
+  "revoked": true,
+  "revoked_at": "2026-11-11T15:59:41Z"
+}
+```
+
+The public `GET /api/den/state` reports `{"mode":"required","paired":true,"revoked":true}`.
+The web app shows *Den rejected this module's credential* on *Settings →
+Den connection* and in a banner for admins; to fix it, create a new
+pairing URL in Den (*Admin → Modules → Pair*) and paste it there.
 
 ---
 
 ## All endpoints at a glance
 
-71 routes.
-
 | Method | Path | Who |
 | --- | --- | --- |
 | GET | `/livez`, `/readyz`, `/api/health` | anyone |
-| GET | `/api/role-catalog` | anyone |
+| GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or signed in |
+| GET | `/api/portal/todos` | Den's pairing credential |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | anyone |
 | POST | `/api/internal/departments` | `TASKS_SERVICE_TOKEN` |
 | GET | `/api/v1/me` | signed in |
-| GET, PUT | `/api/v1/me/preferences` | signed in |
-| GET | `/api/v1/users`, `/api/v1/my-work`, `/api/v1/search` | signed in |
+| GET, PUT | `/api/v1/me/preferences`, `/api/v1/me/notifications` | signed in |
+| GET | `/api/v1/users`, `/api/v1/my-work`, `/api/v1/search`, `/api/v1/calendar` | signed in |
+| GET | `/api/v1/stream`, `/api/v1/stream/status` | signed in |
+| GET | `/api/v1/audit` | `settings.manage` |
+| GET, PUT | `/api/v1/settings` | `settings.manage` |
+| POST | `/api/v1/settings/email/test` | `settings.manage` |
+| GET | `/api/v1/spaces/{space}/fields` | `view` |
+| POST | `/api/v1/spaces/{space}/fields` | `manage` |
+| PATCH, DELETE | `/api/v1/fields/{field}` | `manage` |
+| GET | `/api/v1/lists/{list}/time-report` | `view` |
+| POST | `/api/v1/lists/{list}/import` | `edit` |
+| GET | `/api/v1/tasks/{task}/comments`, `/events`, `/time` | `view` |
+| POST | `/api/v1/tasks/{task}/time` | `edit` |
+| DELETE | `/api/v1/time/{entry}` | who logged it, or `manage` |
+| POST | `/api/v1/tasks/{task}/dependencies` | `edit` (and `view` on the other task) |
+| DELETE | `/api/v1/tasks/{task}/dependencies/{other}` | `edit` |
 | GET | `/api/v1/inbox`, `/api/v1/inbox/unread-count` | signed in |
 | POST | `/api/v1/inbox/read` | signed in |
 | GET, PUT | `/api/v1/favorites` | signed in (`view` on the target to add) |
@@ -986,6 +1683,46 @@ a second per person, and honour `Retry-After`.
 **`503` on attachments.** `S3_ENDPOINT` is not set; attachments are
 optional and everything else works. See [Configuration](configuration.md).
 
+**Den's portal shows no Tasks to-dos.** Den calls
+`GET /api/portal/todos` with the pairing credential. `401` means pair
+again (the credential was revoked or never stored). An empty list means
+that person has no open assigned task, or `TASKS_PUBLIC_URL` is unset so
+Den drops every item (the link would not be a full `http` address). On
+Kubernetes, Den's backend must be allowed to reach Tasks on port 8080
+(the Tasks chart admits it when `networkPolicy.den.enabled` is true).
+
 **`POST /api/internal/departments` answers `404`.** `TASKS_SERVICE_TOKEN`
 is empty on Tasks. Set the same value in Tasks and HR
 ([Secrets](../../operations/secrets.md)).
+
+**A department's space did not appear.** HR only logs failed hooks (its
+save still succeeds). Check HR's log for `department hook failed`
+(network: HR needs egress to `conservices-tasks`) or `department hook
+refused the update` with the status (`401`: tokens differ; `503
+den_pairing_required`: pair Tasks with Den first). Saving the department
+again in HR retries.
+
+**The stream disconnects every minute or two.** A proxy cuts long
+requests. The Helm chart routes `/api/v1/stream` without a timeout
+(`frontend.websocketPathRegex`); for your own proxy, allow idle reads of at
+least 30 seconds and turn buffering off for that path. The web app falls
+back to 15-second polling meanwhile.
+
+**Events arrive in bursts minutes late.** A proxy buffers the stream. The
+backend sends `X-Accel-Buffering: no` (nginx honours it); other proxies need
+buffering switched off for `text/event-stream`.
+
+**`422 "managed by Den"` on `PUT /api/v1/settings`.** Den's module
+settings set that value; change it in Den, or remove it there to manage it
+in Tasks.
+
+**Nobody gets emails.** `GET /api/v1/settings` shows `"email":
+{"configured": false}`: set `SMTP_HOST` and `SMTP_FROM` (or let Den send
+SMTP settings). Configured but still nothing: send a test email (`POST
+/api/v1/settings/email/test`) to see the server's answer, and check that
+people have `email` on in `GET /api/v1/me/notifications` and an address
+(`has_address`).
+
+**An import skipped people or tags.** People are only matched if they have
+signed in to Tasks at least once; tags are only created for space
+managers. The `warnings` of a dry run list every row affected.

@@ -365,7 +365,7 @@ networkPolicy:
   allowFromModules: true
   # den-backend may call module backends on this port: their role catalog
   # (who sees a module on the portal) and portal to-dos. Each module's own
-  # policy must admit den-backend too.
+  # policy must admit den-backend too (Tasks does, via networkPolicy.den).
   allowToModules:
     enabled: true
     port: 8080

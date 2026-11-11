@@ -99,8 +99,16 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Values.existingSecret }}
-          {{- with .Values.backend.extraEnv }}
           env:
+            # Also in envFrom; named here so a Secret without the key stops
+            # the pod with a clear CreateContainerConfigError.
+            - name: DEN_LINK_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: DEN_LINK_ENCRYPTION_KEY
+                  optional: {{ eq (.Values.config.APP_ENV | default "production") "development" }}
+          {{- with .Values.backend.extraEnv }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
@@ -210,6 +218,21 @@ spec:
         - name: frontend
           image: {{ include "tasks.image" (dict "root" . "name" "frontend") | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          {{- $sh := .Values.frontend.securityHeaders | default dict }}
+          # Origins for the Content-Security-Policy. The image writes both
+          # snippets under /etc/nginx/snippets from these at start-up.
+          # EXTRA_FRAME_SRC stays empty: Tasks does not frame sandboxed HTML.
+          env:
+            - name: KEYCLOAK_ORIGIN
+              value: {{ include "tasks.keycloakOrigin" . | quote }}
+            - name: DEN_ORIGIN
+              value: {{ $sh.denOrigin | default "" | quote }}
+            - name: S3_ORIGIN
+              value: {{ $sh.s3Origin | default "" | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ $sh.extraConnectSrc | default "" | quote }}
+            - name: EXTRA_FRAME_SRC
+              value: {{ $sh.extraFrameSrc | default "" | quote }}
           ports:
             - name: {{ $scheme }}
               containerPort: {{ .Values.frontend.port }}
@@ -252,6 +275,9 @@ spec:
             - name: frontend-config
               mountPath: /etc/conservices
               readOnly: true
+            # Written at start-up (the root file system is read-only).
+            - name: nginx-snippets
+              mountPath: /etc/nginx/snippets
             - name: cache
               mountPath: /var/cache/nginx
             - name: run
@@ -267,6 +293,8 @@ spec:
         - name: frontend-config
           configMap:
             name: {{ .Release.Name }}-frontend-config
+        - name: nginx-snippets
+          emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: run

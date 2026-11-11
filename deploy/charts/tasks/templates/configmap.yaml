@@ -61,6 +61,9 @@ data:
         proxy_ssl_server_name         on;
         proxy_ssl_session_reuse       on;
         {{- end }}
+        # Browser security headers (shared snippet) are included in each
+        # location that serves the app, not here and not in the /api/
+        # locations: the backend sends its own, stricter API headers.
         gzip on;
         gzip_types text/plain text/css application/json application/javascript image/svg+xml;
         gzip_min_length 1024;
@@ -94,11 +97,13 @@ data:
             proxy_buffering off;
         }
         location = /manifest.webmanifest {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             types {} default_type "application/manifest+json";
             try_files $uri =404;
         }
         location = /brand.json {
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
             try_files $uri =404;
         }
@@ -106,16 +111,25 @@ data:
         # mounted at /etc/conservices. Never cached, so a change shows on reload.
         location = /config.json {
             alias /etc/conservices/config.json;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-store" always;
         }
 
         location /static/ {
             expires 1y;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "public, immutable" always;
             try_files $uri =404;
         }
+        # Hidden iframe target for oidc-client-ts silent renew. This one page
+        # may be framed by the app itself; every other response stays unframeable.
+        location = /silent-callback.html {
+            include /etc/nginx/snippets/security-headers-frame-self.conf;
+            add_header Cache-Control "no-cache" always;
+        }
         location / {
             try_files $uri $uri/ /index.html;
+            include /etc/nginx/snippets/security-headers.conf;
             add_header Cache-Control "no-cache" always;
         }
     }

@@ -195,7 +195,7 @@ with each module's docs):
 | HR | `DATABASE_URL`, `DEN_LINK_ENCRYPTION_KEY`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`hr-provisioner`, can manage users), `HR_SERVICE_TOKEN`, `LEARN_SERVICE_TOKEN`, the tokens inside `OFFBOARD_HOOKS` and `DEPARTMENT_HOOKS`, `HR_DIRECTORY_TOKEN` (optional), SMTP password if any; with Google Workspace, the service-account key in its own Secret `hr-google-workspace` (key `credentials.json`) | `conservices-hr` |
 | Learn | `DATABASE_URL`, `S3_*` keys, `KEYCLOAK_CLIENT_SECRET` (`learn-provisioner`), `LEARN_SERVICE_TOKEN`, `LEARN_FEEDBACK_PEPPER` (required outside development), `DEN_LINK_ENCRYPTION_KEY` (required outside development), `HR_SERVICE_TOKEN` (when HR reads the role catalog), `TELEGRAM_BOT_TOKEN`, SMTP password if any | `conservices-learn` |
 | Wiki | `DATABASE_URL`, `S3_*` keys, `WIKI_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY` (required), `HR_SERVICE_TOKEN` (when HR reads Wiki's role catalog); optional for the share dialog's group picker: `HR_DIRECTORY_TOKEN` (equals the token HR accepts on `GET /api/internal/directory/groups`) or `IDP_DIRECTORY_CLIENT_SECRET` (a read-only Keycloak client, see [Wiki configuration](../modules/wiki/configuration.md#group-picker)) | `conservices-wiki` |
-| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN` | `conservices-tasks` |
+| Tasks | `DATABASE_URL`, `S3_*` keys, `TASKS_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY` (required; the chart stops the pod without it), `HR_SERVICE_TOKEN` if HR reads the role catalog, `SMTP_USERNAME` and `SMTP_PASSWORD` if Tasks uses its own mail server | `conservices-tasks` |
 | Desk | `DATABASE_URL`, `S3_*` keys, `DESK_SECRET_KEY` (encrypts stored mailbox passwords) and `DESK_SECRET_KEY_PREVIOUS` while rotating, `SMTP_PASSWORD` for notifications if any; Secret `desk-google` with the Google service account key (`service-account.json`) if Google Workspace mailboxes are used | `conservices-desk` |
 | Finance | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read and write on the PDF bucket; delete is not needed), `DEN_LINK_ENCRYPTION_KEY` (required; see below), `HR_SERVICE_TOKEN` (optional, lets HR read the role catalog) | `conservices-finance` |
 | Rally | `DATABASE_URL`, `S3_*` keys, `DEN_LINK_ENCRYPTION_KEY`, `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` | `conservices-rally` |
@@ -242,6 +242,18 @@ it, restart `stash-backend`. Both are optional; empty values switch the
 feature off. Dev values: empty in `overlays/example-stash/secrets.yaml` and
 `.env.example`.
 
+**Tasks' SMTP login** (`SMTP_USERNAME`, `SMTP_PASSWORD` in `tasks-secrets`,
+namespace `conservices-tasks`) is only needed when Tasks sends email
+through its own mail server; when it is paired with a Den that sends SMTP
+settings, Den's login is used and these stay empty. Source: your mail
+provider, ideally an account only for Tasks. Rotate: change the password at
+the provider, update it in your secret manager, then
+`kubectl rollout restart -n conservices-tasks deploy/tasks-backend`. For a
+local trial only: Mailpit needs no login. The GitOps reference does not
+have an OpenBao path for it yet; add one under
+`conservices/modules/tasks/smtp` if you use it.
+See [Tasks configuration → Email](../modules/tasks/configuration.md#email).
+
 **Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
 module needs these from the release in which it adopts the shared package;
 its changelog says when, and its chart then lists the key under
@@ -252,7 +264,7 @@ its changelog says when, and its chart then lists the key under
 | `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
 | `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
-| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally, Stash 1.0, Finance, Learn and Wiki read it from their first release (`rally-secrets`, `stash-secrets`, `finance-secrets`, `learn-secrets`, `wiki-secrets`, key `HR_SERVICE_TOKEN`). The GitOps template generates one value when HR is enabled; Stash receives it when Stash is enabled too. Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and each module's Secret | `conservices-hr` and the module's namespace | HR, and Wiki, Finance, Rally, Tasks, Stash, Learn, Desk | **Secret.** One value per installation, at least 32 characters. HR sends it to read role catalogs; each of those modules checks the same value. Rally, Stash 1.0, Finance, Learn, Wiki and Tasks read it from their first release (`rally-secrets`, `stash-secrets`, `finance-secrets`, `learn-secrets`, `wiki-secrets`, key `HR_SERVICE_TOKEN`). The GitOps template generates one value when HR is enabled; Stash receives it when Stash is enabled too. Allows only catalog reads. Rotate as in [HR service token](#hr-service-token). |
 
 ### HR service token
 
