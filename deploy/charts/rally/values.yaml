@@ -161,9 +161,12 @@ frontend:
   clientMaxBodySize: 50m
   # Security headers of both web apps. The Content-Security-Policy lets the
   # browser connect to the app, its sign-in server (oidcAuthority of its
-  # /config.json) and config.S3_PUBLIC_BASE_URL. Add other origins here,
-  # e.g. an attendee identity provider whose token endpoint is on another
-  # host: ["https://login.example.net"].
+  # /config.json: the attendee realm on the submission site) and
+  # config.S3_PUBLIC_BASE_URL (also allowed as an image source). Add other
+  # connect-src origins here, not frame-src, for example an attendee
+  # identity provider whose token endpoint is on another host:
+  # ["https://login.example.net"]. EXTRA_FRAME_SRC stays empty.
+  # /silent-callback.html uses the same origins with frame-ancestors 'self'.
   cspConnectSrc: []
   terminationGracePeriodSeconds: 30
   # nginx keeps serving this long after it is told to stop, while the

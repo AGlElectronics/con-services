@@ -135,6 +135,12 @@ server {
         add_header Cache-Control "no-store" always;
     }
 
+    # Hidden iframe target for silent sign-in. Same-origin framing only.
+    location = /silent-callback.html {
+        include /etc/nginx/snippets/security-headers-frame-self.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+
     location /static/ {
         expires 1y;
         include /etc/nginx/snippets/security-headers.conf;
@@ -154,20 +160,28 @@ server {
 {{- with . }}{{ $u := urlParse . }}{{ if and $u.scheme $u.host }}{{ printf "%s://%s" $u.scheme $u.host }}{{ end }}{{ end -}}
 {{- end -}}
 
-{{/* Security headers of a Rally web app: con-services
-shared/nginx/security-headers.conf with the sign-in server (from the app's
-/config.json oidcAuthority) and the S3 upload origin (config.S3_PUBLIC_BASE_URL)
-filled in, plus frontend.cspConnectSrc. Args: root, app (frontend|submit). */}}
+{{/* Security headers of a Rally web app: the shared nginx policy with the
+sign-in server (from the app's /config.json oidcAuthority; the attendee
+realm for the submission site) and the S3 upload origin
+(config.S3_PUBLIC_BASE_URL). frontend.cspConnectSrc is connect-src only.
+Args: root, app (frontend|submit), frameSelf (true for /silent-callback.html). */}}
 {{- define "rally.securityHeaders" -}}
 {{- $web := include "rally.webConfig" (dict "root" .root "app" .app) | fromJson -}}
 {{- $kc := include "rally.origin" ($web.oidcAuthority | default "") -}}
 {{- $s3 := include "rally.origin" (.root.Values.config.S3_PUBLIC_BASE_URL | default "") -}}
 {{- $extra := .root.Values.frontend.cspConnectSrc | default list -}}
 {{- $connect := concat (list "'self'" $kc $s3) $extra | compact | uniq | join " " -}}
-{{- $frame := concat (list "'self'" $kc) $extra | compact | uniq | join " " -}}
+{{- $frame := list "'self'" $kc | compact | join " " -}}
+{{- $img := list "'self'" "data:" "blob:" $s3 | compact | join " " -}}
 {{- $form := list "'self'" $kc | compact | join " " -}}
-add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src {{ $connect }}; frame-src {{ $frame }}; frame-ancestors 'none'; form-action {{ $form }}; base-uri 'self'; object-src 'none'" always;
-add_header X-Frame-Options "DENY" always;
+{{- $ancestors := "none" -}}
+{{- $xfo := "DENY" -}}
+{{- if .frameSelf -}}
+{{- $ancestors = "self" -}}
+{{- $xfo = "SAMEORIGIN" -}}
+{{- end -}}
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src {{ $img }}; font-src 'self' data:; connect-src {{ $connect }}; frame-src {{ $frame }}; frame-ancestors '{{ $ancestors }}'; form-action {{ $form }}; base-uri 'self'; object-src 'none'" always;
+add_header X-Frame-Options {{ $xfo | quote }} always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" always;
@@ -276,6 +290,10 @@ spec:
             - name: nginx-conf
               mountPath: /etc/nginx/snippets/security-headers.conf
               subPath: security-headers-{{ .component }}.conf
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/snippets/security-headers-frame-self.conf
+              subPath: security-headers-frame-self-{{ .component }}.conf
               readOnly: true
             {{- if $tls }}
             - name: nginx-conf

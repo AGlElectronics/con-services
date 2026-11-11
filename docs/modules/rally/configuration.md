@@ -319,26 +319,37 @@ Both web apps follow the platform's
 nginx in both web app images sends a Content Security Policy and the other
 browser security headers on every page (not on `/api/`, where the backend
 sets its own). The policy allows scripts, styles and fonts only from the app
-itself, and connections only to the app, the sign-in server and the S3
-upload address. The image fills in those two addresses when the container
-starts, from these environment variables of the **web app** container:
+itself, connections to the app, the sign-in server and the S3 upload
+address, and images from that upload address. The image fills the origins
+in when the container starts, from these environment variables of the
+**web app** container (the shared template; empty leaves the origin out):
 
 | Name | Default | What it does |
 | --- | --- | --- |
-| `KEYCLOAK_ORIGIN` | none | The sign-in server's origin (scheme and host, no path), for example `https://auth.example.org`. On the submission site: the attendee realm's server. Empty: allowed only with dev sign-in. |
-| `S3_ORIGIN` | none | The origin browsers upload attachments to: the scheme and host of the backend's `S3_PUBLIC_BASE_URL`, for example `https://s3.example.org`. Empty: uploads fail with a CSP error in the browser console. |
+| `KEYCLOAK_ORIGIN` | none | The sign-in server's origin (scheme and host, no path), for example `https://auth.example.org`. On the submission site: the attendee realm's server. The audience `events-public-api` is not an origin. Empty: allowed only with dev sign-in. |
+| `S3_ORIGIN` | none | The origin browsers upload attachments to, and may show images from: the scheme and host of the backend's `S3_PUBLIC_BASE_URL`, for example `https://s3.example.org`. Empty: uploads fail with a CSP error in the browser console. |
+| `DEN_ORIGIN` | none | Leave empty. Rally serves Den's brand from its own API. |
+| `EXTRA_CONNECT_SRC` | none | Anything else the browser must call. The chart's `frontend.cspConnectSrc` is this list. |
+| `EXTRA_FRAME_SRC` | none | Leave empty. Rally does not frame sandboxed HTML. |
 
-The Helm chart fills both in from `config.OIDC_ISSUER_URL` (or
-`config.ATTENDEE_OIDC_ISSUER_URL` for the submission site) and
-`config.S3_PUBLIC_BASE_URL`; see [Helm values](#helm-values). Check the
-result:
+`/silent-callback.html` is the one exception on both web apps. A reload
+signs in again by loading that page in a hidden frame of the app itself,
+which `frame-ancestors 'none'` would block. That exact location uses the
+same policy with `frame-ancestors 'self'` and `X-Frame-Options:
+SAMEORIGIN`. Every other page stays unframeable. See
+[Silent sign-in iframe](../../concepts/shared-code.md#silent-sign-in-iframe).
+
+The Helm chart fills `KEYCLOAK_ORIGIN` from `config.OIDC_ISSUER_URL` (or
+`config.ATTENDEE_OIDC_ISSUER_URL` for the submission site) and `S3_ORIGIN`
+from `config.S3_PUBLIC_BASE_URL`, and mounts both snippets; see
+[Helm values](#helm-values). Check the result:
 
 ```sh
 curl -sI https://events.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
 ```
 
 ```text
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://auth.example.org https://s3.example.org; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://s3.example.org; font-src 'self' data:; connect-src 'self' https://auth.example.org https://s3.example.org; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; form-action 'self' https://auth.example.org; base-uri 'self'; object-src 'none'
 x-frame-options: DENY
 x-content-type-options: nosniff
 referrer-policy: strict-origin-when-cross-origin
@@ -356,7 +367,26 @@ permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
 - **The container logs `20-envsubst-on-templates.sh: ERROR: … is not
   writable`**: the root file system is read-only and nothing mounted the
   headers file; the image then uses its built-in copy without outside
-  origins. The Helm chart mounts its own file and switches this step off.
+  origins. The Helm chart mounts its own files and switches this step off.
+- **A reload asks for the password again, and the console says framing
+  `/silent-callback.html` violated `frame-ancestors 'none'`**: that
+  location is still including `security-headers.conf`. It must include
+  `security-headers-frame-self.conf`. The image's nginx configs do; a
+  nginx file you mount yourself has to as well.
+
+Check the silent sign-in page on its own. `frame-ancestors` is `'self'`
+and `X-Frame-Options` is `SAMEORIGIN`. The home page still says `'none'`
+and `DENY`. On the submission site, use that host and the attendee realm's
+server in `KEYCLOAK_ORIGIN`.
+
+```sh
+curl -sI https://submit.example.org/silent-callback.html | grep -i -E 'content-security|x-frame'
+```
+
+```text
+content-security-policy: … frame-src 'self' https://auth.example.org; frame-ancestors 'self'; …
+x-frame-options: SAMEORIGIN
+```
 
 ## Frontend build settings
 
@@ -367,7 +397,7 @@ installation-specific; the sign-in settings live in `/config.json` (above).
 | --- | --- | --- |
 | `RALLY_APP` | `staff` | `staff` builds the staff app (`rally-frontend`), `submit` the public submission site (`rally-submit`). |
 | `RALLY_VERSION` | `dev` | Version shown in the app. |
-| `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config. The Helm chart (and the Kustomize manifests) mount their own. Every one includes `/etc/nginx/snippets/security-headers.conf` ([Web app security headers](#web-app-security-headers)). |
+| `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config (`nginx.conf`, `nginx.stack.conf` or `nginx.k8s.conf`). The Helm chart mounts its own. Every one includes the security-header snippets, and `location = /silent-callback.html` includes the frame-self snippet ([Web app security headers](#web-app-security-headers)). |
 
 ```sh
 docker build -f infra/Dockerfile.frontend \
@@ -390,7 +420,7 @@ maps these settings as follows:
 | --- | --- |
 | `config.*` | ConfigMap `<release>-config`, loaded into the backend with `envFrom`. Every non-secret variable above. |
 | `existingSecret` (default `rally-secrets`) | Loaded with `envFrom`; must hold `DATABASE_URL`, `DEN_LINK_ENCRYPTION_KEY` and the S3 keys, optionally `HR_SERVICE_TOKEN`, `TELEGRAM_BOT_TOKEN` and, during a rotation, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`. The chart never creates it. |
-| `frontend.cspConnectSrc` (default `[]`) | Extra origins added to the web apps' `connect-src` and `frame-src`, for example an attendee identity provider whose token endpoint lives on another host. The sign-in server and S3 origins are derived from `config` ([Web app security headers](#web-app-security-headers)). |
+| `frontend.cspConnectSrc` (default `[]`) | Extra origins added to the web apps' `connect-src` only, for example an attendee identity provider whose token endpoint lives on another host. The sign-in server (staff realm, or the attendee realm on the submission site) and the S3 origin are derived from `config`. Images from that S3 origin are allowed. `frame-src` stays the app and the sign-in server ([Web app security headers](#web-app-security-headers)). |
 | `accessConfig.existingConfigMap` (default `rally-access-config`) | Mounted at `accessConfig.mountPath` (`/etc/rally`); `ACCESS_CONFIG_PATH` is set to it. |
 | `image.backend`, `image.migrate`, `image.frontend` | Images; `tag` is required. |
 | `submit.enabled`, `submit.image`, `submit.host` | Optional submission site Deployment, Service, and the host of its HTTPRoute (or Ingress). `submit.image.repository` defaults to `ghcr.io/aglelectronics/rally-submit`, an empty `submit.image.tag` to `image.frontend.tag`. |

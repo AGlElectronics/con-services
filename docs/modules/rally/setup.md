@@ -606,7 +606,7 @@ below.
       events-frontend:
         image: ghcr.io/aglelectronics/rally-frontend:1.0.0-1
         <<: *hardening
-        # nginx writes its security headers to /etc/nginx/snippets at start
+        # nginx writes both security-header snippets to /etc/nginx/snippets at start
         tmpfs: ["/tmp", "/etc/nginx/snippets"]
         networks: [internal]
         environment:
@@ -632,8 +632,14 @@ below.
     With managed S3 reachable from browsers, leave `S3_PUBLIC_BASE_URL`
     unset. `KEYCLOAK_ORIGIN` and `S3_ORIGIN` go into the web apps'
     Content Security Policy ([Web app security headers](configuration.md#web-app-security-headers));
-    `S3_ORIGIN` is where browsers upload attachments (the scheme and host of
-    `S3_PUBLIC_BASE_URL`, or of the bucket's public address).
+    `S3_ORIGIN` is where browsers upload attachments and may load images
+    from (the scheme and host of `S3_PUBLIC_BASE_URL`, or of the bucket's
+    public address). On the submission site `KEYCLOAK_ORIGIN` is the
+    attendee realm's server (here the same host as staff; the audience
+    `events-public-api` is not an origin). Leave `EXTRA_FRAME_SRC` unset.
+    `./rally-web/nginx.conf` is `infra/nginx.stack.conf` from the Rally
+    repository: it must include `security-headers-frame-self.conf` from
+    `location = /silent-callback.html` and the main snippet everywhere else.
 
 5. Add the hosts to the `Caddyfile`:
 

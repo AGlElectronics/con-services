@@ -213,6 +213,11 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Rally's chart lets each web app frame `/silent-callback.html` only
+  (`frame-ancestors 'self'`). The submission site's policy still uses the
+  attendee realm's server (`ATTENDEE_OIDC_ISSUER_URL`) and
+  `S3_PUBLIC_BASE_URL`; images may load from that bucket.
+  `frontend.cspConnectSrc` is added to `connect-src` only.
 - Shared Go code: `gworkspace` reports `google workspace is not configured`
   and `google workspace needs …` with a lowercase first letter, like the
   package's other errors.
