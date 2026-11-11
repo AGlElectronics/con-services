@@ -190,6 +190,108 @@ Service tokens are shared by two modules: `WIKI_SERVICE_TOKEN` must match the
 token in HR's `OFFBOARD_HOOKS`, `TASKS_SERVICE_TOKEN` the one in
 `DEPARTMENT_HOOKS`, and `LEARN_SERVICE_TOKEN` is set on both HR and Learn.
 
+**Shared-code secrets** ([Shared code](../concepts/shared-code.md)). Each
+module needs these from the release in which it adopts the shared package;
+its changelog says when, and its chart then lists the key under
+`existingSecret`:
+
+| Secret (key) | Kubernetes Secret | Namespace | Used by | Notes |
+| --- | --- | --- | --- | --- |
+| `DEN_LINK_ENCRYPTION_KEY` | `<module>-secrets` | `conservices-<module>` | every module (shared `denlink`) | 32 random bytes, base64; **one per module**, never shared. Encrypts the Den credential the module stores. Required unless `APP_ENV=development`. Rotate as in [Den link encryption key](#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | `<module>-secrets` | `conservices-<module>` | same | Only during a rotation: the old key. Remove it after the restart that follows. |
+| `credentials.json` (service-account key) | `<module>-google-workspace`, mounted as a file; `GOOGLE_WORKSPACE_CREDENTIALS_FILE` points at it | the module's namespace | modules using the shared `gworkspace` | A Google service-account key with domain-wide delegation: it can act as **any** account in the domain for the scopes you authorised. See [Google Workspace service-account key](#google-workspace-service-account-key). |
+| `HR_SERVICE_TOKEN` | `hr-secrets` and `<module>-secrets` | HR's and each module's | HR reading role catalogs | Planned with the [role catalog contract](../concepts/role-catalog.md); not used by any release yet. Same value on every side; allows only catalog reads. |
+
+### Den link encryption key
+
+Every module that uses the shared `denlink` encrypts the module credential
+it gets from Den with its own `DEN_LINK_ENCRYPTION_KEY`. If the key is lost,
+the module cannot read its credential and must be paired again; nothing
+else is lost.
+
+1. Generate one key per module:
+
+    ```sh
+    openssl rand -base64 32
+    ```
+
+    ```text
+    q3V0w6m3cXn8m1x0ZrQm9b7c2H4v5o6p7q8r9s0t1u4=
+    ```
+
+    In PowerShell:
+    `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`.
+
+2. Store it in the module's entry of your secret manager, for example
+   `vault kv patch secret/conservices/stash/backend DEN_LINK_ENCRYPTION_KEY=<value>`,
+   so it reaches `stash-secrets` (see [Add a module's secrets](#add-a-modules-secrets)).
+3. Restart the module. A credential stored before is encrypted on its
+   first read; the log says `den link: re-encrypted the stored credential with the current key`.
+
+To **rotate** it, keep the old key readable for one restart:
+
+1. Set `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` to the current value and
+   `DEN_LINK_ENCRYPTION_KEY` to a new one, in the secret manager.
+2. Force the sync and restart the module. On its next read (within a
+   minute) the module re-encrypts the credential with the new key.
+3. Remove `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` and restart again.
+
+### Google Workspace service-account key
+
+The key file of a Google service account with domain-wide delegation lets
+its holder act as any user of the Workspace domain for the scopes you
+authorised. Treat it like the PostgreSQL superuser login: one key per
+module that needs it, only the scopes it needs, kept in the secret manager
+and mounted read-only.
+
+1. Store the JSON file in the secret manager, for example as the field
+   `credentials.json` of `secret/conservices/hr/google-workspace`.
+2. Let ESO write it into a Secret of its own, which the Deployment mounts
+   as a file:
+
+    ```yaml
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: hr-google-workspace
+      namespace: conservices-hr
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        name: vault
+        kind: SecretStore
+      target:
+        name: hr-google-workspace
+      data:
+        - secretKey: credentials.json
+          remoteRef:
+            key: conservices/hr/google-workspace
+            property: credentials.json
+    ```
+
+    ```yaml
+    # in the backend container of the Deployment
+    env:
+      - name: GOOGLE_WORKSPACE_CREDENTIALS_FILE
+        value: /etc/conservices/google-workspace/credentials.json
+    volumeMounts:
+      - name: google-workspace
+        mountPath: /etc/conservices/google-workspace
+        readOnly: true
+    # in the pod
+    volumes:
+      - name: google-workspace
+        secret:
+          secretName: hr-google-workspace
+          defaultMode: 0400
+    ```
+
+3. **Rotate** it by creating a second key for the service account in the
+   Google Cloud console, replacing the file in the secret manager,
+   restarting the module, and then deleting the old key in the console.
+   Delete the key at once if it leaked; the domain-wide delegation entry
+   stays valid for the new key.
+
 ### OpenBao paths of the GitOps reference
 
 In the [GitOps reference deployment](../deploy/index.md) every secret above
@@ -355,8 +457,13 @@ module's `values.yaml` under `existingSecret`):
     ```sh
     vault kv put secret/conservices/stash/backend \
       DATABASE_URL='postgres://stash:change-me@db.example.org:5432/stash?sslmode=require' \
-      S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me
+      S3_ACCESS_KEY_ID=change-me S3_SECRET_ACCESS_KEY=change-me \
+      DEN_LINK_ENCRYPTION_KEY="$(openssl rand -base64 32)"
     ```
+
+    `DEN_LINK_ENCRYPTION_KEY` is read from the Stash release that adopts the
+    shared `denlink` ([Den link encryption key](#den-link-encryption-key));
+    an older Stash ignores it.
 
 2. Give the namespace read access to that path only:
 
@@ -598,6 +705,8 @@ On PowerShell, replace `$(date +%s)` with
 | Pairing token | Nothing to rotate: single use, expires after 15 minutes. | |
 | Module credential | Pair the module again (Den → Modules → Pair, paste in the module). This adds a new credential, but **Den cannot yet revoke the old one** on its own; only removing the module from Den revokes all of its credentials. | None. |
 | `DESK_SECRET_KEY` | No rotation procedure yet. It encrypts the mailbox passwords Desk stores; after a change Desk reports *stored password cannot be decrypted (was DESK_SECRET_KEY changed?)* and every mailbox password must be entered again. Treat it as fixed. | |
+| `DEN_LINK_ENCRYPTION_KEY` | Old value into `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, new value into `DEN_LINK_ENCRYPTION_KEY`, restart; after a minute remove the previous key and restart again. [Details](#den-link-encryption-key). | Two restarts. |
+| Google Workspace service-account key | New key in the Google Cloud console, replace the file in the secret manager, restart, delete the old key. [Details](#google-workspace-service-account-key). | A restart. |
 | Backup age key | Add the new public key to `BACKUP_AGE_RECIPIENTS` and restart the operator. Only new backups use it; **keep the old secret key** as long as backups made with it are kept. | None. |
 | Keycloak bootstrap admin | Create a permanent admin in the master realm, then remove the bootstrap one and its secret. | None. |
 
@@ -629,6 +738,11 @@ On PowerShell, replace `$(date +%s)` with
 **A pod fails with `CreateContainerConfigError: couldn't find key OPERATOR_TOKEN in Secret`**
 : The secret manager entry lacks a key the base expects. Compare the keys
   with the [inventory](#inventory) and `kubectl get secret -n conservices-den den-operator-secrets -o jsonpath='{.data}' | jq 'keys'`.
+
+**A module's log says `the stored Den credential cannot be decrypted` after a key change**
+: `DEN_LINK_ENCRYPTION_KEY` changed without keeping the old value in
+  `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`. Put the old value there and restart;
+  if it is lost, pair the module again.
 
 **Backups page shows `unauthorized` after rotating `OPERATOR_TOKEN`**
 : Only one side has the new value or was restarted. Update both

@@ -234,6 +234,9 @@ services:
       APP_BASE_URL: https://stash.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktc3Rhc2gtZGVuLWxpbmsta2V5LTAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -319,6 +322,9 @@ services:
       APP_BASE_URL: https://hr.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktaHItZGVuLWxpbmsta2V5LTAwMDAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -430,6 +436,9 @@ services:
       APP_BASE_URL: https://finance.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktZmluYW5jZS1kZW4tbGluay1rZXktMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -628,6 +637,9 @@ services:
       APP_BASE_URL: https://events.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktZXZlbnRzLWRlbi1saW5rLWtleS0wMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -750,6 +762,9 @@ services:
       APP_BASE_URL: https://learn.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktbGVhcm4tZGVuLWxpbmsta2V5LTAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -855,6 +870,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://desk.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktZGVzay1kZW4tbGluay1rZXktMDAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -937,6 +955,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://tasks.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktdGFza3MtZGVuLWxpbmsta2V5LTAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -1025,6 +1046,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: http://localhost:3010
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktdGFza3MtZGV2LWRlbi1saW5rLWtleS0=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
@@ -1115,6 +1139,9 @@ services:
       APP_ENV: development
       APP_BASE_URL: https://wiki.conservices.test
       DEN_INTERNAL_URL: http://den-backend:8080
+      # DEV ONLY (public value): encrypts the Den credential this backend stores
+      # (shared denlink). Production: one random key per module from a secret manager.
+      DEN_LINK_ENCRYPTION_KEY: ZGV2LW9ubHktd2lraS1kZW4tbGluay1rZXktMDAwMDA=
       # standalone (dev default): no Den needed. required: the API waits for
       # pairing with Den (503 den_pairing_required). Set DEN_MODE in .env.
       DEN_MODE: ${DEN_MODE:-standalone}
