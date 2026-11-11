@@ -133,6 +133,12 @@ A value outside its range is ignored and Tasks keeps its own value.
 | `kept_after_con` | `days` (default `30` *(pending legal review)*) | Unclaimed items and their finder details are kept until `days` after the convention's end date. |
 | `deleted_after_closing` | `hours` (default `48` *(pending legal review)*) | A record is deleted `hours` after it is closed (claimed, handed over or discarded). |
 
+### Wiki: revision history
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `wiki.revision_retention_days` | `0` (keep every revision) | Days page revisions (history) are kept; older ones are deleted hourly. A whole number, `0` or more. Wiki's own setting is `WIKI_REVISION_RETENTION_DAYS` ([Wiki configuration](../modules/wiki/configuration.md#revision-retention)). Read by Wiki from 1.0.0. |
+
 ## In the bundle
 
 What Stash receives from `GET /api/v1/integrations/bundle` when Den sets

@@ -25,7 +25,7 @@ manager creates (see [Secrets](../../operations/secrets.md)). The chart sets
 | Kubernetes object | Holds |
 | --- | --- |
 | ConfigMap `<release>-config` | Everything below marked "no" in the Secret column. |
-| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`; optionally `HR_DIRECTORY_TOKEN` or `IDP_DIRECTORY_CLIENT_SECRET` for the [group picker](#group-picker). |
+| Secret `wiki-secrets` | `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `WIKI_SERVICE_TOKEN`, `DEN_LINK_ENCRYPTION_KEY`; optionally `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `HR_SERVICE_TOKEN`, and `HR_DIRECTORY_TOKEN` or `IDP_DIRECTORY_CLIENT_SECRET` for the [group picker](#group-picker). |
 | ConfigMap `wiki-access-config` | The access config file (roles and group bindings). |
 | Secrets `wiki-backend-tls`, `wiki-frontend-tls` (from cert-manager) | The pods' internal TLS certificates (`tls.crt`, `tls.key`, `ca.crt`), mounted at `/etc/conservices-tls`. See [Internal TLS](#internal-tls). |
 | ConfigMap `conservices-internal-ca` (from trust-manager) | The platform's internal CA (`ca.crt`), mounted at `/etc/conservices-internal-ca`. |
@@ -40,7 +40,7 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `APP_ENV` | `development` | no | no | `production` on real installations. `development` makes logs human-readable. |
+| `APP_ENV` | `production` | no | no | Only `development` relaxes the rules: it allows `AUTH_MODE=dev`, an unencrypted Den credential and `http://` pairing URLs to development hosts, and makes logs human-readable. Anything else counts as production. Local setups (`.env.example`, Docker Compose) set `development` explicitly. |
 | `APP_BASE_URL` | `http://localhost:8080` | no | no | Public address of Wiki, for example `https://wiki.example.org`. |
 | `HTTP_ADDR` | `:8080` | no | no | Address the backend listens on inside the container. Keep `:8080`. |
 | `DATABASE_URL` | none | **yes** | **yes** | PostgreSQL connection URL, for example `postgres://wiki:change-me@db.example.org:5432/wiki?sslmode=require`. Also read by the migrate step. On the platform it ends in `?sslmode=verify-full&sslrootcert=/etc/conservices-internal-ca/ca.crt`, because the platform's PostgreSQL accepts only TLS connections. |
@@ -52,10 +52,14 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 
 | Variable | Default | Required | Secret | What it does |
 | --- | --- | --- | --- | --- |
-| `AUTH_MODE` | `dev` | no | no | `oidc` checks real sign-in tokens. `dev` trusts the `X-Dev-User` and `X-Dev-Groups` headers: **local development only**, anyone can claim to be anyone. |
+| `AUTH_MODE` | `oidc` | no | no | `oidc` checks real sign-in tokens. `dev` trusts the `X-Dev-User` and `X-Dev-Groups` headers (anyone can claim to be anyone) and **stops the backend unless `APP_ENV=development`**. Outside dev mode those headers are removed from every request and not allowed through CORS. See [Authentication → Defaults](../../concepts/authentication.md#defaults-auth_mode-and-app_env). |
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | The sign-in server's issuer, for example `https://auth.example.org/realms/conservices`. The backend must reach it (OIDC discovery). |
-| `OIDC_CLIENT_ID` | none | with `oidc` | no | Client the tokens are issued for: `wiki-spa`. |
-| `OIDC_AUDIENCE` | none | no | no | Expected token audience, normally `wiki-spa`. |
+| `OIDC_CLIENT_ID` | none | with `oidc` | no | The web app's client: `wiki-spa`. |
+| `OIDC_AUDIENCE` | `wiki-api` | no | no | The audience the **access token** must carry ([token contract](../../concepts/authentication.md#tokens-the-10-contract)). Keycloak adds it with an audience mapper on `wiki-spa` ([Setup](setup.md#keycloak-audience-for-wikis-api)). ID tokens and tokens for other APIs are refused. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | no | The token claim holding the person's groups. `roles` is never read in addition. A dotted name such as `realm_access.roles` is followed into nested objects. |
+| `OIDC_GROUP_MATCH` | `full` | no | no | `full`: the whole group path must match (`/org/dept-x` is not `dept-x`). `last`: only the last segment is compared. Applies to role bindings and to space and page grants. See [How groups are matched](../../concepts/authentication.md#how-groups-are-matched). |
+| `OIDC_GROUP_PREFIX` | none | no | no | A parent group such as `/con2026` removed from group names before matching. |
+| `HR_SERVICE_TOKEN` | none | no | **yes** | Lets HR's backend read `GET /api/role-catalog` without a sign-in ([role catalog contract](../../concepts/role-catalog.md)). Must equal HR's `HR_SERVICE_TOKEN`. Empty: only signed-in staff can read the catalog. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the access config file (roles and Keycloak group bindings), for example `/etc/wiki/access-config.toml`. Without it the built-in catalog is used. The Helm chart sets it. |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only: user when no `X-Dev-User` header is sent. |
 | `DEV_DEFAULT_GROUPS` | `wiki-admin` | no | no | `dev` mode only: comma-separated groups when no `X-Dev-Groups` header is sent. |
@@ -66,6 +70,9 @@ ConfigMap changes made through `helm upgrade` restart it automatically.
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | no | Den's address as the backend reaches it, on the platform `https://den-backend.conservices-den.svc.cluster.local:8080`. Replaces the host of a pasted pairing URL. Empty without Den. See [Pairing](../../concepts/pairing.md). |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
+| `DEN_ALLOWED_HOSTS` | none | when `DEN_INTERNAL_URL` is empty | no | Comma-separated hosts a pasted pairing URL may point at, for example `den.example.org` or `*.example.org`. With `APP_ENV=development`, `localhost` and `*.conservices.test` are always allowed; outside development the URL must use `https://`. |
+| `DEN_LINK_ENCRYPTION_KEY` | none | **yes**, unless `APP_ENV=development` | **yes** | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts the stored Den credential (AES-256-GCM). Without it outside development the backend refuses to start. A credential stored in plain text is encrypted on the first read. One key per module; see [Secrets](../../operations/secrets.md#den-link-encryption-key). |
+| `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The old key during a rotation; values sealed with it are re-encrypted with the current key on the next read. |
 | `BRAND_LOCAL_PATH` | none | no | no | Optional `brand.json` used while Wiki is not paired. Once paired, Den's brand wins. |
 
 ### Storage and live editing
@@ -172,22 +179,29 @@ delete is retried on the next run. The current page is never affected,
 only its history. The history panel tells people how long revisions are
 kept.
 
-Once Wiki is paired, Den can set the retention for Wiki in its **module
-settings**; Den's value wins. Den sends it in the integration bundle
-(`GET /api/v1/integrations/bundle`), which Wiki stores with its pairing:
+Once Wiki is paired, Den can set the retention for Wiki on its **Module
+settings** page; Den's value wins. Den sends it in the integration bundle
+(`GET /api/v1/integrations/bundle`) under `module_settings`, as the
+[module settings contract](../../concepts/module-settings.md#wiki-revision-history)
+describes, and Wiki stores the bundle with its pairing:
 
 ```json
 {
   "brand": { "...": "..." },
   "settings": { "data": {} },
-  "retention": { "revision_days": 90 }
+  "module_settings": {
+    "updated_at": "2026-11-11T09:30:00Z",
+    "data": { "wiki": { "revision_retention_days": 90 } }
+  }
 }
 ```
 
-`revision_days` must be a whole number, `0` or more (`0` keeps everything).
-Anything else, or no `retention` at all, means "use
-`WIKI_REVISION_RETENTION_DAYS`". Den does not send `retention` yet; until it
-does, the local setting applies.
+`wiki.revision_retention_days` must be a whole number, `0` or more (`0` keeps everything).
+Anything else, or no value at all, means "use
+`WIKI_REVISION_RETENTION_DAYS`". Den does not send `module_settings` yet;
+until it does, the local setting applies. While Den's credential is
+[revoked](admin-guide.md#settings-den-connection), Wiki keeps using the
+last value it received.
 
 ### Troubleshooting
 
@@ -203,6 +217,22 @@ does, the local setting applies.
 - **The backend does not start: `HR_DIRECTORY_TOKEN is required when
   HR_DIRECTORY_URL is set`** (or the same for `IDP_DIRECTORY_*`). Add the
   secret, or empty the URL.
+- **The backend stops with `AUTH_MODE=dev lets anyone sign in as anyone
+  and is only allowed with APP_ENV=development`.** Remove `AUTH_MODE` (the
+  default is `oidc`), or for local work also set `APP_ENV=development`.
+- **The backend stops with `DEN_LINK_ENCRYPTION_KEY is required unless
+  APP_ENV=development`.** Generate a key (`openssl rand -base64 32`), add it
+  to `wiki-secrets` and restart. `must be 32 bytes after base64 decoding`
+  means the value is not such a key.
+- **Every API call answers `401 invalid token` after an upgrade.** The
+  access token lacks the `wiki-api` audience: add the audience mapper to
+  `wiki-spa` ([Setup](setup.md#keycloak-audience-for-wikis-api)), or set
+  `OIDC_AUDIENCE` to the audience your identity provider sends. An old web
+  app that still sends ID tokens is refused too; reload it.
+- **Someone lost access after the upgrade although they are in the group.**
+  Groups are read only from `OIDC_GROUPS_CLAIM` (default `groups`); a group
+  that only came through the `roles` claim no longer counts. Put the group
+  mapper on the client, or point `OIDC_GROUPS_CLAIM` at the right claim.
 - **Revisions are not deleted.** `GET /api/v1/pages/<id>/revisions` shows
   `retention_days` and `retention_source`; `0` keeps everything. With
   `source` `den`, the value comes from Den and overrides the local one. A
@@ -330,6 +360,41 @@ cache-control: no-store
 - **An old value still shows**: something in front of nginx caches the file.
   Make your proxy or CDN respect `Cache-Control: no-store` for
   `/config.json`.
+
+## Web app security headers
+
+The web app's nginx sends the suite's shared security headers
+(`shared/nginx/security-headers.conf`, see
+[Shared code](../../concepts/shared-code.md#nginx-security-headers)): a
+Content Security Policy that allows scripts, styles and fonts from Wiki
+itself and connections to the sign-in server (and Den, if set),
+`X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and
+`Permissions-Policy`. The API's own responses carry the backend's stricter
+headers instead, and file downloads keep `Content-Security-Policy: sandbox`.
+
+| Where | How the origins are set |
+| --- | --- |
+| Helm chart | `frontend.securityHeaders.keycloakOrigin` (default: scheme and host of `config.OIDC_ISSUER_URL`) and `frontend.securityHeaders.denOrigin` (default empty). The chart renders the snippet into `<release>-frontend-nginx` and mounts it at `/etc/nginx/snippets/security-headers.conf`. |
+| Image (Docker Compose) | The image ships `infra/security-headers.conf` with the development origins (`https://auth.conservices.test`, `http://localhost:8085`, `https://den.conservices.test`). |
+| Production on Docker | Mount your own copy with your origins over `/etc/nginx/snippets/security-headers.conf`; see [Setup, option 3](setup.md#option-3-production-on-docker). |
+
+Check them:
+
+```sh
+curl -sI https://wiki.example.org/ | grep -i -E 'content-security|x-frame|referrer|permissions|nosniff'
+```
+
+```text
+content-security-policy: default-src 'self'; script-src 'self'; … connect-src 'self' https://auth.example.org; frame-src 'self' https://auth.example.org; frame-ancestors 'none'; …
+x-frame-options: DENY
+x-content-type-options: nosniff
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+```
+
+If sign-in hangs after a reload, the browser console shows a CSP error for
+the sign-in server's address: `keycloakOrigin` does not match the
+issuer's host.
 
 ## Frontend build settings
 

@@ -163,6 +163,12 @@ as `wiki_public_links`):
    Den's brand and settings immediately (otherwise every minute).
    **Disconnect** returns Wiki to its own settings and default look.
 
+If Den revokes Wiki's credential (or Wiki is removed in Den), the card
+says **Den rejected this module's credential** in red. Wiki keeps Den's
+last brand and settings but stops syncing, and it never pairs again by
+itself: create a new pairing URL in Den (step 1), paste it into the
+**Pair again** field and confirm.
+
 See [Pairing](../../concepts/pairing.md).
 
 ## Backups

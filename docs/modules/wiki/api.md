@@ -42,7 +42,8 @@ TOKEN=...   # see "Getting a token" below
 | Prefix | Who calls it | Authentication |
 | --- | --- | --- |
 | `/livez`, `/readyz` | Kubernetes probes | none |
-| `/api/health`, `/api/role-catalog` | humans, HR | none |
+| `/api/health`, `/api/den/state` | humans, monitoring, the web app | none |
+| `/api/role-catalog` | HR, signed-in staff | `HR_SERVICE_TOKEN` or a user token |
 | `/api/v1/brand…` | the login screen | none |
 | `/api/v1/…` (everything else) | the web app, your scripts | user token |
 | `/api/v1/pages/{page}/live` | the editor's websocket | one-time ticket in the URL |
@@ -51,15 +52,20 @@ TOKEN=...   # see "Getting a token" below
 
 ### Authentication
 
-- **Production (`AUTH_MODE=oidc`).** Send a Keycloak access token:
-  `Authorization: Bearer <token>`. Wiki checks the signature, issuer and
-  audience, creates the person on their first request, and reads their
-  roles from the token's `groups` claim **on every request**. Removing
-  someone from a group takes effect on their next call. See
-  [Authentication](../../concepts/authentication.md).
-- **Development only (`AUTH_MODE=dev`).** Send `X-Dev-User: alice` and,
-  optionally, `X-Dev-Groups: wiki-admin,dept-crew`. Never enable this mode on
-  a reachable server.
+- **Production (`AUTH_MODE=oidc`, the default).** Send a Keycloak **access
+  token** for Wiki's API: `Authorization: Bearer <token>`. Wiki checks the
+  signature, the issuer, the expiry and that the audience (`aud`) contains
+  `OIDC_AUDIENCE` (default `wiki-api`), as the
+  [token contract](../../concepts/authentication.md#tokens-the-10-contract)
+  says. ID tokens (`"typ": "ID"`) and tokens for other APIs are refused with
+  `401 invalid token`. Wiki creates the person on their first request, keyed
+  by issuer and subject, and reads their groups from the claim named by
+  `OIDC_GROUPS_CLAIM` (default `groups`; never `roles`) **on every
+  request**. Removing someone from a group takes effect on their next call.
+- **Development only (`AUTH_MODE=dev` with `APP_ENV=development`).** Send
+  `X-Dev-User: alice` and, optionally, `X-Dev-Groups: wiki-admin,dept-crew`.
+  The backend refuses to start in dev mode with any other `APP_ENV`; in
+  OIDC mode it removes these headers from every request.
 
 **Roles** (granted through Keycloak groups, configured in the
 [access config file](configuration.md#access-config-file)):
@@ -86,13 +92,22 @@ inheritance). The strongest wins.
 ### Getting a token
 
 For quick tests against the development Keycloak (the client must allow
-the password grant; never do this in production):
+the password grant; never do this in production). Take the
+`access_token`, not the `id_token`:
 
 ```sh
 TOKEN=$(curl -s https://auth.conservices.test/realms/conservices/protocol/openid-connect/token \
   -d grant_type=password -d client_id=wiki-spa \
   -d username=admin -d password=change-me | jq -r .access_token)
+echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{aud, typ, groups}'
 ```
+
+```json
+{"aud": ["wiki-api", "account"], "typ": "Bearer", "groups": ["wiki-admin"]}
+```
+
+No `wiki-api` in `aud`: the audience mapper on `wiki-spa` is missing
+([Setup](setup.md#keycloak-audience-for-wikis-api)).
 
 ### Errors
 
@@ -104,17 +119,36 @@ Every error has the same body:
 
 | HTTP | `code` | When |
 | --- | --- | --- |
-| 400 | `bad_request` | Malformed JSON, an **unknown JSON field** (bodies are decoded strictly), an id that is not a UUID. |
+| 400 | `bad_request` | Malformed JSON, an **unknown JSON field** (bodies are decoded strictly), more than one JSON value, an id that is not a UUID. |
 | 401 | `unauthorized` | No token, an invalid or expired token, a used or expired live ticket, a wrong service token. |
 | 403 | `forbidden` | You can see the object but your level or permission is too low. |
 | 404 | `not_found` | It does not exist, **or you may not see it**. |
 | 409 | `conflict` | The current state does not allow it (deleting a private space, a restore already running). |
 | 422 | `validation_failed` | Field problems; `details` maps field to reason. |
-| 429 | `too_many_requests` | Public share links only; wait (`Retry-After: 60`). |
+| 413 | `request_too_large` | A JSON body over 1 MiB (uploads have their own limits, see [Files](#files)). |
+| 429 | `rate_limited` | Too many requests: public share links (120 a minute per client, bursts of 30), the offboarding hook (60 a minute per client), uploads (60 a minute per person, bursts of 20). Wait for `Retry-After` seconds. |
 | 503 | `unavailable` | Object storage is off (`S3_ENDPOINT` empty), or the server is restarting. |
 | 500 | `internal` | Unexpected; quote the `X-Request-ID` response header when reporting it. |
 
+A `429` looks like this:
+
+```text
+HTTP/1.1 429 Too Many Requests
+Retry-After: 2
+Content-Type: application/json
+
+{"error":{"code":"rate_limited","message":"Too many requests; try again in 2 seconds."}}
+```
+
 Requests time out after 60 seconds (except the live websocket).
+
+**Response headers.** Every API response carries
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY` and
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
+(file downloads replace the policy with `sandbox`). Browsers may call the
+API cross-origin only from `CORS_ALLOWED_ORIGINS`; `X-Dev-User` and
+`X-Dev-Groups` are allowed through CORS only in dev mode.
 
 ### Common objects
 
@@ -202,11 +236,27 @@ curl -s $WIKI/api/health
 
 ### `GET /api/role-catalog`
 
-Who may call: anyone. HR reads it to offer Wiki roles when onboarding
-someone. Lists each role with its permissions and the group that grants it.
+The roles Wiki understands, for HR's access picker. It follows the
+[role catalog contract](../../concepts/role-catalog.md).
+
+**Who may call:** HR's backend with `Authorization: Bearer <HR_SERVICE_TOKEN>`
+(compared in constant time; set the same value on HR and Wiki), or anyone
+signed in to the staff realm with their normal access token. The path stays
+open while Wiki waits for Den (`DEN_MODE=required`).
+
+**Request body:** none. Send `If-None-Match` with the last `ETag` to get
+`304 Not Modified` when nothing changed.
 
 ```sh
-curl -s $WIKI/api/role-catalog
+curl -s -i https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/role-catalog \
+  --cacert /etc/conservices-internal-ca/ca.crt \
+  -H "Authorization: Bearer $HR_SERVICE_TOKEN"
+```
+
+```text
+HTTP/2 200
+etag: "5f0c9a1e2b7d4c38"
+content-type: application/json; charset=utf-8
 ```
 
 ```json
@@ -214,21 +264,59 @@ curl -s $WIKI/api/role-catalog
   "module": "wiki",
   "display_name": "Wiki",
   "description": "Pages, team spaces and shared knowledge.",
+  "revision": "5f0c9a1e2b7d4c38",
   "roles": [
     {"key": "organization_admin", "label": "Organization Admin",
      "description": "Full access to every team space and page, and the module settings.",
-     "group": "wiki-admin", "assignable": true, "scope": "organization:demo-org",
+     "group": "wiki-admin", "group_display": "wiki-admin",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": true, "dynamic": false,
      "permissions": ["settings.manage", "space.create", "wiki.manage"]},
     {"key": "space_creator", "label": "Space Creator",
      "description": "Creates new team spaces.",
-     "group": "wiki-editor", "assignable": true, "scope": "organization:demo-org",
+     "group": "wiki-editor", "group_display": "wiki-editor",
+     "assignable": true, "default": false, "scope": "organization",
+     "privileged": false, "dynamic": false,
      "permissions": ["space.create"]}
   ]
 }
 ```
 
+| Field | Notes |
+| --- | --- |
+| `revision` | Changes whenever the list changes; also the `ETag`. |
+| `roles[].group` | The Keycloak group from the access config, normalised (lower-case, no leading `/`); `group_display` as written in the file. |
+| `roles[].privileged` | `true` for roles holding `wiki.manage` or `settings.manage`: they reach every team space or the Den connection. HR asks for confirmation before assigning them. |
+| `roles[].dynamic` | Always `false`: Wiki's roles are fixed. |
+
 Only roles bound to a group in the access config appear. Reading and
 editing pages is not a role; it comes from grants inside Wiki.
+
+| Status | When |
+| --- | --- |
+| `200` | The catalog. |
+| `304` | `If-None-Match` matches the current `revision`. |
+| `401` | No token, an unknown service token, or an invalid sign-in token, for example `{"error":{"code":"unauthorized","message":"missing bearer token"}}`. |
+
+### `GET /api/den/state`
+
+Who may call: anyone (no sign-in), also at `/api/v1/den/state`. Tells the
+web app (or a monitoring check) whether Wiki waits for Den and whether Den
+still accepts Wiki's credential.
+
+```sh
+curl -s $WIKI/api/den/state
+```
+
+```json
+{"mode":"required","paired":true,"revoked":false}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `DEN_MODE`: `required` or `standalone`. |
+| `paired` | Wiki holds a pairing and Den's bundle. |
+| `revoked` | Den rejected the credential (revoked, or Wiki was removed in Den). Wiki keeps the last bundle but stops syncing; an admin must pair again from **Settings → Den connection**. It is never re-paired automatically. |
 
 ### `GET /api/v1/brand`, `GET /api/v1/brand/{role}`
 
@@ -1101,7 +1189,8 @@ Errors: `403` below `full`; `422 details.expires_in_days`.
 ### Public access (no account): `/api/public/v1/shares/{token}`
 
 Who may call: anyone with the token. Rate limited per client IP to about
-**120 requests a minute** with bursts of 30 (`429`, `Retry-After: 60`).
+**120 requests a minute** with bursts of 30 (`429 rate_limited` with
+`Retry-After` in seconds).
 Responses carry `X-Robots-Tag: noindex, nofollow`.
 
 Every path answers the **same `404`** when share links are switched off,
@@ -1184,10 +1273,25 @@ module; see [Pairing](../../concepts/pairing.md).
 
 | Method and path | Result |
 | --- | --- |
-| `GET /api/v1/den` | Status: `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at"}`, or `{"paired": false}`. |
-| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`. `422 pairing_failed` with the reason (expired token, Den unreachable). |
-| `POST /api/v1/den/sync` | Fetch Den's brand and settings now. `409` when not paired, `502` when Den fails. |
+| `GET /api/v1/den` | Status: `{"paired": true, "den_base_url", "module_id", "paired_at", "synced_at", "last_error", "revoked": false}`, or `{"paired": false, "revoked": false}`. |
+| `POST /api/v1/den/pair` | Body `{"pairing_url": "<from Den>"}`. `422 pairing_failed` with the reason (expired token, Den unreachable, a host not allowed by `DEN_ALLOWED_HOSTS`). Also clears a revoked link. |
+| `POST /api/v1/den/sync` | Fetch Den's brand and settings now. `409` when not paired, `409 den_credential_revoked` when Den rejected the credential, `502` when Den fails. |
 | `DELETE /api/v1/den/pair` | Unpair, `204`. Wiki falls back to its own settings. |
+
+The stored credential is encrypted with `DEN_LINK_ENCRYPTION_KEY`. When
+Den rejects it, the status of the link looks like this, and the web app
+asks the admin to pair again:
+
+```json
+{
+  "paired": true,
+  "den_base_url": "https://den-backend.conservices-den.svc.cluster.local:8080",
+  "synced_at": "2026-11-10T22:41:00Z",
+  "last_error": "Den rejected this module's credential (revoked, or the module was removed in Den); pair again from Den → Modules → Pair",
+  "revoked": true,
+  "revoked_at": "2026-11-10T22:42:00Z"
+}
+```
 
 ```sh
 curl -s -X POST $WIKI/api/v1/den/pair -H "Authorization: Bearer $TOKEN" \
@@ -1204,7 +1308,8 @@ curl -s -X POST $WIKI/api/v1/den/pair -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Who |
 | --- | --- | --- |
 | GET | `/livez`, `/readyz`, `/api/health` | anyone |
-| GET | `/api/role-catalog` | anyone |
+| GET | `/api/role-catalog` | `HR_SERVICE_TOKEN` or signed in |
+| GET | `/api/den/state`, `/api/v1/den/state` | anyone |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | anyone |
 | POST | `/api/internal/offboarded` | `WIKI_SERVICE_TOKEN` |
 | GET | `/api/public/v1/shares/{token}` | share token |

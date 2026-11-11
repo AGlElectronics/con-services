@@ -280,6 +280,17 @@ led by Den's MAJOR; see
   sandboxed attachments, that comment-level people start page discussions
   but cannot anchor threads to text, that the people picker hides email
   addresses from non-admins, and sends the issuer to the offboarding hook.
+- Keycloak realm (`infra/keycloak/realm-conservices.json`): `wiki-spa` gets
+  an audience mapper that adds `wiki-api` to its access tokens (token
+  contract). `infra/keycloak/apply-mvp.sh` has a reusable, idempotent
+  `api_audience <client> <audience>` helper and calls it for Wiki.
+- Root `docker-compose.yml`: `wiki-backend` checks access tokens for
+  `OIDC_AUDIENCE=wiki-api`, sets `OIDC_GROUPS_CLAIM` and `OIDC_GROUP_MATCH`,
+  and has a dev-only `HR_SERVICE_TOKEN`. Until HR sends that token, HR's
+  access picker in the Compose stack shows no Wiki roles (Wiki's catalog now
+  needs it).
+- Module settings contract: Wiki's key `wiki.revision_retention_days`
+  (revision history retention).
 
 ### Security
 
