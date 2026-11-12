@@ -18,6 +18,10 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Finance serves `GET /api/portal/todos` for Den's portal (an empty list).
+  The Finance chart admits `den-backend` from `conservices-den` on the
+  backend port. Den's egress to every module backend is already in the Den
+  chart (`networkPolicy.allowToModules`) and `deploy/kubernetes/base/den`.
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises
   its MAJOR only for a breaking change and keeps counting (`1.4.2` →
