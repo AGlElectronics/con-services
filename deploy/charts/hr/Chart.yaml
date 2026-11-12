@@ -2,8 +2,8 @@ apiVersion: v2
 name: hr
 description: >-
   HR, the Con Services people module (onboarding, offboarding, departments,
-  account provisioning in Keycloak). STUB: first scaffold, not yet tested
-  on a cluster.
+  account provisioning in Keycloak). Rendered and linted in CI (helm lint,
+  helm template, kustomize); first production install pending.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
