@@ -1,4 +1,5 @@
-# Stash Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# Stash Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/getting-started/standalone-kubernetes/
 #
 # The namespace is NOT created by this chart. Create it first with the
