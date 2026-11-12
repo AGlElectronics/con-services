@@ -204,7 +204,7 @@ open: volunteers also get 503 until HR is paired. Check with
 | --- | --- | --- | --- |
 | GET | `/livez`, `/readyz` | public | [Health](#health-and-catalog) |
 | GET | `/api/role-catalog` | public | [Health](#health-and-catalog) |
-| GET | `/api/portal/todos` | Den's pairing credential | [Portal to-dos](#get-apiportal-todos) |
+| GET | `/api/portal/todos` | Den's pairing credential | [Portal to-dos](#get-apiportaltodos) |
 | GET | `/api/den/state` | public | [Health](#get-apidenstate) |
 | GET | `/api/brand`, `/api/brand/{role}` | public | [Brand](#brand-and-preferences) |
 | GET | `/api/internal/directory/groups` | service token | [Directory](#get-apiinternaldirectorygroups) |
