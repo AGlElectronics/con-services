@@ -18,6 +18,10 @@ led by Den's MAJOR; see
 
 ### Added
 
+- Finance serves `GET /api/portal/todos` for Den's portal (an empty list).
+  The Finance chart admits `den-backend` from `conservices-den` on the
+  backend port. Den's egress to every module backend is already in the Den
+  chart (`networkPolicy.allowToModules`) and `deploy/kubernetes/base/den`.
 - HR serves `GET /api/portal/todos` for Den's portal (an empty list). The
   HR chart admits `den-backend` from `conservices-den` on the backend port.
   Den's egress to every module backend is already in the Den chart
@@ -58,7 +62,7 @@ led by Den's MAJOR; see
   Telegram Bot API on the network-policy page. `scripts/smoke-learn.ps1`
   now also covers quizzes, media uploads, in-person sessions with QR
   check-in, and certificates.
-- Desk's development stack expects access tokens with audience `desk-api` (`OIDC_AUDIENCE` in Compose and the Desk chart). The Desk chart admits `den-backend` from `conservices-den` (portal to-dos and the role catalog), fills the shared nginx security-header snippet on the web app only, and names the Google settings `GOOGLE_WORKSPACE_CREDENTIALS_FILE` and `GOOGLE_WORKSPACE_ADMIN_EMAIL`. The Desk frontend sets `EXTRA_FRAME_SRC=about:srcdoc` (Compose and the chart) and serves `/silent-callback.html` with the shared frame-self headers.
+- Desk's development stack expects access tokens with audience `desk-api` (`OIDC_AUDIENCE` in Compose and the Desk chart). The Desk chart admits `den-backend` from `conservices-den` (portal to-dos and the role catalog), fills the shared nginx security-header snippet on the web app only, and names the Google settings `GOOGLE_WORKSPACE_CREDENTIALS_FILE` and `GOOGLE_WORKSPACE_ADMIN_EMAIL`. The Desk frontend sets `EXTRA_FRAME_SRC=about:srcdoc` (Compose and the chart)   and serves `/silent-callback.html` with the shared frame-self headers.
 
 - Versioning: Den and each module have their own `MAJOR.MINOR.PATCH`; a
   module's MAJOR always equals the Den MAJOR it is built for. Den raises

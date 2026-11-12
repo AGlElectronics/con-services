@@ -280,9 +280,11 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
-  # HR reads GET /api/role-catalog.
+  # HR reads GET /api/role-catalog. Den's backend reads that catalog and
+  # GET /api/portal/todos (pairing credential).
   allowFromNamespaces:
     - conservices-hr
+    - conservices-den
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false
