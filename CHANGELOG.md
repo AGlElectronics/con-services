@@ -18,6 +18,11 @@ led by Den's MAJOR; see
 
 ### Added
 
+- HR serves `GET /api/portal/todos` for Den's portal (an empty list). The
+  HR chart admits `den-backend` from `conservices-den` on the backend port.
+  Den's egress to every module backend is already in the Den chart
+  (`networkPolicy.allowToModules`) and `deploy/kubernetes/base/den`.
+
 - Development: the `conservices` realm has the groups `hr-viewer` (read-only
   HR) and `hr-lead` (department leads) next to `hr-admin`, and
   `docker-compose.yml` lets the wiki list HR's departments and access groups
