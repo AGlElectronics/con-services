@@ -606,7 +606,8 @@ led by Den's MAJOR; see
 - The access-catalog smoke signs in with an access token for each module's
   own client. ID tokens are refused, and one module's token is not valid
   for another's API. The person it creates sends `address` as street,
-  postal code, city and country, which is what HR stores.
+  postal code, city and country, which is what HR stores. Names are letters
+  only, and the phone number is one HR's tests accept.
 
 ### Fixed
 
