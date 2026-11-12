@@ -329,6 +329,9 @@ led by Den's MAJOR; see
 
 - Den's operator and pairing smokes send access tokens. Den refuses ID
   tokens.
+- `infra/keycloak/apply-mvp.sh` puts the dev `admin` account in `den-ops`
+  on a realm that was imported before that group existed. Without it,
+  admin cannot run backups.
 
 ### Security
 
