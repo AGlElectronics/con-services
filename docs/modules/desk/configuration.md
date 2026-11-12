@@ -34,10 +34,14 @@ of every problem.
 | `OIDC_ISSUER_URL` | none | with `oidc` | no | Issuer URL. |
 | `OIDC_CLIENT_ID` | none | with `oidc` | no | `desk-spa`. |
 | `OIDC_AUDIENCE` | `desk-api` | no | no | Audience the access token must carry. ID tokens (`typ` `ID`) are refused. |
+| `OIDC_GROUPS_CLAIM` | `groups` | no | no | The only token claim Desk reads groups from. The `roles` claim is never merged in. A dotted name such as `realm_access.roles` is followed into nested objects. |
+| `OIDC_GROUP_MATCH` | `full` | no | no | `full`: the whole group path must match a mailbox role binding. `last`: only the last path segment is compared. Anything else stops the backend. See [How groups are matched](../../concepts/authentication.md#how-groups-are-matched). |
+| `OIDC_GROUP_PREFIX` | none | no | no | A parent group such as `/con2026` removed from group names before matching. |
 | `ACCESS_CONFIG_PATH` | none | in production | no | Path of the [access config file](#access-config-file). |
 | `DEV_DEFAULT_USER` | `dev-admin` | no | no | `dev` mode only. |
 | `DEV_DEFAULT_GROUPS` | `desk-admin` | no | no | `dev` mode only. |
 | `DEN_INTERNAL_URL` | none | no | no | Den's in-cluster address for pairing (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`); empty without Den. |
+| `DEN_ALLOWED_HOSTS` | none | when `DEN_INTERNAL_URL` is empty | no | Comma-separated hosts a pasted pairing URL may point at, for example `den.example.org` or `*.example.org`. Not needed while `DEN_INTERNAL_URL` is set. With `APP_ENV=development`, `localhost`, `127.0.0.1`, `::1` and `*.conservices.test` are always allowed. Outside development the URL must also use `https://`. |
 | `DEN_MODE` | `standalone` | no | no | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **yes** | 32 bytes, base64 (`openssl rand -base64 32`). Encrypts the Den credential Desk stores. One key per module. See [Secrets](../../operations/secrets.md#den-link-encryption-key). |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **yes** | The previous key, only while rotating. Remove it after the second restart. |
