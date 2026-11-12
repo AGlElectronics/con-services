@@ -20,7 +20,7 @@ $targets = @{
 $t = $targets[$Module]
 
 function Get-Token($client) {
-  (Invoke-RestMethod -Method Post -Uri $kc -Body @{ grant_type = 'password'; client_id = $client; username = 'admin'; password = 'adminadmin'; scope = 'openid' }).id_token
+  (Invoke-RestMethod -Method Post -Uri $kc -Body @{ grant_type = 'password'; client_id = $client; username = 'admin'; password = 'adminadmin'; scope = 'openid' }).access_token
 }
 $denH = @{ Authorization = "Bearer $(Get-Token 'den-spa')" }
 $modH = @{ Authorization = "Bearer $(Get-Token $t.client)" }

@@ -607,6 +607,11 @@ led by Den's MAJOR; see
   own client. ID tokens are refused, and one module's token is not valid
   for another's API.
 
+### Fixed
+
+- Den's operator and pairing smokes send access tokens. Den refuses ID
+  tokens.
+
 ### Security
 
 - The shared nginx policy still sends `frame-ancestors 'none'` and
