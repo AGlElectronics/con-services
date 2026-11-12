@@ -258,7 +258,8 @@ led by Den's MAJOR; see
   own client. ID tokens are refused, and one module's token is not valid
   for another's API. The person it creates sends `address` as street,
   postal code, city and country, which is what HR stores. Names are letters
-  only, and the phone number is one HR's tests accept.
+  only, and the phone number is one HR's tests accept. It assigns
+  `stash:stash_conops_lead`, the role Stash publishes now.
 
 ### Security
 

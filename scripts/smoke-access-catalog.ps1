@@ -53,7 +53,7 @@ foreach ($m in $agg.modules) { Write-Host "HR sees: $($m.module) status=$($m.sta
 $stash = $agg.modules | Where-Object module -eq 'stash'
 if (-not $stash -or $Skip -contains 'stash') { Write-Host 'Stash not in HR catalog: provisioning check skipped' }
 else {
-  $role = $stash.roles | Where-Object { $_.key -eq 'conops_lead' }
+  $role = $stash.roles | Where-Object { $_.key -eq 'stash_conops_lead' }
   $digits = (Get-Date -Format 'HHmmss').ToCharArray()
   $stamp = -join ($digits | ForEach-Object { [char](97 + [int][string]$_) })
   $person = Invoke-RestMethod -Method Post -Uri "$hr/api/people" -Headers $h -ContentType 'application/json' -Body (@{
