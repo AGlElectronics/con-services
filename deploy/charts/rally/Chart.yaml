@@ -2,8 +2,8 @@ apiVersion: v2
 name: rally
 description: >-
   Rally, the Con Services events module (calls for papers, review, schedule,
-  public schedule API, live-day announcements). STUB: first scaffold, not
-  yet tested on a cluster.
+  public schedule API, live-day announcements). Rendered and linted in CI
+  (helm lint, helm template, kustomize); first production install pending.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
