@@ -204,6 +204,7 @@ open: volunteers also get 503 until HR is paired. Check with
 | --- | --- | --- | --- |
 | GET | `/livez`, `/readyz` | public | [Health](#health-and-catalog) |
 | GET | `/api/role-catalog` | public | [Health](#health-and-catalog) |
+| GET | `/api/portal/todos` | Den's pairing credential | [Portal to-dos](#get-apiportal-todos) |
 | GET | `/api/den/state` | public | [Health](#get-apidenstate) |
 | GET | `/api/brand`, `/api/brand/{role}` | public | [Brand](#brand-and-preferences) |
 | GET | `/api/internal/directory/groups` | service token | [Directory](#get-apiinternaldirectorygroups) |
@@ -362,6 +363,35 @@ curl -s $HR/api/role-catalog
 
 Each `group` is the first entry of `HR_ADMIN_GROUPS`, `HR_VIEWER_GROUPS`
 and `HR_LEAD_GROUPS`.
+
+### `GET /api/portal/todos`
+
+Den's portal asks HR what the signed-in person should do. Den's **backend**
+calls this itself; the person's token never leaves Den. HR has no personal
+to-dos yet, so the list is empty. **Access:** the pairing credential HR
+stored when it was paired with Den (`Authorization: Bearer`), plus
+`X-Den-User-Issuer` and `X-Den-User-Subject`. A staff sign-in is not
+accepted.
+
+Not paired: **404** `not_found`. Wrong, missing or revoked credential:
+**401** `unauthorized` (`invalid or revoked credential`). A header missing,
+blank, or longer than 512 bytes: **400** `bad_request` (`issuer and subject
+are required`).
+
+```sh
+curl -s -H "Authorization: Bearer $HR_DEN_CREDENTIAL" \
+  -H "X-Den-User-Issuer: https://auth.conservices.test/realms/conservices" \
+  -H "X-Den-User-Subject: 0b6e2c4d-8f1a-4b3c-9d7e-5a6b7c8d9e0f" \
+  https://hr.example.org/api/portal/todos
+```
+
+```json
+{"items":[]}
+```
+
+```json
+{"error":{"code":"unauthorized","message":"invalid or revoked credential"}}
+```
 
 ### `GET /api/den/state`
 

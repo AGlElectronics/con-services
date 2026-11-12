@@ -316,9 +316,11 @@ networkPolicy:
     - conservices-rally
   # Module backends allowed to call HR's backend: the wiki lists departments
   # and access groups (GET /api/internal/directory/groups, bearer
-  # HR_DIRECTORY_TOKEN). The caller's namespace needs a matching egress rule.
+  # HR_DIRECTORY_TOKEN), and Den reads GET /api/portal/todos with the pairing
+  # credential. The caller's namespace needs a matching egress rule.
   allowFromNamespaces:
     - conservices-wiki
+    - conservices-den
   # The backend calls Photon for address suggestions (the browser calls HR).
   # fqdns renders a CiliumNetworkPolicy when gateway.cilium is true; on
   # another CNI set cidrs. enabled: false when address search is unused.
