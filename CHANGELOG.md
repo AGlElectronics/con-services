@@ -612,6 +612,10 @@ led by Den's MAJOR; see
 - Den's operator and pairing smokes send access tokens. Den refuses ID
   tokens.
 
+### Fixed
+
+- The Tasks smoke sends an access token. Tasks refuses ID tokens.
+
 ### Security
 
 - The shared nginx policy still sends `frame-ancestors 'none'` and
