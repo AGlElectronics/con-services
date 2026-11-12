@@ -132,7 +132,9 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
-    # Portal to-dos and role catalogs. The module must admit den-backend.
+    # Portal to-dos and role catalogs. Every module chart admits
+    # den-backend (networkPolicy.den, on by default); Stash's Kustomize
+    # module does too.
     - to:
         - namespaceSelector:
             matchLabels:
