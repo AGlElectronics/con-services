@@ -27,13 +27,13 @@ platform comes from operators (CloudNativePG, the Keycloak Operator) and a
 managed S3 service, and Argo CD installs Den and the modules with these
 charts. The Kustomize platform in `deploy/kubernetes/` is for a local trial.
 
-!!! warning "The charts are a first version"
+!!! warning "First production install still pending"
     Every chart is versioned with its app (Den and the modules all start at
-    `1.0.0`, see [Versions and upgrades](versioning.md)), and all are marked
-    *STUB: first scaffold, not yet tested on a cluster* in their
-    `Chart.yaml`. They render valid manifests
-    and follow the same rules as the Kustomize files, but test each one on a
-    staging cluster before relying on it, and report problems as issues.
+    `1.0.0`, see [Versions and upgrades](versioning.md)). CI renders and
+    lints each chart (`helm lint`, `helm template`) and renders the
+    Kustomize trees. No chart has been installed on a production cluster
+    yet: try one on a staging cluster before relying on it, and report
+    problems as issues.
 
 ## What every chart does and does not do
 
@@ -44,9 +44,9 @@ Every chart in `deploy/charts/` follows the same rules:
   manager (see [Secrets](secrets.md)).
 - It **never creates the namespace.** Create `conservices-<module>` first,
   with the labels the platform's network policies need.
-- It **never uses `latest`.** Image tags are `MAJOR.MINOR.PATCH-BUILD`. HR
-  and Rally ship with empty tags on purpose, so the install fails until you
-  set one.
+- It **never uses `latest`.** Image tags are `MAJOR.MINOR.PATCH-BUILD`.
+  Every chart defaults to `1.0.0-1`. Set another tag only when you want a
+  different build.
 - It keeps the module's backend at **one replica** with the `Recreate`
   strategy, because each backend runs its database migrations on start
   (through a `migrate` initContainer, or in-process for Stash). Den, Stash,
@@ -80,8 +80,8 @@ The default image tag is that version's first build.
 | --- | --- | --- | --- | --- | --- |
 | `den` | `1.0.0` | `1.0.0-1` | `den-secrets`, and `den-operator-secrets` (`operator.existingSecret`) | `/den-migrate` initContainer (backend image) | Install with the release name `den`. Three certificates (backend, web app, operator). Operator runs as user 70 (`postgres`). |
 | `stash` | `1.0.0` | `1.0.0-1` | `stash-secrets` | in the backend at start | |
-| `hr` | `1.0.0` | none | `hr-secrets` | `hr-migrate` initContainer | Set all three tags yourself. |
-| `rally` | `1.0.0` | none | `rally-secrets` | `rally-migrate` initContainer | Set tags yourself. Pairs with Den as `events`. The published `rally-submit` image has the example sign-in settings; build your own for your domain. |
+| `hr` | `1.0.0` | `1.0.0-1` | `hr-secrets` | `hr-migrate` initContainer | |
+| `rally` | `1.0.0` | `1.0.0-1` | `rally-secrets` | `rally-migrate` initContainer | Pairs with Den as `events`. The submission image `rally-submit` uses the same tag. The published image has the example sign-in settings; build your own for your domain. |
 | `finance` | `1.0.0` | `1.0.0-1` | `finance-secrets` | `finance-migrate` initContainer | No access config file; uses `FINANCE_ACCESS_GROUPS`. |
 | `learn` | `1.0.0` | `1.0.0-1` | `learn-secrets` | `learn-migrate` initContainer | |
 | `wiki` | `1.0.0` | `1.0.0-1` | `wiki-secrets` | `wiki-migrate` initContainer | Creates a 1 GiB PersistentVolumeClaim for the live-edit buffer. |
@@ -619,8 +619,10 @@ Keep `CreateNamespace=false`: the namespace needs the labels from step 3.
 ## Troubleshooting
 
 **`Error: execution error at (stash/templates/deployment.yaml): image.backend.tag is required (MAJOR.MINOR.PATCH-BUILD)`**
-: The tag is empty (always the case for HR and Rally). Set every tag under
-  `image:` in your values file.
+: A values file set an image tag to empty. Every chart defaults to
+  `1.0.0-1`. Set every tag under `image:` (and Rally's `submit.image.tag`)
+  to a `MAJOR.MINOR.PATCH-BUILD` tag. Empty `submit.image.tag` falls back
+  to `image.frontend.tag`.
 
 **Uploads or backups to external S3 time out**
 : The network policy blocks the call. Check that

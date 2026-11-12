@@ -9,7 +9,7 @@ name: conservices
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     container_name: conservices-postgres
     restart: unless-stopped
     environment:
@@ -139,7 +139,7 @@ services:
 
   # DEV Keycloak — import realm conservices with SPA clients + test users.
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.7
+    image: quay.io/keycloak/keycloak:26.8.2
     container_name: conservices-keycloak
     restart: unless-stopped
     command: ["start-dev", "--import-realm"]

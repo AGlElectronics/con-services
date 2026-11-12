@@ -260,9 +260,13 @@ template use the tag `1.0.0-1`.
 Run once, by a maintainer, in this order (nothing here runs automatically):
 
 1. Point the shared workflow tag `ci-v1` at the `module-ci.yml` on `main`
-   in `con-services` (it has the `den-major` input), then set
-   `den-major: "1"` in each module's `.github/workflows/ci.yml` (not
-   Den's):
+   in `con-services` (it has the `den-major` input). Each module
+   repository except Den already passes `den-major: "1"` in
+   `.github/workflows/ci.yml`. Moving `ci-v1` is still a maintainer step:
+   until that tag points at this workflow, the input is not there to
+   receive. The earlier pre-release tags `v1.0.0` and `v1.1.0` on this
+   repository were deleted before this first real release; tag `v1.0.0`
+   again in the steps below.
 
     ```sh
     git checkout main && git pull

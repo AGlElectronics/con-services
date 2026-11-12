@@ -201,6 +201,32 @@ led by Den's MAJOR; see
 
 ### Changed
 
+- Development Keycloak is `quay.io/keycloak/keycloak:26.8.2` (Docker Compose
+  and `deploy/kubernetes/base/identity`). The realm files need no change
+  for 26.0.7 → 26.8.2. An existing dev database migrates by itself the
+  next time Keycloak starts; nothing here restarts it.
+- PostgreSQL is pinned to `postgres:16.15-alpine` in Docker Compose, the
+  Kustomize data manifests, and the CI service container (the runner
+  sidecar already used that tag).
+- Every module chart admits Den's backend for `GET /api/role-catalog` and
+  `GET /api/portal/todos` when `networkPolicy.den` is on (the default).
+  HR, Finance and Desk use that rule instead of listing `conservices-den`
+  in `allowFromNamespaces`. Rally's chart documents optional Telegram
+  egress (`networkPolicy.extraEgress`).
+- HR and Rally chart image tags default to `1.0.0-1`, including Rally's
+  submission image. Chart descriptions say CI renders and lints them
+  (`helm lint`, `helm template`, and `kustomize` for the manifests); the
+  first production install is still pending. Chart versions stay `1.0.0`.
+- The Secrets page names the settings that are a path to a file
+  (`DEN_SMTP_PASSWORD_FILE`, `GOOGLE_WORKSPACE_CREDENTIALS_FILE`, the TLS
+  files and the config paths). There is still no `*_FILE` companion for
+  every secret, and the shell-less backend images do not read Docker
+  `secrets:` unless one of those paths is set.
+- The first-release steps in CI note that the earlier pre-release tags
+  `v1.0.0` and `v1.1.0` were deleted before this first real release.
+  Moving the `ci-v1` tag remains a maintainer step; the module workflows
+  already pass `den-major: "1"`.
+
 - Production Compose passes optional `DEN_SMTP_PASSWORD` into
   `den-backend` (empty when unset in `.env`). The shared SMTP password is
   not stored in Den's database. Restart `den-backend` after changing it.

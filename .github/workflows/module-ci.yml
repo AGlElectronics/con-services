@@ -83,7 +83,7 @@ on:
         description: >-
           Where that PostgreSQL comes from: "sidecar" (already listening on
           127.0.0.1:5432 as user ci, the ARC runner pods' postgres sidecar) or
-          "service" (start a postgres:16 service container; needs Docker).
+          "service" (start a postgres:16.15-alpine service container; needs Docker).
         type: string
         default: sidecar
       registry:
@@ -240,7 +240,7 @@ jobs:
     services:
       postgres:
         # An empty image skips the service container (sidecar mode, or no database tests).
-        image: ${{ inputs.test-database-env != '' && inputs.test-database-mode == 'service' && 'postgres:16-alpine' || '' }}
+        image: ${{ inputs.test-database-env != '' && inputs.test-database-mode == 'service' && 'postgres:16.15-alpine' || '' }}
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci-only-password
