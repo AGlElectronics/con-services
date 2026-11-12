@@ -1,4 +1,5 @@
-# Rally Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# Rally Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/modules/rally/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -14,17 +15,17 @@ namespace: conservices-rally
 image:
   backend:
     repository: ghcr.io/aglelectronics/rally-backend
-    # MAJOR.MINOR.PATCH-BUILD. Required; no Rally release is published yet.
-    tag: ""
+    # MAJOR.MINOR.PATCH-BUILD. Never "latest". Use the same tag for all three.
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
   frontend:
     repository: ghcr.io/aglelectronics/rally-frontend
-    tag: ""
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
   # One-shot migrator (/migrate). Runs as an initContainer of the backend.
   migrate:
     repository: ghcr.io/aglelectronics/rally-migrate
-    tag: ""
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
 
 # Existing Secret (from your secret manager). Keys Rally reads from it:
@@ -193,8 +194,8 @@ submit:
   enabled: false
   image:
     repository: ghcr.io/aglelectronics/rally-submit
-    # Empty: image.frontend.tag (all images of a release share the tag).
-    tag: ""
+    # Same tag as the other Rally images. Empty falls back to image.frontend.tag.
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
   replicas: 2
   # Host of the submission site, for its HTTPRoute (and Ingress).
