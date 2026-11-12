@@ -54,12 +54,13 @@ $stash = $agg.modules | Where-Object module -eq 'stash'
 if (-not $stash -or $Skip -contains 'stash') { Write-Host 'Stash not in HR catalog: provisioning check skipped' }
 else {
   $role = $stash.roles | Where-Object { $_.key -eq 'conops_lead' }
-  $stamp = Get-Date -Format 'HHmmss'
+  $digits = (Get-Date -Format 'HHmmss').ToCharArray()
+  $stamp = -join ($digits | ForEach-Object { [char](97 + [int][string]$_) })
   $person = Invoke-RestMethod -Method Post -Uri "$hr/api/people" -Headers $h -ContentType 'application/json' -Body (@{
-    first_name = 'Picker'; last_name = "$stamp"; nickname = "picker$stamp"; date_of_birth = '1992-03-04'
-    email = "picker$stamp@conservices.local"; phone = '+43 660 1111111'
+    first_name = 'Picker'; last_name = $stamp; nickname = "picker$stamp"; date_of_birth = '1992-03-04'
+    email = "picker$stamp@conservices.local"; phone = '+43 660 1234567'
     address = @{ street = '2 Example Street'; postal_code = '1010'; city = 'Vienna'; country = 'AT' }
-    emergency_contact = @{ name = 'Someone'; phone = '+43 660 2222222' }
+    emergency_contact = @{ name = 'Someone'; phone = '+43 660 1234567' }
   } | ConvertTo-Json -Depth 4)
   $draft = Invoke-RestMethod -Method Post -Uri "$hr/api/drafts" -Headers $h -ContentType 'application/json' -Body (@{ person_id = $person.id; title = 'ConOps' } | ConvertTo-Json)
   Invoke-RestMethod -Method Put -Uri "$hr/api/drafts/$($draft.id)/roles" -Headers $h -ContentType 'application/json' -Body (@{
