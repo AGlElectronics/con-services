@@ -1,4 +1,5 @@
-# HR Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# HR Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/modules/hr/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -11,17 +12,17 @@ namespace: conservices-hr
 image:
   backend:
     repository: ghcr.io/aglelectronics/hr-backend
-    # MAJOR.MINOR.PATCH-BUILD. Required; no HR release is published yet.
-    tag: ""
+    # MAJOR.MINOR.PATCH-BUILD. Never "latest". Use the same tag for all three.
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
   frontend:
     repository: ghcr.io/aglelectronics/hr-frontend
-    tag: ""
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
   # One-shot migrator (/migrate). Runs as an initContainer of the backend.
   migrate:
     repository: ghcr.io/aglelectronics/hr-migrate
-    tag: ""
+    tag: "1.0.0-1"
     pullPolicy: IfNotPresent
 
 # Existing Secret (from your secret manager). Keys HR reads from it:
@@ -316,11 +317,11 @@ networkPolicy:
     - conservices-rally
   # Module backends allowed to call HR's backend: the wiki lists departments
   # and access groups (GET /api/internal/directory/groups, bearer
-  # HR_DIRECTORY_TOKEN), and Den reads GET /api/portal/todos with the pairing
-  # credential. The caller's namespace needs a matching egress rule.
+  # HR_DIRECTORY_TOKEN). Den is not in this list: networkPolicy.den (on by
+  # default) admits den-backend for GET /api/role-catalog and
+  # GET /api/portal/todos. The caller's namespace needs a matching egress rule.
   allowFromNamespaces:
     - conservices-wiki
-    - conservices-den
   # The backend calls Photon for address suggestions (the browser calls HR).
   # fqdns renders a CiliumNetworkPolicy when gateway.cilium is true; on
   # another CNI set cidrs. enabled: false when address search is unused.

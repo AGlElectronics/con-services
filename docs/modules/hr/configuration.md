@@ -142,13 +142,14 @@ know. A standalone HR uses only that list.
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
-| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | no | ConfigMap (the chart sets it with `googleWorkspace.enabled`) | Path to the service-account key (JSON). When set, the Google Workspace connector is available and an admin can turn it on in Settings. Empty: the connector stays unavailable and HR works without it. See [Google Workspace](google-workspace.md). |
+| `GOOGLE_WORKSPACE_CREDENTIALS_FILE` | none | no | ConfigMap (the chart sets it with `googleWorkspace.enabled`) | Path to the service-account key (JSON). When set, the Google Workspace connector is available and an admin can turn it on in Settings. Empty: the connector stays unavailable and HR works without it. The domain and the admin address are settings on that page, not environment variables. See [Google Workspace](google-workspace.md). |
 
 ## Den
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |
 | `DEN_INTERNAL_URL` | none | no | ConfigMap | Replaces the host of a pasted Den pairing URL (platform: `https://den-backend.conservices-den.svc.cluster.local:8080`). Empty when standalone. |
+| `DEN_ALLOWED_HOSTS` | none | when `DEN_INTERNAL_URL` is empty | ConfigMap | Comma-separated hosts a pasted pairing URL may point at, for example `den.example.org` or `*.example.org`. Not needed while `DEN_INTERNAL_URL` is set. With `APP_ENV=development`, `localhost`, `127.0.0.1`, `::1` and `*.conservices.test` are always allowed. Outside development the URL must also use `https://`. |
 | `DEN_MODE` | `standalone` | no | ConfigMap | `required`: until the module is paired with Den, its API answers `503 den_pairing_required` and the web app shows *Waiting for Den* (admins: *Connect this module to Den*). `standalone`: the module works without Den; pairing is optional. Kubernetes sets `required` (Helm: `den.mode`); Docker Compose sets `standalone`. See [Required or standalone](../../concepts/pairing.md#required-or-standalone). |
 | `DEN_LINK_ENCRYPTION_KEY` | none | outside development | **Secret** | Base64 of 32 random bytes (`openssl rand -base64 32`). Encrypts the Den credential HR stores. One key per module. Required unless `APP_ENV=development`. |
 | `DEN_LINK_ENCRYPTION_KEY_PREVIOUS` | none | no | **Secret** | The previous key, only while rotating `DEN_LINK_ENCRYPTION_KEY`. Remove it after the restart that re-encrypts the credential. |
