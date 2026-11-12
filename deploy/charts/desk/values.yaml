@@ -1,4 +1,5 @@
-# Desk Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# Desk Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/modules/desk/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -288,11 +289,11 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
-  # HR reads GET /api/role-catalog.
+  # HR reads GET /api/role-catalog. Den is admitted separately by
+  # networkPolicy.den (on by default): GET /api/role-catalog and
+  # GET /api/portal/todos.
   allowFromNamespaces:
     - conservices-hr
-    # Den's backend reads GET /api/role-catalog and GET /api/portal/todos.
-    - conservices-den
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false
