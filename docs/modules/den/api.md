@@ -222,6 +222,12 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | GET, POST | `/api/v1/operations/backups` | ops | [Operations](#operations-backups-and-databases) |
 | POST | `/api/v1/operations/backups/download-link` | ops | [Operations](#operations-backups-and-databases) |
 | GET | `/api/v1/backup-downloads/{token}` | anyone with the link (rate-limited) | [Operations](#get-apiv1backup-downloadstoken) |
+| GET | operator `/v1/status` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
+| PUT | operator `/v1/settings` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
+| GET, POST | operator `/v1/backups` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
+| GET | operator `/v1/backups/download` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
+| POST | operator `/v1/databases` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
+| DELETE | operator `/v1/databases/{name}` | `OPERATOR_TOKEN`, den-backend only | [Operator HTTP API](#operator-http-api) |
 | POST | `/api/v1/integrations/pairing/redeem` | pairing token (rate-limited) | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/bundle`, `/settings`, `/module-settings` | module credential | [Integration](#integration-api-for-paired-modules) |
 | GET | `/api/v1/integrations/module-settings/secrets` | module credential | [Integration](#get-apiv1integrationsmodule-settingssecrets) |
@@ -1482,6 +1488,220 @@ an interrupted download needs a new link. The download is audited
 (`operations.backup.download`) with the person who created the link.
 Errors: `404 download link not found` (unknown, used or expired), `404
 backup not found`, `429 rate_limited`.
+
+---
+
+## Operator HTTP API
+
+Den's **operator** is a separate process (`den-operator`). It holds the
+PostgreSQL admin login and writes backups. These routes are **not** on
+Den's public address. They listen on the operator (`OPERATOR_ADDR`,
+default `:8080`) and the network policy admits only `den-backend`. Den's
+own [Operations](#operations-backups-and-databases) routes are what people
+and scripts call; those routes call this API.
+
+**Auth:** `Authorization: Bearer <OPERATOR_TOKEN>`. The token is the same
+value on the backend (`OPERATOR_TOKEN`) and the operator. A missing or
+wrong token answers `401`:
+
+```json
+{"error":"unauthorized"}
+```
+
+Errors from this API are `{"error":"<sentence>"}`, not Den's
+`{"error":{"code","message"}}` shape. `502` means PostgreSQL or the backup
+store could not be reached; the `error` text says why.
+
+`GET /livez` on the same port is the probe. It needs no token and answers
+`204`.
+
+In the examples the operator is reached inside the cluster. From a
+workstation, forward the port first
+(`kubectl port-forward -n conservices-den deploy/den-operator 8081:8080`).
+
+```sh
+export OPERATOR=https://den-operator.conservices-den.svc.cluster.local:8080
+export OPERATOR_TOKEN=change-me
+```
+
+### `GET /v1/status`
+
+What the operator can do, the backup schedule, the last run, and the
+databases on the server.
+
+```sh
+curl -sk -H "Authorization: Bearer $OPERATOR_TOKEN" $OPERATOR/v1/status
+```
+
+```json
+{
+  "managed_databases": true,
+  "backups_enabled": true,
+  "target": "http://s3:9000/conservices-backups",
+  "recipients": ["age1…"],
+  "file_buckets": ["den-data-dev", "hr-data-dev"],
+  "timezone": "Europe/Vienna",
+  "settings": {"hour": 3, "keep_daily": 7, "keep_weekly": 4, "keep_monthly": 6},
+  "last": {
+    "kind": "scheduled",
+    "started_at": "2026-11-11T02:00:00Z",
+    "finished_at": "2026-11-11T02:00:09Z",
+    "ok": true,
+    "key": "backups/20261111T020000Z-scheduled.tar.age",
+    "size_bytes": 1849344,
+    "databases": ["den", "hr", "keycloak"],
+    "buckets": ["den-data-dev"]
+  },
+  "last_success": {"kind": "scheduled", "ok": true, "key": "backups/20261111T020000Z-scheduled.tar.age"},
+  "next_run": "2026-11-12T02:00:00Z",
+  "same_storage_as_data": true,
+  "warning": "Backups are stored on the same S3 service as the live data. If that service is lost, the data and its backups are lost together; move backups to another provider or location.",
+  "databases": [
+    {"name": "den", "owner": "den", "size_bytes": 8421376, "protected": true},
+    {"name": "hr", "owner": "hr", "size_bytes": 9203712, "protected": false}
+  ]
+}
+```
+
+`running` is set while a backup or a database removal is in progress
+(`"backup"` or `"drop <name>"`). `problem` is set when the last backup
+failed, none has succeeded, or the last good one is older than 26 hours.
+`target`, `recipients`, `settings`, `last`, `last_success` and `next_run`
+are absent when backups are off. `file_buckets` is `[]` when none are
+configured.
+
+`502` when PostgreSQL or the backup store cannot be read.
+
+### `PUT /v1/settings`
+
+Replace the backup schedule. Kept in the backup bucket, not in PostgreSQL.
+
+| Field | Range |
+| --- | --- |
+| `hour` | 0–23, in `BACKUP_TIMEZONE` |
+| `keep_daily` | 1–365 |
+| `keep_weekly` | 0–520 |
+| `keep_monthly` | 0–240 |
+
+```sh
+curl -sk -X PUT -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"hour":3,"keep_daily":7,"keep_weekly":4,"keep_monthly":6}' \
+  $OPERATOR/v1/settings
+```
+
+```json
+{"hour":3,"keep_daily":7,"keep_weekly":4,"keep_monthly":6}
+```
+
+`400` `hour must be 0–23, keep at least 1 daily backup` for a value outside
+those ranges or a body that is not that JSON. `409` `backups are turned off`
+when `BACKUP_ENABLED=false`. `502` when the bucket cannot be written.
+
+### `GET /v1/backups`
+
+List backup objects, newest last is not guaranteed; each object has `key`,
+`kind` (`backup` or `pre-drop`), optional `database`, `size_bytes` and
+`created_at`.
+
+```sh
+curl -sk -H "Authorization: Bearer $OPERATOR_TOKEN" $OPERATOR/v1/backups
+```
+
+```json
+[{"key":"backups/20261111T020000Z-scheduled.tar.age","kind":"backup","size_bytes":1849344,"created_at":"2026-11-11T02:00:09Z"}]
+```
+
+Backups turned off: `200` and `[]`. `502` when the bucket cannot be listed.
+
+### `POST /v1/backups`
+
+Start a backup now. The answer comes back before the backup finishes;
+watch `GET /v1/status` for `running` and then `last`.
+
+```sh
+curl -sk -X POST -H "Authorization: Bearer $OPERATOR_TOKEN" $OPERATOR/v1/backups
+```
+
+```json
+{"started":true}
+```
+
+`202` when it started. `409` `backups are turned off`, or `409` `a backup
+or database removal is already running`.
+
+### `GET /v1/backups/download?key=`
+
+Stream one backup object. `key` is the value from the list (for example
+`backups/20261111T020000Z-scheduled.tar.age`). The body is the encrypted
+file (`application/octet-stream`) with `Content-Length`.
+
+```sh
+curl -sk -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -o backup.tar.age \
+  "$OPERATOR/v1/backups/download?key=backups/20261111T020000Z-scheduled.tar.age"
+```
+
+`404` `backups are turned off` or `404` `no such backup`. `502` when the
+object cannot be opened. `400` is not used: an empty `key` is `404`.
+
+### `POST /v1/databases`
+
+Create a database and a login of the same name. The password is returned
+**once**. Den stores the URL and does not ask again.
+
+```sh
+curl -sk -X POST -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"stash"}' \
+  $OPERATOR/v1/databases
+```
+
+```json
+{
+  "name": "stash",
+  "username": "stash",
+  "password": "dev-only-shown-once",
+  "database_url": "postgres://stash:dev-only-shown-once@postgres.conservices-data.svc.cluster.local:5432/stash?sslmode=verify-full"
+}
+```
+
+The host and query come from `MODULE_DB_HOST` and `MODULE_DB_PARAMS`.
+
+| Status | `error` |
+| --- | --- |
+| 400 | `invalid body`, or `database names use lowercase letters, digits and _ and must not be a protected database` |
+| 409 | `Den-managed databases are turned off`, or `a database with this name already exists` |
+| 502 | PostgreSQL could not create the database |
+| 201 | the JSON above |
+
+A name matches `^[a-z][a-z0-9_]{1,40}$` and is not in `PROTECTED_DATABASES`
+(default `keycloak` and `den`, plus `postgres`, `template0` and `template1`).
+
+### `DELETE /v1/databases/{name}`
+
+Back the database up when backups are on, then drop the database and its
+login. The backup must succeed first; a failed backup deletes nothing.
+
+```sh
+curl -sk -X DELETE -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  $OPERATOR/v1/databases/stash
+```
+
+```json
+{"name":"stash","backup_key":"pre-drop/20261111T101500Z-stash.tar.age"}
+```
+
+`backup_key` is absent when backups are turned off (the database is still
+dropped).
+
+| Status | `error` |
+| --- | --- |
+| 403 | `this database is protected` |
+| 404 | `no such database` |
+| 409 | `Den-managed databases are turned off`, or `a backup or database removal is already running` |
+| 502 | `backup before removal failed, nothing was deleted: …`, or the drop failed |
+| 200 | the JSON above |
 
 ---
 
