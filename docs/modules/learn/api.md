@@ -19,7 +19,7 @@ module (tokens, error shape, ids, timestamps) are on
 | --- | --- |
 | Base address (browser, scripts) | The Learn address, for example `https://learn.example.org`. nginx forwards `/api/`, `/livez` and `/readyz` to the backend. |
 | Base address (inside the cluster) | `https://learn-backend.conservices-learn.svc.cluster.local:8080` |
-| Version prefix | `/api/v1` for the app; `/api/…` without `v1` for the cross-module contracts (catalogs, holdings, portal, public verify). |
+| Version prefix | `/api/v1` for the app; `/api/…` without `v1` for the cross-module contracts (catalogs, holdings, portal, public verify, Den state). `GET /api/den/state` is also at `/api/v1/den/state`. |
 | Request bodies | JSON, `Content-Type: application/json`. **Unknown fields are rejected** with `400`. The question import is the one `multipart/form-data` route. |
 | Ids | UUIDs. A malformed id answers `400` `invalid <name> id: …`. |
 | Times | RFC 3339, for example `2026-11-06T12:00:00Z`. |
@@ -126,12 +126,12 @@ The Den routes add `pairing_failed` (422) and `sync_failed` (409/502).
 
 ## Endpoint overview
 
-**147 endpoints.** Paths below `/api/v1` are written without that prefix in
+**149 endpoints.** Paths below `/api/v1` are written without that prefix in
 the section tables.
 
 | Area | Count | Section |
 | --- | --- | --- |
-| Probes, catalogs, HR, public, portal | 8 | [Service and public](#service-and-public-routes) |
+| Probes, catalogs, HR, public, portal, Den state | 10 | [Service and public](#service-and-public-routes) |
 | Brand, you, people, Den | 15 | [You](#you), [Den](#den-pairing) |
 | Courses, sections, activities, enrolments, course roles, archive, rules, copy | 26 | [Courses](#courses) |
 | Quizzes, question bank, attempts, gradebook, stats, import | 25 | [Quizzes](#quizzes) |
@@ -156,6 +156,7 @@ the section tables.
 | GET | `/api/internal/holdings?subjects=` | `LEARN_SERVICE_TOKEN` |
 | GET | `/api/public/verify/{code}` | anyone, 30 a minute per address |
 | GET | `/api/portal/todos` | Den's backend (pairing credential) |
+| GET | `/api/den/state` (also `/api/v1/den/state`) | anyone |
 
 ### `GET /livez`, `GET /readyz`, `GET /api/health`
 
@@ -169,6 +170,26 @@ curl -s $LEARN/api/health
 
 ```json
 {"status":"ok","database":"ok","version":"1.0.0-1","uptime_sec":5400}
+```
+
+### `GET /api/den/state`
+
+Anyone. Also at `/api/v1/den/state`. Whether Learn must be paired with Den,
+and whether it is. The web app uses this before sign-in to show *Waiting
+for Den* or *Connect this module to Den*. `Cache-Control: no-store`.
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `standalone` (works without Den) or `required` (the API answers `503 den_pairing_required` until paired). |
+| `paired` | `true` when a Den credential is stored. |
+| `revoked` | `true` when Den rejected that credential. Pair again. `paired` can still be `true`. |
+
+```sh
+curl -s $LEARN/api/den/state
+```
+
+```json
+{"mode":"required","paired":true,"revoked":false}
 ```
 
 ### `GET /api/role-catalog`

@@ -1,4 +1,5 @@
-# Learn Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# Learn Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/modules/learn/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
