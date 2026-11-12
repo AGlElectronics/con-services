@@ -442,6 +442,18 @@ config. A key set in frontend.config always wins, even when empty. */}}
 {{- toPrettyJson $out -}}
 {{- end -}}
 
+{{/* KEYCLOAK_ORIGIN of the web app's Content Security Policy: frontend.securityHeaders.keycloakOrigin,
+else scheme and host of the sign-in address the web app uses (/config.json oidcAuthority). */}}
+{{- define "desk.keycloakOrigin" -}}
+{{- $h := .Values.frontend.securityHeaders | default dict -}}
+{{- if $h.keycloakOrigin -}}
+{{- $h.keycloakOrigin -}}
+{{- else -}}
+{{- $authority := (include "desk.frontendConfig" . | fromJson).oidcAuthority | default "" -}}
+{{- with $authority }}{{ with urlParse . }}{{ printf "%s://%s" .scheme .host }}{{ end }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* DEN_MODE of the backend from den.mode: "required" or "standalone". */}}
 {{- define "desk.denMode" -}}
 {{- $mode := (.Values.den | default dict).mode | default "required" -}}

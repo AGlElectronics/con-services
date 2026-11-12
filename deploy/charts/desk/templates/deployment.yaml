@@ -234,7 +234,7 @@ spec:
           {{- $csp := .Values.frontend.securityHeaders | default dict }}
           env:
             - name: KEYCLOAK_ORIGIN
-              value: {{ $csp.keycloakOrigin | default "" | quote }}
+              value: {{ include "desk.keycloakOrigin" . | quote }}
             - name: DEN_ORIGIN
               value: {{ $csp.denOrigin | default "" | quote }}
             - name: S3_ORIGIN

@@ -376,6 +376,8 @@ then add:
     restart: unless-stopped
     networks: [internal]
     environment:
+      # Sign-in server for the Content-Security-Policy.
+      KEYCLOAK_ORIGIN: https://auth.con.example.org
       # Sandboxed customer mail. The token itself, not an origin.
       EXTRA_FRAME_SRC: "about:srcdoc"
     volumes:

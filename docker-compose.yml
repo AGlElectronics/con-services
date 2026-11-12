@@ -1129,6 +1129,8 @@ services:
         DESK_VERSION: dev
     container_name: conservices-desk-frontend
     environment:
+      # Sign-in server for the Content-Security-Policy (shared nginx headers).
+      KEYCLOAK_ORIGIN: https://auth.conservices.test
       # Sandboxed customer mail is an srcdoc iframe. Not an origin: the token.
       EXTRA_FRAME_SRC: "about:srcdoc"
     volumes:

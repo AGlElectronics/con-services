@@ -599,6 +599,10 @@ led by Den's MAJOR; see
 - Docker Compose: GreenMail's healthcheck runs under bash. The image's
   `/bin/sh` cannot open `/dev/tcp`, so the check never passed and Desk
   stayed stopped.
+- Desk's web app in Docker Compose sets `KEYCLOAK_ORIGIN`, so the browser
+  may talk to the sign-in server. The Helm chart fills that origin from
+  the web app's sign-in address when `frontend.securityHeaders.keycloakOrigin`
+  is empty.
 
 ### Security
 
