@@ -659,6 +659,13 @@ led by Den's MAJOR; see [Versions and upgrades](docs/operations/versioning.md).
 ### Fixed
 
 - The Tasks smoke sends an access token. Tasks refuses ID tokens.
+- The shared module CI (`module-ci.yml`, tag `ci-v1`) runs govulncheck
+  v1.9.0 by default. v1.1.4 panicked on Go 1.27 (`unexpected expr:
+  *ast.KeyValueExpr`), so the Go job of every module failed before it
+  reported anything. A module that pins `govulncheck-version` itself keeps
+  its own version.
+- The authbase example in `shared/go` checks the result of `fmt.Fprintf`,
+  so module copies pass golangci-lint's `errcheck`.
 
 ### Security
 

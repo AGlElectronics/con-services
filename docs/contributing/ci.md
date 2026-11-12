@@ -725,6 +725,26 @@ SMOKE_INSECURE=1 SMOKE_KEYCLOAK=https://127.0.0.1:8443 SMOKE_DEN_API=https://127
 **`gofmt` step lists files**
 : Run `gofmt -w .` in `backend/` and commit.
 
+**golangci-lint exits with code 3 (`can't load config` or `the Go language version ... used to build golangci-lint is lower than the targeted Go version`)**
+: Exit code 3 means golangci-lint did not run its checks at all. In v2,
+  formatters such as `gofmt` and `goimports` belong under `formatters:` in
+  `.golangci.yml`, not under `linters.enable`. Locally, a golangci-lint
+  built with an older Go than the module's `go` line refuses the module;
+  install it again with the newer Go
+  (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`).
+
+**golangci-lint reports a finding in `internal/authbase` (or another shared copy)**
+: The copies are linted: their header continues after `DO NOT EDIT.`, so
+  golangci-lint does not treat them as generated. Fix the code in
+  `con-services` `shared/go`, push it to `main`, and run
+  `scripts/sync-shared` for the module. Editing the copy fails **Shared code
+  drift**.
+
+**`govulncheck` panics with `unexpected expr: *ast.KeyValueExpr`**
+: govulncheck v1.1.4 cannot read Go 1.27. The default is v1.9.0; remove an
+  older `govulncheck-version` from the module's `ci.yml`, or make sure the
+  module calls a `ci-v1` that includes the new default.
+
 **`Version '1.0.0-rc.1' is not MAJOR.MINOR.PATCH`**
 : Release tags have no suffix. Delete the tag
   (`git push origin :refs/tags/v1.0.0-rc.1`) and tag `v1.0.0`.

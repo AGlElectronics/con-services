@@ -105,7 +105,7 @@ on:
         default: v2.15.0
       govulncheck-version:
         type: string
-        default: v1.1.4
+        default: v1.9.0
       trivy-version:
         type: string
         default: v0.76.2
