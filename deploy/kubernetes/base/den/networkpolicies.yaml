@@ -135,7 +135,8 @@ spec:
           port: 8443
     # Module backends: GET /api/role-catalog (who sees a module on the
     # portal) and GET /api/portal/todos, at the module's internal_url.
-    # The module must admit den-backend (Tasks does).
+    # Every module chart admits den-backend (networkPolicy.den, on by
+    # default); Stash's Kustomize module does too.
     - to:
         - namespaceSelector:
             matchLabels:
