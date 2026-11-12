@@ -38,7 +38,7 @@ func Example() {
 			authbase.WriteDecodeError(w, err)
 			return
 		}
-		fmt.Fprintf(w, "hello %s", in.Name)
+		_, _ = fmt.Fprintf(w, "hello %s", in.Name)
 	})
 	h := authbase.SecurityHeaders(auth.StripDevHeaders(limiter.Middleware(api)))
 
