@@ -594,6 +594,12 @@ led by Den's MAJOR; see
   `/server reencrypt`); the secrets pages no longer say to treat it as
   fixed ([Rotate DESK_SECRET_KEY](docs/modules/desk/operations.md#rotate-desk_secret_key)).
 
+### Fixed
+
+- Docker Compose: GreenMail's healthcheck runs under bash. The image's
+  `/bin/sh` cannot open `/dev/tcp`, so the check never passed and Desk
+  stayed stopped.
+
 ### Security
 
 - The shared nginx policy still sends `frame-ancestors 'none'` and
