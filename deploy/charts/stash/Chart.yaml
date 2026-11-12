@@ -2,8 +2,8 @@ apiVersion: v2
 name: stash
 description: >-
   Stash, the Con Services inventory module (items, sign-outs, Lost & Found).
-  STUB: first scaffold, not yet tested on a cluster. Mirrors
-  deploy/kubernetes/modules/stash/.
+  Rendered and linted in CI (helm lint, helm template, kustomize); first
+  production install pending. Mirrors deploy/kubernetes/modules/stash/.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
