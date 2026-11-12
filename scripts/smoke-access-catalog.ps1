@@ -10,11 +10,15 @@ $kc = "$(Get-SmokeUrl 'KEYCLOAK' 'http://localhost:8085')/realms/conservices/pro
 $hr = Get-SmokeUrl 'HR_API' 'http://localhost:8110'
 $den = Get-SmokeUrl 'DEN_API' 'http://localhost:8090'
 
-function Get-IdToken($client, $user, $pass) {
+function Get-AccessToken($client, $user, $pass) {
   $body = @{ grant_type = 'password'; client_id = $client; username = $user; password = $pass; scope = 'openid profile email' }
-  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).id_token
+  (Invoke-RestMethod -Method Post -Uri $kc -Body $body).access_token
 }
 
+$clients = @{
+  den = 'den-spa'; hr = 'hr-spa'; events = 'events-spa'; stash = 'stash-spa'
+  learn = 'learn-spa'; finance = 'finance-spa'; desk = 'desk-spa'; tasks = 'tasks-spa'; wiki = 'wiki-spa'
+}
 $catalogs = [ordered]@{
   den     = "$den/api/role-catalog"
   hr      = "$hr/api/role-catalog"
@@ -26,7 +30,7 @@ $catalogs = [ordered]@{
   tasks   = "$(Get-SmokeUrl 'TASKS_API' 'http://localhost:8160')/api/role-catalog"
   wiki    = "$(Get-SmokeUrl 'WIKI_API' 'http://localhost:8140')/api/role-catalog"
 }
-$staff = @{ Authorization = "Bearer $(Get-IdToken 'hr-spa' 'admin' 'adminadmin')" }
+$staff = @{ Authorization = "Bearer $(Get-AccessToken 'hr-spa' 'admin' 'adminadmin')" }
 foreach ($slug in $catalogs.Keys) {
   if ($Skip -contains $slug) { Write-Host ("{0,-7} skipped" -f $slug); continue }
   # The catalog contract allows HR's service token or a staff sign-in; try
@@ -34,7 +38,8 @@ foreach ($slug in $catalogs.Keys) {
   try { $c = Invoke-RestMethod $catalogs[$slug] }
   catch {
     if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw "$slug catalog: $($_.Exception.Message)" }
-    $c = Invoke-RestMethod $catalogs[$slug] -Headers $staff
+    $signedIn = @{ Authorization = "Bearer $(Get-AccessToken $clients[$slug] 'admin' 'adminadmin')" }
+    $c = Invoke-RestMethod $catalogs[$slug] -Headers $signedIn
   }
   if (-not $c.roles) { throw "$slug catalog lists no roles" }
   $assignable = @($c.roles | Where-Object assignable).Count
@@ -65,7 +70,7 @@ else {
   if ($idp.status -ne 'succeeded') { throw 'provision failed' }
 }
 
-$bob = @{ Authorization = "Bearer $(Get-IdToken 'den-spa' 'bob' 'bobbob')" }
+$bob = @{ Authorization = "Bearer $(Get-AccessToken 'den-spa' 'bob' 'bobbob')" }
 try { Invoke-RestMethod "$den/api/v1/modules" -Headers $bob | Out-Null; throw 'bob should be forbidden' }
 catch { if ($_.Exception.Response.StatusCode.value__ -eq 403) { Write-Host 'Den admin API as member: 403 OK' } else { throw } }
 $dash = Invoke-RestMethod "$den/api/v1/dashboard" -Headers $bob

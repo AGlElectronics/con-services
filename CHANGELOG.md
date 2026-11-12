@@ -603,6 +603,9 @@ led by Den's MAJOR; see
   may talk to the sign-in server. The Helm chart fills that origin from
   the web app's sign-in address when `frontend.securityHeaders.keycloakOrigin`
   is empty.
+- The access-catalog smoke signs in with an access token for each module's
+  own client. ID tokens are refused, and one module's token is not valid
+  for another's API.
 
 ### Security
 
