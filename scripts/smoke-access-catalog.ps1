@@ -54,22 +54,56 @@ $stash = $agg.modules | Where-Object module -eq 'stash'
 if (-not $stash -or $Skip -contains 'stash') { Write-Host 'Stash not in HR catalog: provisioning check skipped' }
 else {
   $role = $stash.roles | Where-Object { $_.key -eq 'stash_conops_lead' }
+  if (-not $role) { throw 'stash catalog has no stash_conops_lead role' }
   $digits = (Get-Date -Format 'HHmmss').ToCharArray()
-  $stamp = -join ($digits | ForEach-Object { [char](97 + [int][string]$_) })
-  $person = Invoke-RestMethod -Method Post -Uri "$hr/api/people" -Headers $h -ContentType 'application/json' -Body (@{
-    first_name = 'Picker'; last_name = $stamp; nickname = "picker$stamp"; date_of_birth = '1992-03-04'
-    email = "picker$stamp@conservices.local"; phone = '+43 660 1234567'
-    address = @{ street = '2 Example Street'; postal_code = '1010'; city = 'Vienna'; country = 'AT' }
-    emergency_contact = @{ name = 'Someone'; phone = '+43 660 1234567' }
-  } | ConvertTo-Json -Depth 4)
-  $draft = Invoke-RestMethod -Method Post -Uri "$hr/api/drafts" -Headers $h -ContentType 'application/json' -Body (@{ person_id = $person.id; title = 'ConOps' } | ConvertTo-Json)
-  Invoke-RestMethod -Method Put -Uri "$hr/api/drafts/$($draft.id)/roles" -Headers $h -ContentType 'application/json' -Body (@{
-    roles = @(@{ role_name = "stash:$($role.key)"; group_name = $role.group; scope = $role.scope })
-  } | ConvertTo-Json -Depth 4) | Out-Null
-  Invoke-RestMethod -Method Post -Uri "$hr/api/drafts/$($draft.id)/provision" -Headers $h | Out-Null
-  $idp = (Invoke-RestMethod "$hr/api/drafts/$($draft.id)/provisioning-jobs" -Headers $h).items | Where-Object target -eq 'idp' | Select-Object -First 1
-  Write-Host "Provision stash:conops_lead → group $($role.group): $($idp.status) $($idp.message -replace 'temporary_password=.*','(temp pw issued)')"
-  if ($idp.status -ne 'succeeded') { throw 'provision failed' }
+  $stamp = (-join ($digits | ForEach-Object { [char](97 + [int][string]$_) })) + [char](Get-Random -Minimum 97 -Maximum 123)
+  $personId = $null
+  $deptId = $null
+  try {
+    $dept = Invoke-RestMethod -Method Post -Uri "$hr/api/departments" -Headers $h -ContentType 'application/json' -Body (@{
+      name = "Smoke $stamp"; slug = "smoke-$stamp"
+    } | ConvertTo-Json)
+    $deptId = $dept.id
+    $started = Invoke-RestMethod -Method Post -Uri "$hr/api/onboardings" -Headers $h -ContentType 'application/json' -Body (@{
+      department_id = $deptId
+      person = @{
+        first_name = 'Picker'; last_name = $stamp; nickname = "picker$stamp"; date_of_birth = '1992-03-04'
+        email = "picker$stamp@conservices.local"; phone = '+43 660 1234567'
+        address = @{ street = '2 Example Street'; postal_code = '1010'; city = 'Vienna'; country = 'AT' }
+        emergency_contact = @{ name = 'Someone'; phone = '+43 660 1234567' }
+      }
+    } | ConvertTo-Json -Depth 5)
+    $personId = $started.person.id
+    $draftId = $started.draft.id
+    Invoke-RestMethod -Method Put -Uri "$hr/api/drafts/$draftId/roles" -Headers $h -ContentType 'application/json' -Body (@{
+      roles = @(@{ role_name = "stash:$($role.key)"; group_name = $role.group; scope = $role.scope })
+    } | ConvertTo-Json -Depth 4) | Out-Null
+    $queued = Invoke-RestMethod -Method Post -Uri "$hr/api/onboardings/$draftId/complete" -Headers $h
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+      Start-Sleep -Seconds 1
+      $job = Invoke-RestMethod -Uri "$hr/api/jobs/$($queued.job_id)" -Headers $h
+    } while (@('pending', 'running') -contains $job.status -and (Get-Date) -lt $deadline)
+    $groups = @($job.result.groups_applied) -join ', '
+    Write-Host "Provision stash:$($role.key) → group $($role.group): $($job.status) $groups"
+    if ($job.status -ne 'succeeded') { throw "provision failed: $($job.last_error)" }
+  } finally {
+    if ($personId) {
+      try {
+        Invoke-RestMethod -Method Post -Uri "$hr/api/people/$personId/offboard" -Headers $h -ContentType 'application/json' -Body (@{ reason = 'access-catalog smoke' } | ConvertTo-Json) | Out-Null
+        Write-Host "Removed smoke person $personId"
+      } catch {
+        Write-Host "Could not remove smoke person $personId`: $($_.Exception.Message)"
+      }
+    }
+    if ($deptId) {
+      try {
+        Invoke-RestMethod -Method Post -Uri "$hr/api/departments/$deptId/archive" -Headers $h | Out-Null
+      } catch {
+        Write-Host "Could not archive smoke department $deptId`: $($_.Exception.Message)"
+      }
+    }
+  }
 }
 
 $bob = @{ Authorization = "Bearer $(Get-AccessToken 'den-spa' 'bob' 'bobbob')" }

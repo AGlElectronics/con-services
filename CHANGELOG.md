@@ -259,7 +259,10 @@ led by Den's MAJOR; see
   for another's API. The person it creates sends `address` as street,
   postal code, city and country, which is what HR stores. Names are letters
   only, and the phone number is one HR's tests accept. It assigns
-  `stash:stash_conops_lead`, the role Stash publishes now.
+  `stash:stash_conops_lead`, the role Stash publishes now. It starts the
+  onboarding with `POST /api/onboardings` (a department is required) and
+  finishes it with `POST /api/onboardings/{id}/complete`, then removes the
+  person and archives the department.
 
 ### Security
 
