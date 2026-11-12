@@ -52,7 +52,7 @@ three containers sharing `127.0.0.1`:
 
 | Container | Image | Provides |
 | --- | --- | --- |
-| runner | `ghcr.io/aglelectronics/ci-runner` (from `infra/ci-runner/`; adds the C compiler `go test -race` needs) | the job, as a non-root user |
+| runner | `ghcr.io/aglelectronics/ci-runner` (from `infra/ci-runner/`; adds the C compiler `go test -race` needs and `envsubst`, which the cosign installer needs) | the job, as a non-root user |
 | BuildKit sidecar | `moby/buildkit:<version>-rootless` | image builds at `tcp://127.0.0.1:1234` (`buildkit-endpoint`) |
 | PostgreSQL sidecar | `postgres:16.15-alpine` | a throw-away test database at `127.0.0.1:5432`, user `ci`, database `ci_test` (`test-database-mode: sidecar`) |
 
@@ -724,6 +724,13 @@ SMOKE_INSECURE=1 SMOKE_KEYCLOAK=https://127.0.0.1:8443 SMOKE_DEN_API=https://127
 
 **`gofmt` step lists files**
 : Run `gofmt -w .` in `backend/` and commit.
+
+**Tag and sign fails with `envsubst: command not found` (exit code 127)**
+: The runner pods use a `ci-runner` image older than `2.338.2-2`, which
+  lacks `envsubst`, needed by the cosign installer. Set the runner image of
+  the ARC scale set to `ghcr.io/aglelectronics/ci-runner:2.338.2-2` or
+  later, then re-run the failed jobs (`gh run rerun <run-id> --failed`).
+  The images are already pushed; the re-run only tags and signs them.
 
 **golangci-lint exits with code 3 (`can't load config` or `the Go language version ... used to build golangci-lint is lower than the targeted Go version`)**
 : Exit code 3 means golangci-lint did not run its checks at all. In v2,

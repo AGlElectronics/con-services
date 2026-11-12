@@ -666,6 +666,10 @@ led by Den's MAJOR; see [Versions and upgrades](docs/operations/versioning.md).
   its own version.
 - The authbase example in `shared/go` checks the result of `fmt.Fprintf`,
   so module copies pass golangci-lint's `errcheck`.
+- The self-hosted runner image `ghcr.io/aglelectronics/ci-runner:2.338.2-2`
+  includes `envsubst` (`gettext-base`). Without it the cosign installer
+  failed with exit code 127, so release images were pushed but never
+  tagged and signed. Point the ARC runner scale sets at the new tag.
 
 ### Security
 
