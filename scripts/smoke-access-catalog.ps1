@@ -57,7 +57,8 @@ else {
   $stamp = Get-Date -Format 'HHmmss'
   $person = Invoke-RestMethod -Method Post -Uri "$hr/api/people" -Headers $h -ContentType 'application/json' -Body (@{
     first_name = 'Picker'; last_name = "$stamp"; nickname = "picker$stamp"; date_of_birth = '1992-03-04'
-    email = "picker$stamp@conservices.local"; phone = '+43 660 1111111'; address = '2 Example Street, Vienna'
+    email = "picker$stamp@conservices.local"; phone = '+43 660 1111111'
+    address = @{ street = '2 Example Street'; postal_code = '1010'; city = 'Vienna'; country = 'AT' }
     emergency_contact = @{ name = 'Someone'; phone = '+43 660 2222222' }
   } | ConvertTo-Json -Depth 4)
   $draft = Invoke-RestMethod -Method Post -Uri "$hr/api/drafts" -Headers $h -ContentType 'application/json' -Body (@{ person_id = $person.id; title = 'ConOps' } | ConvertTo-Json)
