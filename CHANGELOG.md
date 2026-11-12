@@ -13,11 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.0.0] - 2026-11-12
 
-First release, `v1.0.0`. Den and the modules HR, Stash, Finance, Learn,
-Wiki, Desk and Tasks start at `1.0.0` too, each with its own version led by
-Den's MAJOR; see [Versions and upgrades](docs/operations/versioning.md).
-Rally's chart is included but Rally itself is not released yet: its
-`rally/v1.0.0` chart tag follows with Rally's first release.
+First release, `v1.0.0`. Den and every module (HR, Rally, Stash, Finance,
+Learn, Wiki, Desk, Tasks) start at `1.0.0` too, each with its own version
+led by Den's MAJOR; see [Versions and upgrades](docs/operations/versioning.md).
 
 ### Added
 
