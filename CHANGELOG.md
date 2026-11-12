@@ -670,6 +670,10 @@ led by Den's MAJOR; see [Versions and upgrades](docs/operations/versioning.md).
   includes `envsubst` (`gettext-base`). Without it the cosign installer
   failed with exit code 127, so release images were pushed but never
   tagged and signed. Point the ARC runner scale sets at the new tag.
+- Re-running a failed **Tag and sign** job works. When the tag already
+  points to the digest the run built (it was set before signing failed),
+  the job signs it instead of refusing the existing tag. A tag on another
+  digest is still refused.
 
 ### Security
 

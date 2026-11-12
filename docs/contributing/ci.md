@@ -326,6 +326,9 @@ tags of every image of the module and takes the highest `X.Y.Z-N` plus 1,
 so the first build of a version is `-1`. It then checks that this tag
 exists for none of the images. Tags are never overwritten: if a tag exists,
 the run fails, and the merge step checks again just before creating it.
+The one exception is a re-run of **Tag and sign**: if the tag already
+points to the exact image digest this run built, the step leaves it alone
+and goes on to sign it. A tag on any other digest still fails the run.
 
 ### Rebuild a version (new BUILD)
 

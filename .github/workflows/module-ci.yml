@@ -868,13 +868,18 @@ jobs:
         id: merge
         run: |
           set -euo pipefail
-          if crane digest "$REPO:$TAG" >/dev/null 2>&1; then
-            echo "::error::$REPO:$TAG already exists; tags are never overwritten."
-            exit 1
-          fi
           set -- "$RUNNER_TEMP"/digests/*
           digest="sha256:$(basename "$1")"
-          crane tag "$REPO@$digest" "$TAG"
+          if existing="$(crane digest "$REPO:$TAG" 2>/dev/null)"; then
+            # A re-run of this job finds the tag it set itself; anything else is refused.
+            if [ "$existing" != "$digest" ]; then
+              echo "::error::$REPO:$TAG already exists for $existing; tags are never overwritten."
+              exit 1
+            fi
+            echo "$REPO:$TAG already points to $digest (re-run); signing it."
+          else
+            crane tag "$REPO@$digest" "$TAG"
+          fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
