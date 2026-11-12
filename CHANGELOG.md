@@ -288,6 +288,10 @@ led by Den's MAJOR; see
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
 
+### Fixed
+
+- The Tasks smoke sends an access token. Tasks refuses ID tokens.
+
 ### Security
 
 - The shared nginx policy still sends `frame-ancestors 'none'` and

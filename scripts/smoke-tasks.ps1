@@ -18,7 +18,7 @@ $api = "$Base/api/v1"
 
 $token = (Invoke-RestMethod -Method Post -Uri "$Keycloak/realms/conservices/protocol/openid-connect/token" -Body @{
     grant_type = 'password'; client_id = 'tasks-spa'; username = $User; password = $Password; scope = 'openid'
-  }).id_token
+  }).access_token
 $h = @{ Authorization = "Bearer $token" }
 
 $script:step = 0
