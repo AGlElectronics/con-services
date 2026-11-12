@@ -254,6 +254,9 @@ led by Den's MAJOR; see
 - Docker Compose: GreenMail's healthcheck runs under bash. The image's
   `/bin/sh` cannot open `/dev/tcp`, so the check never passed and Desk
   stayed stopped.
+- The access-catalog smoke signs in with an access token for each module's
+  own client. ID tokens are refused, and one module's token is not valid
+  for another's API.
 
 ### Security
 
