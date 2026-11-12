@@ -14,7 +14,7 @@ $kc = 'http://localhost:8085/realms/conservices/protocol/openid-connect/token'
 $den = 'http://localhost:3001'
 
 function Get-Token($user, $password) {
-  (Invoke-RestMethod -Method Post -Uri $kc -Body @{ grant_type = 'password'; client_id = 'den-spa'; username = $user; password = $password; scope = 'openid' }).id_token
+  (Invoke-RestMethod -Method Post -Uri $kc -Body @{ grant_type = 'password'; client_id = 'den-spa'; username = $user; password = $password; scope = 'openid' }).access_token
 }
 function Get-Status($code) {
   # Invoke-WebRequest throws on 4xx/5xx; return the status code either way.
