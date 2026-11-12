@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: postgres:16.15-alpine
           # TLS with the certificate from certificates.yaml; pg_hba.conf
           # refuses connections over the network that do not use it.
           args:
@@ -106,7 +106,7 @@ spec:
         # sidecar reloads it through the local socket whenever cert-manager
         # has renewed the certificate.
         - name: tls-reload
-          image: postgres:16-alpine
+          image: postgres:16.15-alpine
           command:
             - sh
             - -c

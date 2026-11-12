@@ -168,7 +168,7 @@ restarting.
 kubectl logs -n conservices-identity deploy/keycloak -f
 ```
 
-It is ready when you see `Keycloak 26.0.7 on JVM (powered by Quarkus)
+It is ready when you see `Keycloak 26.8.2 on JVM (powered by Quarkus)
 started`. Typical errors:
 
 - `password authentication failed for user "keycloak"`: `KC_DB_PASSWORD`

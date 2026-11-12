@@ -27,10 +27,17 @@ where the values are kept changes:
 
 ## Secrets on Docker
 
-Con Services programs read their settings from **environment variables**
-only; they do not support `*_FILE` variables, and the backend images have no
-shell, so Docker's `secrets:` (files under `/run/secrets`) cannot feed them
-directly. The supported [Docker production](docker-production.md) setup
+Con Services programs read most settings from **environment variables**.
+A few settings are a path to a file, and the program reads that file
+itself: `DEN_SMTP_PASSWORD_FILE` (Den re-reads the SMTP password on every
+use, so replacing the mounted file needs no restart),
+`GOOGLE_WORKSPACE_CREDENTIALS_FILE` (the Google service-account key),
+`TLS_CERT_FILE` and `TLS_KEY_FILE` (the pod's certificate), and the config
+paths such as `ACCESS_CONFIG_PATH` and `BRAND_LOCAL_PATH`. There is no
+general `SOME_SECRET_FILE` companion for every secret. The backend images
+have no shell, so Docker's `secrets:` (files under `/run/secrets`) do not
+feed those programs unless you also set one of the path variables above.
+The supported [Docker production](docker-production.md) setup
 reads every setting and secret from one file, `.env`, next to
 `deploy/docker/compose.production.yml`; Compose fills them into each
 service's environment, and each service gets only the values its

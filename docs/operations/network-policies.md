@@ -102,11 +102,12 @@ belong to which.
 | `den-backend`, `den-operator`, module backend | CloudNativePG pods (`cnpg.io/cluster: conservices-pg`) in `conservices-data` | 5432 | Helm (`networkPolicy.data.postgres`) | Own database (Den's operator: admin login). |
 | `den-backend`, `den-operator`, module backend with a bucket | Garage pods (`app.kubernetes.io/name: garage`) in `conservices-data` | 3900 | Helm (`networkPolicy.data.s3`) | Buckets, through Garage's TLS sidecar. |
 | `finance-backend` (`conservices-finance`) | Garage pods in `conservices-data`, or external S3 | 3900 (external: 443) | Helm (`networkPolicy.data.s3`, on by default since Finance stores PDFs) | Writing and reading the PDFs of issued invoices and credit notes. The S3 side must admit `conservices-finance` like the other modules with a bucket. |
-| `den-backend` (`conservices-den`) | `finance-backend` | 8080 | Helm (Finance: `networkPolicy.allowFromNamespaces` includes `conservices-den`) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/portal/todos` with Finance's pairing credential. |
+| `den-backend` (`conservices-den`) | `finance-backend` | 8080 | Helm (Finance: `networkPolicy.den`, on by default) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with Finance's pairing credential. |
 | `den-backend`, `den-operator`, module backend | external S3 (for example `*.your-objectstorage.com`) | 443 | Helm, only when `networkPolicy.data.s3.external` is set | Buckets at a managed S3 provider. Cilium: the `CiliumNetworkPolicy` `<name>-external-s3` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `external.cidrs`. Checked against public CAs, not the internal CA. |
 | `learn-backend` | Telegram Bot API (`api.telegram.org`) | 443 | Helm, only with `networkPolicy.telegram.enabled` | Telegram reminders. Cilium: the `CiliumNetworkPolicy` `learn-telegram` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.telegram.cidrs`. Off by default, like `TELEGRAM_BOT_TOKEN`. |
+| `rally-backend` | Telegram Bot API (`api.telegram.org`) | 443 | Helm, optional `networkPolicy.extraEgress` | Live-day announcements. A standard NetworkPolicy cannot match the host name, so turn egress on by adding an `extraEgress` rule for port 443 (for example an `ipBlock`). Nothing is sent while `TELEGRAM_BOT_TOKEN` is empty. See [Set up Rally](../modules/rally/setup.md). |
 | `den-backend` | `keycloak` | 8443 | both (Helm: `networkPolicy.keycloakAdmin`, merged with the OIDC rule when it targets the same pods) | Keycloak admin API for the optional realm name sync ([Keycloak sync](../modules/den/admin-guide.md#keycloak-sync)). Not needed when the sync is off. |
-| `den-backend` | module backends (namespaces `conservices.io/tier: module`, pods `app.kubernetes.io/component: backend`) | 8080 | both (Helm: `networkPolicy.allowToModules`) | `GET /api/role-catalog` (who sees a module on the portal) and `GET /api/portal/todos` (with the module's credential), at the module's `internal_url`. Each module's own policy must admit `den-backend` too (Stash and Learn: done). |
+| `den-backend` | module backends (namespaces `conservices.io/tier: module`, pods `app.kubernetes.io/component: backend`) | 8080 | both (Helm: `networkPolicy.allowToModules`) | `GET /api/role-catalog` (who sees a module on the portal) and `GET /api/portal/todos` (with the module's credential), at the module's `internal_url`. Every module chart admits `den-backend` on the other side when `networkPolicy.den.enabled` is true (the default): namespace `networkPolicy.den.namespace` (default `conservices-den`), pods `app.kubernetes.io/name: den` and `app.kubernetes.io/component: backend`. Stash's Kustomize module admits it too. |
 | `den-backend` | `den-operator` | 8080 | both | Backups and module databases (bearer `OPERATOR_TOKEN`). |
 | `den-backend` | `postgres` | 5432 | Kustomize | Den's own database (also the `migrate` initContainer). |
 | `den-backend` | `s3` | 9000 | Kustomize | Den's bucket (branding assets). |
@@ -117,11 +118,11 @@ belong to which.
 | module backend | `postgres` | 5432 | Kustomize | The module's own database. |
 | module backend | `s3` | 9000 | Kustomize | The module's own bucket. |
 | HR backend (`conservices-hr`) | `stash-backend` | 8080 | both | HR reads `GET /api/role-catalog` (see below). |
-| `den-backend` (`conservices-den`) | `stash-backend` | 8080 | Kustomize (`modules/stash`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos`. |
+| `den-backend` (`conservices-den`) | `stash-backend` | 8080 | both (Helm: `networkPolicy.den`; Kustomize: `modules/stash`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos`. |
 | HR backend (`conservices-hr`) | every other module backend (Learn, Wiki, Tasks, Desk, Finance, Rally) | 8080 | Helm (`networkPolicy.moduleEgressNamespaces`) | Role catalogs, Learn holdings, offboarding and department hooks (see below). |
 | HR backend (`conservices-hr`) | `wiki-backend` | 8080 | Helm (Wiki: `networkPolicy.allowFromNamespaces`, includes `conservices-hr` by default; HR: `networkPolicy.moduleEgressNamespaces` includes `conservices-wiki`) | HR reads Wiki's `GET /api/role-catalog` and calls the offboarding hook `POST /api/internal/offboarded` (bearer `WIKI_SERVICE_TOKEN`). |
 | `wiki-backend` | HR backend (`conservices-hr`) | 8080 | Helm (Wiki: `networkPolicy.hr`; HR: `networkPolicy.allowFromNamespaces` includes `conservices-wiki`) | The share dialog's group picker reads `GET /api/internal/directory/groups` (bearer `HR_DIRECTORY_TOKEN`). Only with `HR_DIRECTORY_URL` set. |
-| `den-backend` (`conservices-den`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.allowFromNamespaces` includes `conservices-den`) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/portal/todos` with HR's pairing credential. |
+| `den-backend` (`conservices-den`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.den`, on by default) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with HR's pairing credential. |
 | HR backend | Photon (`photon.komoot.io`) | 443 | Helm (`networkPolicy.addressLookup`, on unless address search is unused) | Address suggestions. The browser calls HR; the backend calls Photon. |
 | HR backend | Google's APIs (`admin.googleapis.com`, `oauth2.googleapis.com`) | 443 | Helm, only with `googleWorkspace.enabled` (`networkPolicy.googleApis`) | Google Workspace connector. |
 | `stash-backend` | `api.telegram.org` (internet) | 443 | both (Kustomize: CiliumNetworkPolicy `stash-backend-external`; Helm: `networkPolicy.telegram`, default on) | The Lost & Found Telegram bot long-polls for guests' `/start` and `/stop` messages and sends notifications. Cilium: `toFQDNs`; other CNIs (Helm, `gateway.cilium: false`): `ipBlock` rules for Telegram's published ranges. Nothing is sent without `TELEGRAM_BOT_TOKEN`. |
@@ -129,7 +130,9 @@ belong to which.
 | HR, Learn backends | `keycloak` | 8443 | Helm (`networkPolicy.keycloak` / `keycloakAdmin`) | Keycloak admin API (accounts, groups); merged with the OIDC rule when it targets the same pods. |
 | `wiki-backend` | `keycloak` | 8443 | Helm, opt-in (`networkPolicy.keycloakAdmin.enabled`; merged with the OIDC rule when it targets the same pods) | Keycloak admin API, read-only: the group picker lists realm groups when Wiki is not paired with HR. Only with `IDP_DIRECTORY_URL` set. |
 | `desk-backend` | Google APIs: `gmail.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `www.googleapis.com` | 443 | Helm, only with `networkPolicy.google.enabled` | [Google Workspace mailboxes](../modules/desk/google-workspace.md): reading and labelling mail, sending replies, creating users and groups. Cilium: the `CiliumNetworkPolicy` `desk-backend-google` (`toFQDNs` plus a DNS rule to `kube-dns`); other CNIs: `ipBlock` rules from `networkPolicy.google.cidrs`. Checked against public CAs. |
-| `den-backend` (`conservices-den`) | `desk-backend` | 8080 | Helm (`networkPolicy.allowFromNamespaces` includes `conservices-den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with Desk's pairing credential. |
+| `den-backend` (`conservices-den`) | `desk-backend` | 8080 | Helm (`networkPolicy.den`, on by default) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with Desk's pairing credential. |
+| `den-backend` (`conservices-den`) | `wiki-backend` | 8080 | Helm (Wiki: `networkPolicy.den`, on by default) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos`. |
+| `den-backend` (`conservices-den`) | `rally-backend` | 8080 | Helm (Rally: `networkPolicy.den`, on by default) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos`. |
 | `desk-backend` | mail servers on the internet | 993, 143 (IMAP), 465, 587 (SMTP) | Helm (`networkPolicy.extraEgress`, on by default) | [IMAP and SMTP mailboxes](../modules/desk/imap.md) and the notification mail server (`SMTP_HOST`). Narrow the `ipBlock` to your provider where you can; with only Google mailboxes and no `SMTP_HOST`, set `extraEgress: []`. Desk itself refuses private and internal addresses unless they are listed in `DESK_ALLOWED_MAIL_HOSTS`. |
 
 Rules in *other* namespaces that these flows need (Keycloak admitting the
@@ -189,12 +192,15 @@ namespace and an *ingress* rule in the target's namespace.
 | Wiki | HR | `GET /api/internal/directory/groups` (group picker, `HR_DIRECTORY_TOKEN`) | Egress in the Wiki chart (`networkPolicy.hr`: namespace `conservices-hr`, HR's backend, port 8080). Ingress in the HR chart (`networkPolicy.allowFromNamespaces` includes `conservices-wiki`). HR serves the directory when `HR_DIRECTORY_TOKEN` is set; the contract is on [Wiki configuration](../modules/wiki/configuration.md#group-picker). |
 | HR | Tasks | `POST /api/internal/departments` (`TASKS_SERVICE_TOKEN`) and `GET /api/role-catalog` (`HR_SERVICE_TOKEN`) | Done in the HR and Tasks charts. Tasks ingress is `networkPolicy.allowFromNamespaces` (default `conservices-hr`); HR egress is `networkPolicy.moduleEgressNamespaces` (includes `conservices-tasks`). |
 | HR, Learn | Keycloak admin API | creating accounts, reading groups | Egress in the HR and Learn Helm charts (`networkPolicy.keycloak` / `keycloakAdmin`); the ingress rule on Keycloak is the platform's. |
-| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: Stash (Kustomize) and the Learn, Desk, Tasks, HR and Finance charts admit `den-backend` from `conservices-den`. |
+| Den | every paired module | `GET /api/role-catalog`, `GET /api/portal/todos` ([contract](../concepts/api-conventions.md#portal-to-dos)) | Egress in Den's Kustomize base and Helm chart (`networkPolicy.allowToModules`) to every module backend on 8080. Ingress: every module chart admits `den-backend` when `networkPolicy.den.enabled` is true (the default). Stash's Kustomize module admits it too. |
 | Den backend | Learn | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Ingress in the Learn chart (`networkPolicy.den`). Egress from `conservices-den` is Den's rule to every module backend on 8080 (Helm: `networkPolicy.allowToModules`). |
-| Den backend | Desk | `GET /api/role-catalog`, `GET /api/portal/todos` | Desk's chart admits `den-backend` from `conservices-den` on 8080. Den's egress is in Den's chart. |
+| Den backend | Desk | `GET /api/role-catalog`, `GET /api/portal/todos` | Ingress in the Desk chart (`networkPolicy.den`, admits `den-backend` on 8080). Den's egress is in Den's chart. |
 | Den backend | Tasks | `GET /api/portal/todos` | Ingress in the Tasks chart (`networkPolicy.den`, admits `den-backend` on 8080). Egress is Den's `networkPolicy.allowToModules` and the same rule in `deploy/kubernetes/base/den`. |
-| Den backend | HR | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Done. Den's egress is `networkPolicy.allowToModules` and `deploy/kubernetes/base/den`. HR's chart admits `conservices-den` on `networkPolicy.allowFromNamespaces`. |
-| Den backend | Finance | `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Done. Den's egress is `networkPolicy.allowToModules` and `deploy/kubernetes/base/den`. Finance's chart admits `conservices-den` on `networkPolicy.allowFromNamespaces`. |
+| Den backend | HR | `GET /api/role-catalog`, `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Done. Den's egress is `networkPolicy.allowToModules` and `deploy/kubernetes/base/den`. HR's chart admits `den-backend` with `networkPolicy.den` (on by default). |
+| Den backend | Finance | `GET /api/role-catalog`, `GET /api/portal/todos` (pairing credential, `X-Den-User-Issuer` and `X-Den-User-Subject`) | Done. Den's egress is `networkPolicy.allowToModules` and `deploy/kubernetes/base/den`. Finance's chart admits `den-backend` with `networkPolicy.den` (on by default). |
+| Den backend | Wiki | `GET /api/role-catalog`, `GET /api/portal/todos` | Ingress in the Wiki chart (`networkPolicy.den`, on by default). Egress is Den's `networkPolicy.allowToModules` and the same rule in `deploy/kubernetes/base/den`. |
+| Den backend | Rally | `GET /api/role-catalog`, `GET /api/portal/todos` | Ingress in the Rally chart (`networkPolicy.den`, on by default). Egress is Den's `networkPolicy.allowToModules` and the same rule in `deploy/kubernetes/base/den`. |
+| Den backend | Stash | `GET /api/role-catalog`, `GET /api/portal/todos` | Ingress in the Stash chart (`networkPolicy.den`, on by default) and in Kustomize (`modules/stash`). Egress is Den's `networkPolicy.allowToModules` and the same rule in `deploy/kubernetes/base/den`. |
 | HR | Den backend | `GET /api/v1/integrations/modules` ([role catalog discovery](../concepts/role-catalog.md#how-hr-finds-the-catalogs)) | Already allowed on both sides, port 8080: HR chart egress `networkPolicy.den` (on by default) and Den ingress from every module backend (Helm `networkPolicy.allowFromModules`, Kustomize `den-backend`). |
 | Modules using `gworkspace` | Google APIs (outside the cluster) | `oauth2.googleapis.com`, `admin.googleapis.com`, `gmail.googleapis.com` on 443 | Planned: an [external egress rule](#external-services) in the module's chart, added with the module release that adopts it ([Shared code](../concepts/shared-code.md#what-adopting-a-package-involves)). |
 | Wiki | Keycloak admin API | listing realm groups for the group picker (standalone, `IDP_DIRECTORY_URL`) | Egress in the Wiki chart (`networkPolicy.keycloakAdmin.enabled`, off by default); the ingress rule on Keycloak is the platform's. |
@@ -202,7 +208,10 @@ namespace and an *ingress* rule in the target's namespace.
 Calls that come from the **browser**, not from a pod, go through the
 Gateway and need no policy of their own, for example Den's web app calling
 Learn's API. The portal's to-do list is **not** such a call any more: Den's
-backend collects it (rows above).
+backend collects it (rows above). A module that has not implemented the
+route yet is skipped by Den. Tasks' live-update stream
+(`GET /api/v1/stream`) is a browser call too; it only needs the Gateway
+not to time it out (the Tasks chart routes it without a request timeout).
 
 Example: the ingress rule a module adds so Den can call it (goes into the
 module's namespace, next to its other rules for the backend):
@@ -221,13 +230,6 @@ ingress:
       - protocol: TCP
         port: 8080
 ```
-Gateway and need no policy of their own: Den's web app calling Learn's
-API. Portal to-dos are no longer a browser call; Den's backend fetches
-them (the row above). A module that has not implemented the route yet is
-skipped by Den.
-Tasks' live-update stream (`GET /api/v1/stream`) is such a browser call
-too; it only needs the Gateway not to time it out (the Tasks chart routes
-it without a request timeout).
 
 Module backends that send email need egress to the mail server, which is
 outside the cluster:
