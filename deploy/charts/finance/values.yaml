@@ -1,4 +1,5 @@
-# Finance Helm chart values. STUB: first scaffold, not yet tested on a cluster.
+# Finance Helm chart values. Rendered and linted in CI (helm lint, helm template,
+# kustomize); first production install pending.
 # Docs: https://aglelectronics.github.io/con-services/modules/finance/setup/
 #
 # The namespace is NOT created by this chart. Create it first with the
@@ -276,11 +277,11 @@ networkPolicy:
         fqdns: []  # e.g. ["fsn1.your-objectstorage.com", "*.fsn1.your-objectstorage.com"]
         cidrs: []  # e.g. ["203.0.113.0/24"]; the provider's published ranges
         port: 443
-  # HR reads GET /api/role-catalog. Den's backend reads that catalog and
-  # GET /api/portal/todos (pairing credential).
+  # HR reads GET /api/role-catalog. Den is admitted separately by
+  # networkPolicy.den (on by default): GET /api/role-catalog and
+  # GET /api/portal/todos.
   allowFromNamespaces:
     - conservices-hr
-    - conservices-den
   # Keycloak admin API (KEYCLOAK_BASE_URL), not used by this module.
   keycloakAdmin:
     enabled: false
