@@ -2,7 +2,8 @@ apiVersion: v2
 name: wiki
 description: >-
   Wiki, the Con Services knowledge base (spaces, pages, live editing).
-  STUB: first scaffold, not yet tested on a cluster.
+  Rendered and linted in CI (helm lint, helm template, kustomize); first
+  production install pending.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
