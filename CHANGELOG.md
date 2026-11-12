@@ -294,6 +294,13 @@ led by Den's MAJOR; see
   `/server reencrypt`); the secrets pages no longer say to treat it as
   fixed ([Rotate DESK_SECRET_KEY](docs/modules/desk/operations.md#rotate-desk_secret_key)).
 
+### Fixed
+
+- Desk's web app in Docker Compose sets `KEYCLOAK_ORIGIN`, so the browser
+  may talk to the sign-in server. The Helm chart fills that origin from
+  the web app's sign-in address when `frontend.securityHeaders.keycloakOrigin`
+  is empty.
+
 ### Security
 
 - The shared nginx policy still sends `frame-ancestors 'none'` and

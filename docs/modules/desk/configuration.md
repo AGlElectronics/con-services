@@ -223,12 +223,12 @@ installation-specific; the sign-in settings live in `/config.json` (above).
 | `DESK_VERSION` | `dev` | Version shown in the app. |
 | `NGINX_CONF` | `nginx.conf` | Which file from `infra/` becomes the image's nginx config. The Helm chart (and the Kustomize manifests) mount their own. |
 
-The frontend container, not the backend, reads one more variable when nginx
-starts. It is not in `.env`. Compose, the chart and the image default all
-set it.
+The frontend container, not the backend, reads these variables when nginx
+starts. They are not in `.env`.
 
 | Variable | Default | Required | What it does |
 | --- | --- | --- | --- |
+| `KEYCLOAK_ORIGIN` | derived from the web app's sign-in address | no | Sign-in server allowed in `connect-src`, `frame-src` and `form-action`. Compose sets `https://auth.conservices.test`. The chart uses `frontend.securityHeaders.keycloakOrigin`, or the scheme and host of `oidcAuthority` when that is empty. |
 | `EXTRA_FRAME_SRC` | `about:srcdoc` | no | Extra `frame-src` token. `about:srcdoc` lets the sandboxed mail iframe render. It is the token itself, not an origin. Empty leaves the mail pane blank. |
 
 ```sh
