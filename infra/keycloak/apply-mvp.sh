@@ -145,6 +145,10 @@ add_user_to_group() {
   [ -n "$uid" ] || return 0
   $KC update "users/$uid/groups/$gid" -r conservices -s realm=conservices -s userId="$uid" -s groupId="$gid" -n
 }
+# Den ops may run backups and drop module databases. A realm imported
+# before den-ops existed does not put admin in that group.
+DEN_OPS_GID=$(learn_group den-ops | tail -n1)
+add_user_to_group admin "$DEN_OPS_GID"
 # DEV users: admin runs Learn, alice trains, bob stays a plain learner.
 add_user_to_group admin "$LEARN_ADMIN_GID"
 add_user_to_group alice "$LEARN_TRAINER_GID"
