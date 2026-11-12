@@ -249,6 +249,12 @@ led by Den's MAJOR; see
   notes that a module needs an ESLint configuration when its frontend has a
   `lint` script, because the module CI runs `npm run lint`.
 
+### Fixed
+
+- Docker Compose: GreenMail's healthcheck runs under bash. The image's
+  `/bin/sh` cannot open `/dev/tcp`, so the check never passed and Desk
+  stayed stopped.
+
 ### Security
 
 - Default-deny NetworkPolicies in every namespace with an explicit allow
