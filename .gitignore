@@ -38,3 +38,5 @@ Thumbs.db
 /con-services-gitops/
 
 __pycache__/
+
+*.exe
