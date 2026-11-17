@@ -36,7 +36,8 @@ flowchart TB
         sfe[stash-frontend] --> sbe[stash-backend]
     end
     subgraph hr [conservices-hr · tier module]
-        hbe[hr-backend]
+        hfe[hr-frontend] --> hbe[hr-backend]
+        hsign[hr-sign] --> hbe
     end
 
     ic --> fe
@@ -61,7 +62,7 @@ flowchart TB
 | `conservices-identity` | `conservices.io/tier: platform` | Keycloak. |
 | `conservices-data` | `conservices.io/tier: data` | PostgreSQL, and the S3 server `s3` (SeaweedFS) for a local trial (production: CloudNativePG, and a managed S3 service outside the cluster). |
 | `conservices-den` | `conservices.io/tier: platform` | `den-backend`, `den-frontend`, `den-operator`. |
-| `conservices-<module>` | `conservices.io/tier: module`, `conservices.io/module: <module>` | One module's backend and frontend, for example `conservices-stash`. |
+| `conservices-<module>` | `conservices.io/tier: module`, `conservices.io/module: <module>` | One module's backend and frontend, for example `conservices-stash`. HR also runs `hr-sign` (volunteer signing host). |
 
 All of them also carry `pod-security.kubernetes.io/enforce: restricted` and
 `pod-security.kubernetes.io/warn: restricted` (see [Pod Security](#pod-security)).
@@ -123,6 +124,8 @@ belong to which.
 | HR backend (`conservices-hr`) | `wiki-backend` | 8080 | Helm (Wiki: `networkPolicy.allowFromNamespaces`, includes `conservices-hr` by default; HR: `networkPolicy.moduleEgressNamespaces` includes `conservices-wiki`) | HR reads Wiki's `GET /api/role-catalog` and calls the offboarding hook `POST /api/internal/offboarded` (bearer `WIKI_SERVICE_TOKEN`). |
 | `wiki-backend` | HR backend (`conservices-hr`) | 8080 | Helm (Wiki: `networkPolicy.hr`; HR: `networkPolicy.allowFromNamespaces` includes `conservices-wiki`) | The share dialog's group picker reads `GET /api/internal/directory/groups` (bearer `HR_DIRECTORY_TOKEN`). Only with `HR_DIRECTORY_URL` set. |
 | `den-backend` (`conservices-den`) | `hr-backend` | 8080 | Helm (HR: `networkPolicy.den`, on by default) and Den's egress to every module backend (`networkPolicy.allowToModules`, and the same rule in `deploy/kubernetes/base/den`) | Den reads `GET /api/role-catalog` and `GET /api/portal/todos` with HR's pairing credential. |
+| Gateway / ingress | `hr-frontend`, `hr-sign` | 8080 | Helm (HR chart: Cilium `fromEntities: ingress` when `networkPolicy.gateway.cilium`) | Staff UI (`route.host`) and volunteer sign-hr (`sign.host`). |
+| `hr-frontend`, `hr-sign` | `hr-backend` | 8080 | Helm (HR chart NetworkPolicies) | nginx proxies `/api/` (staff: full API; sign: only `/api/public/signing/` and `/api/brand`). |
 | HR backend | Photon (`photon.komoot.io`) | 443 | Helm (`networkPolicy.addressLookup`, on unless address search is unused) | Address suggestions. The browser calls HR; the backend calls Photon. |
 | HR backend | Google's APIs (`admin.googleapis.com`, `oauth2.googleapis.com`) | 443 | Helm, only with `googleWorkspace.enabled` (`networkPolicy.googleApis`) | Google Workspace connector. |
 | `stash-backend` | `api.telegram.org` (internet) | 443 | both (Kustomize: CiliumNetworkPolicy `stash-backend-external`; Helm: `networkPolicy.telegram`, default on) | The Lost & Found Telegram bot long-polls for guests' `/start` and `/stop` messages and sends notifications. Cilium: `toFQDNs`; other CNIs (Helm, `gateway.cilium: false`): `ipBlock` rules for Telegram's published ranges. Nothing is sent without `TELEGRAM_BOT_TOKEN`. |

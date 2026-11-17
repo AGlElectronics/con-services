@@ -34,7 +34,7 @@ The menu only shows the pages your role may use.
 | Page | Who | What you do there |
 | --- | --- | --- |
 | **Dashboard** | everyone | Counts, onboardings in progress, records with missing or invalid fields. |
-| **Onboarding** | admins, leads | Give an approved volunteer their account in three steps: details, access, review. |
+| **Onboarding** | admins, leads | Give an approved volunteer their account in four steps: details, access, documents (signing stub), review. |
 | **People** | everyone | Search everyone by name or status; open a person to edit their profile, change access, pause, ban or offboard them. Leads see the people of their departments. |
 | **Departments** | everyone (admins edit) | Create, rename and archive departments; choose their leads. Each department has an IdP group, a lead group and default roles. |
 | **Access groups** | everyone (admins edit) | Named sets of roles (for example "Standard volunteer") you give in one go. |
@@ -187,9 +187,22 @@ the IdP yourself.
 | **Identity** | How staff sign in (*own* accounts, *brokered* from the convention's SSO, or an *existing* IdP), the SSO's name and address for the offboarding warning, and the IdP admin console link. |
 | **Retention** | How long HR keeps personal data; see [Personal data](personal-data.md). |
 | **Google Workspace** | The Workspace connector; see [Google Workspace](google-workspace.md). |
+| **Signing** | Document templates for onboarding, and whether admins may **waive** required documents without a provider (local testing only). |
 
 Templates may use `{first}`, `{last}` and `{nickname}`, plus letters,
 digits, `.`, `-` and `_`.
+
+### Onboarding forms
+
+Use the sidebar **Forms** page to publish versioned AcroForm PDFs, attach
+the forms each volunteer needs on **Documents**, then **Send for signing**
+on Review. Volunteers open the public sign-hr host; **Sign** is still a
+stub until a real e-sign provider is connected. **Approve & create
+account** runs only after attached forms are signed or waived. Full
+operator path, configuration and API: [Onboarding forms](onboarding-forms.md).
+
+**Allow waiving documents without a provider** (Settings → Signing) is for
+local testing only.
 
 When HR is paired with Den, the four organisation fields (and retention,
 if Den's module settings set it) come from Den (**Den → Settings**) and are
