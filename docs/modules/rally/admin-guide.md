@@ -193,6 +193,13 @@ straight away; you can push the following items in the same room. To tell
 people, write an announcement and **Send** it: it goes to every enabled
 Telegram chat set up under **Setup**.
 
+Under **Setup → Telegram**, add each destination with its chat id (for
+example `-1003787521365` or `@channel`). For a **forum topic**, also set
+the topic id: in a link like `https://t.me/c/3787521365/599`, the chat id
+is `-100` plus the middle number (`-1003787521365`) and the topic id is
+the last number (`599`). Leave topic blank to post to the whole chat /
+General. The same group may appear more than once with different topics.
+
 Without a Telegram bot token, sending is a **dry run**: the announcement is
 marked as sent in Rally but nothing reaches Telegram. Ask the operator to
 set `TELEGRAM_BOT_TOKEN` and to allow traffic to Telegram.

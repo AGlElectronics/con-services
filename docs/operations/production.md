@@ -279,7 +279,7 @@ random value in OpenBao and never uses a test value.
 | The `ZGV2LW9ubHkt…` values | `DEN_LINK_ENCRYPTION_KEY` of every module backend | One key per module: `openssl rand -base64 32`. | Generated: `modules/<module>/den-link` |
 | `rsk_programme_dev_key` | `PUBLIC_API_BUILTIN_KEY` on Rally, `publicScheduleKey` in the submission site's `/config.json` | Not a secret (every browser of the submission site sees it), but use your own value, or leave it empty to turn the built-in key off. | Off (empty) |
 | The age key in `infra/operator/dev-backup-identity.txt` | `BACKUP_AGE_RECIPIENTS` | Your own key pair; see [The encryption key](databases-and-backups.md#the-encryption-key). | Your public key in `den.backupAgeRecipients` |
-| `support` / `registration` mailboxes on GreenMail | Desk's dev mailboxes | Your real mailboxes and their passwords, entered in Desk. | Not used |
+| `support` / `info` / `registration` accounts on GreenMail | Desk's fake IMAP/SMTP (seed Support + Info; registration for smoke) | Your real mailboxes and their passwords, entered in Desk. | Not used |
 
 ## Den settings
 

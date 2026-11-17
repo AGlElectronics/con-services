@@ -21,6 +21,7 @@ also have an admin guide.
 | Wiki | Knowledge base with live editing. | [Wiki](wiki/index.md) | [API](wiki/api.md) | [AGlElectronics/wiki](https://github.com/AGlElectronics/wiki) |
 | Desk | Helpdesk on shared mailboxes. | [Desk](desk/index.md) | [API](desk/api.md) | [AGlElectronics/desk](https://github.com/AGlElectronics/desk) |
 | Tasks | Task boards for the crew. | [Tasks](tasks/index.md) | [API](tasks/api.md) | [AGlElectronics/tasks](https://github.com/AGlElectronics/tasks) |
+| Stats | Aggregate operational dashboard for module-owned metrics. | [Stats](stats/index.md) | [API](stats/api.md) | [AGlElectronics/stats](https://github.com/AGlElectronics/stats) |
 
 ## What every module has in common
 

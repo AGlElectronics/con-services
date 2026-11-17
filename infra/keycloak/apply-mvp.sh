@@ -45,6 +45,18 @@ $KC add-roles -r conservices --uusername service-account-hr-provisioner --cclien
   --rolename manage-users --rolename view-users --rolename query-users \
   --rolename view-realm --rolename query-groups
 
+# Keycloak 26.8.2+: Admin REST API accepts only tokens with the kc-admin-api
+# scope (audience check). admin-cli gets it on upgrade; our service accounts
+# must be assigned it or every group/user call returns 401.
+assign_kc_admin_api() {
+  local client_id=$1 client_uuid scope_id
+  client_uuid=$($KC get clients -r conservices -q clientId="$client_id" --fields id --format csv --noquotes | tail -n1 || true)
+  scope_id=$($KC get client-scopes -r conservices --fields id,name --format csv --noquotes | awk -F, '$2=="kc-admin-api"{print $1; exit}')
+  [ -n "$client_uuid" ] && [ -n "$scope_id" ] || return 0
+  $KC update "clients/$client_uuid/default-client-scopes/$scope_id" -r conservices 2>/dev/null || true
+}
+assign_kc_admin_api hr-provisioner
+
 # Den pushes login branding (theme, display name, brand attribute) into the realm.
 DEN_KC=$($KC get clients -r conservices -q clientId=den-keycloak --fields id --format csv --noquotes | tail -n1 || true)
 if [ -z "$DEN_KC" ]; then
@@ -61,6 +73,7 @@ if [ -z "$DEN_KC" ]; then
 fi
 $KC add-roles -r conservices --uusername service-account-den-keycloak --cclientid realm-management \
   --rolename manage-realm --rolename view-realm
+assign_kc_admin_api den-keycloak
 
 # SPA clients: local DNS (https://<app>.conservices.test) plus the localhost ports.
 spa_urls() {
@@ -138,6 +151,7 @@ if [ -z "$LEARN_PROV" ]; then
 fi
 $KC add-roles -r conservices --uusername service-account-learn-provisioner --cclientid realm-management \
   --rolename view-users --rolename query-groups
+assign_kc_admin_api learn-provisioner
 
 add_user_to_group() {
   local username=$1 gid=$2 uid
@@ -221,17 +235,25 @@ module_spa tasks-spa "Tasks SPA"
 spa_urls tasks-spa 3009 tasks.conservices.test
 
 DESK_ADMIN_GID=$(learn_group desk-admin | tail -n1)
-# Per-mailbox groups desk-<slug>-viewer|manager|delete for the dev mailbox
-# support@conservices.test (slug "support").
+# Per-mailbox groups desk-<slug>-viewer|manager|delete for the durable
+# GreenMail mailboxes (support@ and info@). registration@ groups exist for
+# smoke / manual creation; alice is not put in them.
 learn_group desk-support-viewer >/dev/null
 DESK_SUPPORT_MANAGER_GID=$(learn_group desk-support-manager | tail -n1)
 learn_group desk-support-delete >/dev/null
+learn_group desk-info-viewer >/dev/null
+DESK_INFO_MANAGER_GID=$(learn_group desk-info-manager | tail -n1)
+learn_group desk-info-delete >/dev/null
+learn_group desk-registration-viewer >/dev/null
+learn_group desk-registration-manager >/dev/null
+learn_group desk-registration-delete >/dev/null
 TASKS_ADMIN_GID=$(learn_group tasks-admin | tail -n1)
 TASKS_CREATOR_GID=$(learn_group tasks-creator | tail -n1)
-# DEV users: admin runs both; alice answers the support mailbox and creates spaces.
+# DEV users: admin runs both; alice answers support and info and creates spaces.
 add_user_to_group admin "$DESK_ADMIN_GID"
 add_user_to_group admin "$TASKS_ADMIN_GID"
 add_user_to_group alice "$DESK_SUPPORT_MANAGER_GID"
+add_user_to_group alice "$DESK_INFO_MANAGER_GID"
 add_user_to_group alice "$TASKS_CREATOR_GID"
 
 module_spa wiki-spa "Wiki SPA"

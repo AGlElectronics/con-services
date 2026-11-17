@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.27.4-alpine3.24 AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 GOFLAGS=-buildvcs=false
+
+ARG VERSION=dev
+COPY backend/go.mod backend/go.sum* ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY backend ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod tidy && \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/intercom-server ./cmd/server
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/intercom-server /intercom-server
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/intercom-server"]

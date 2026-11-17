@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Compose default `STATS_SERVICE_TOKEN` / `STATS_PULL_TOKEN` is now ≥32
+  characters (`change-me-dev-only-stats-pull-token-32`) so module backends
+  that validate the pull token start in local Compose.
+
 ### Added
 
 - Desk development mail: GreenMail also has `info@conservices.test`

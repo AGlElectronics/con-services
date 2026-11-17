@@ -133,6 +133,14 @@ Desk uses `smtp.from` and `smtp.from_name`.
 | --- | --- | --- |
 | `wiki.revision_retention_days` | `0` (keep every revision) | Days a page's older revisions are kept; older ones are deleted hourly. A whole number, `0` or more. Replaces Wiki's `WIKI_REVISION_RETENTION_DAYS` when Den sets it. Read by Wiki from 1.0.0 ([Wiki configuration](../modules/wiki/configuration.md#revision-retention)). |
 
+### HR: pending onboarding cleanup
+
+| Key | Default in HR | Range | Meaning |
+| --- | --- | --- | --- |
+| `hr.onboarding_auto_delete_days` | `30` | 0–3650 | Days a stuck employment draft (state `draft`) is kept before HR deletes it. `0` turns the purge off. When Den sets this key, HR shows it as Managed in Den. |
+
+See [Onboarding forms](../modules/hr/onboarding-forms.md).
+
 ### Tasks: retention and reminders
 
 Each value is a whole number of days. When Den sets one, it replaces the value on

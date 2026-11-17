@@ -121,6 +121,38 @@ curl -s -D - "$TASKS/api/v1/lists/8e2f0c1d-…/tasks?limit=2" -H "Authorization:
 curl -s "$TASKS/api/v1/lists/8e2f0c1d-…/tasks?limit=2&cursor=eyJwIjoyLCJuIjo0Mn0" -H "Authorization: Bearer $TOKEN"
 ```
 
+### Filtering by label and urgency
+
+In the web app a **label** is a space [tag](#tags) and **urgency** is the
+task `priority` field (`urgent`, `high`, `normal`, `low`, or none). The API
+keeps the older names `tag` and `priority`. Three reads can be narrowed by
+them with the same query parameters:
+[`GET /api/v1/lists/{list}/tasks`](#get-apiv1listslisttasks),
+[`GET /api/v1/my-work`](#get-apiv1my-work) and
+[`GET /api/v1/inbox`](#get-apiv1inboxunread1limit).
+
+| Parameter | Value | Meaning |
+| --- | --- | --- |
+| `priority` | `urgent`, `high`, `normal`, `low`, or `none` (no urgency set). Repeat the parameter or separate values with commas. | The task has one of these urgencies. |
+| `tag` | A tag id (a uuid) or a tag name, matched ignoring case. Repeat or separate with commas. | The task wears at least one of these labels. |
+
+Both parameters together mean "one of the urgencies **and** at least one of
+the labels". An empty or missing parameter does not filter. A **name**
+matches the label in every space you can see, so `tag=Venue` works in My
+Work and the Inbox, which span spaces; an **id** is one space's tag.
+Filtering happens before paging, so `X-Next-Cursor` pages walk only the
+matching tasks. At most 20 urgencies and 20 labels per request.
+
+An unknown urgency is rejected, not ignored:
+
+```sh
+curl -s "$TASKS/api/v1/my-work?priority=asap" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"error":{"code":"validation_failed","message":"invalid filter","details":{"priority":"must be urgent, high, normal, low or none"}}}
+```
+
 ### Getting a token
 
 For quick tests against the development Keycloak (password grant must be
@@ -348,8 +380,10 @@ does not send the person there.
 | `X-Den-User-Subject` | The person's subject (`sub`). In development sign-in it is the `X-Dev-User` name. |
 
 **Response:** `200` with the open tasks assigned to that person (not done,
-not in the trash, not in an archived space or list), soonest due date
-first, at most 50. Someone Tasks has never seen gets an empty list.
+not in the trash, not in an archived space or list), most urgent first
+(urgent, high, normal, low, no urgency), then soonest due date, at most 50.
+Someone Tasks has never seen gets an empty list. Every item is a real task:
+`id` is its key, so the list always matches My Work.
 
 ```sh
 curl -s "https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/portal/todos" \
@@ -377,7 +411,10 @@ curl -s "https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/port
 empty when that variable is unset, and Den then drops the item. `due_at`
 is midnight UTC on the due date, or `null`. `severity` is `danger` when
 the due date is in the past, `warning` when it falls inside
-`reminders.due_soon_days` (including today), and `info` otherwise.
+`reminders.due_soon_days` (including today), and `info` otherwise. An
+`urgent` task is at least `warning`, even with no due date. `detail`
+starts with `Urgent · ` or `High · ` for those two urgencies, for example
+`"Urgent · General · Crew"`, because Den has no urgency field of its own.
 
 **Errors:**
 
@@ -485,11 +522,32 @@ server, from Den or from Tasks' `SMTP_*` settings (see
 ### `GET /api/v1/my-work`
 
 Who may call: signed in. Your open tasks plus the ones you finished in the
-last 7 days, soonest due first, as `{"tasks": [Task…]}`. Paged (see
-[Paging](#paging)).
+last 7 days, as `{"tasks": [Task…]}`. Paged (see [Paging](#paging)).
+Finished tasks always come last.
+
+| Parameter | Meaning |
+| --- | --- |
+| `priority`, `tag` | Narrow by urgency and label. See [Filtering by label and urgency](#filtering-by-label-and-urgency). |
+| `sort` | `due` (default): soonest due date first. `urgency`: most urgent first (urgent, high, normal, low, none), then soonest due. Anything else answers `422`. |
 
 ```sh
 curl -s $TASKS/api/v1/my-work -H "Authorization: Bearer $TOKEN"
+```
+
+Urgent and high tasks tagged `Venue`, most urgent first:
+
+```sh
+curl -s "$TASKS/api/v1/my-work?priority=urgent,high&tag=Venue&sort=urgency" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"tasks":[
+  {"id":"f04d6e2a-…","key":"CREW-43","title":"Confirm stage power","priority":"urgent","due_at":"2026-11-24",
+   "tags":[{"id":"7d1e…","name":"Venue","color":"#6366f1"}], "…":"…"},
+  {"id":"b81c93f0-…","key":"CREW-40","title":"Walk the site","priority":"high","due_at":"2026-11-20",
+   "tags":[{"id":"7d1e…","name":"Venue","color":"#6366f1"}], "…":"…"}
+]}
 ```
 
 ### `GET /api/v1/search?q=&limit=`
@@ -597,14 +655,25 @@ Notifications are written in the same transaction as the change.
 ### `GET /api/v1/inbox?unread=1&limit=`
 
 Who may call: signed in. Newest first; `unread=1` for unread only; default
-200, max 500.
+200, max 500. `priority` and `tag` keep only the notifications whose task
+matches (see [Filtering by label and urgency](#filtering-by-label-and-urgency));
+a notification whose task was deleted never matches a filter.
 
 ```json
 {"notifications":[{
   "id":"n1…","task_id":"f04d6e2a-…","task_key":"CREW-43","task_title":"Print badges",
   "actor_name":"Bob Builder","kind":"mention","message":"mentioned you: can you check the printer?",
-  "read_at":null,"created_at":"2026-11-06T12:40:00Z"
+  "read_at":null,"created_at":"2026-11-06T12:40:00Z",
+  "priority":"urgent","tags":[{"id":"7d1e…","name":"Venue","color":"#6366f1"}]
 }]}
+```
+
+`priority` and `tags` are the task's **current** urgency and labels (`null`
+and `[]` when the task is gone), so the Inbox can show them without a second
+call. Unread, urgent notifications:
+
+```sh
+curl -s "$TASKS/api/v1/inbox?unread=1&priority=urgent" -H "Authorization: Bearer $TOKEN"
 ```
 
 `kind` is `status`, `assigned`, `comment`, `mention`, `automation` (from a
@@ -838,6 +907,13 @@ Answers `204`.
 
 Who may call: `view` on the list. Top-level tasks and subtasks of the list
 in board order, as `{"tasks": [Task…]}`. Paged (see [Paging](#paging)).
+`priority` and `tag` narrow it (see
+[Filtering by label and urgency](#filtering-by-label-and-urgency)):
+
+```sh
+curl -s "$TASKS/api/v1/lists/8e2f0c1d-…/tasks?priority=urgent,high&tag=printing" \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 #### `GET /api/v1/spaces/{space}/archived-lists`
 
@@ -913,6 +989,9 @@ tasks). Each import is in the [audit log](#audit-log) (`list` / `imported`).
 | `422` | Unknown `format`; not valid CSV or JSON; no title column; more than 2,000 tasks; over 5 MB. |
 
 ### Tags
+
+Tags are what the web app calls **labels**: coloured names scoped to one
+space. Filter tasks by them with [`tag=`](#filtering-by-label-and-urgency).
 
 | Method and path | Who | Body | Response |
 | --- | --- | --- | --- |
@@ -1428,6 +1507,55 @@ Response: the Space (without capability flags).
 | `401` | `"invalid service token"`. |
 | `404` | `TASKS_SERVICE_TOKEN` empty: endpoint off. |
 | `409` | No free space key could be derived from the slug. |
+
+### `POST /api/internal/ideas`
+
+Who may call: **Intercom, server to server**. Intercom sends this when
+someone uses Telegram `/idea`. Authenticated with
+`Authorization: Bearer <TASKS_SERVICE_TOKEN>` (same token as department
+hooks). The route answers a plain `404` while `TASKS_SERVICE_TOKEN` is
+empty.
+
+On first use, Tasks creates the **Intercom** space (key `ICM`,
+`everyone_level: view`) and an **Ideas** list if they are missing, then
+creates a task in that list.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `body` | yes* | The idea text. |
+| `title` | no | Task title; defaults to the first line of `body` (max 80). |
+| `source_user_name` | no | Telegram display name; stored in the description. |
+| `source_chat_title` | no | Source chat title; stored in the description. |
+
+\* `body` or `title` must be non-empty.
+
+```sh
+curl -s -X POST http://localhost:8099/api/internal/ideas \
+  -H "Authorization: Bearer tasks-service-dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"body":"Put water stations near the outdoor stage","source_user_name":"Taire","source_chat_title":"Ops"}'
+```
+
+```json
+{
+  "task": {"id": "…", "number": 1, "title": "Put water stations near the outdoor stage"},
+  "space_id": "…",
+  "space_key": "ICM",
+  "space_name": "Intercom",
+  "list_id": "…",
+  "list_name": "Ideas",
+  "task_key": "ICM-1"
+}
+```
+
+| Status | When |
+| --- | --- |
+| `201` | Task created. |
+| `400` | Malformed JSON. |
+| `401` | `"invalid service token"`. |
+| `404` | `TASKS_SERVICE_TOKEN` empty: endpoint off. |
+| `409` | Tasks has no users yet (sign in once first). |
+| `422` | Missing idea text. |
 | `422` | `details.id`/`slug`/`name`/`group` = `"required"`. |
 
 A NetworkPolicy only lets HR's pods reach this path; see
@@ -1598,6 +1726,7 @@ pairing URL in Den (*Admin → Modules → Pair*) and paste it there.
 | GET | `/api/portal/todos` | Den's pairing credential |
 | GET | `/api/v1/brand`, `/api/v1/brand/{role}` | anyone |
 | POST | `/api/internal/departments` | `TASKS_SERVICE_TOKEN` |
+| POST | `/api/internal/ideas` | `TASKS_SERVICE_TOKEN` |
 | GET | `/api/v1/me` | signed in |
 | GET, PUT | `/api/v1/me/preferences`, `/api/v1/me/notifications` | signed in |
 | GET | `/api/v1/users`, `/api/v1/my-work`, `/api/v1/search`, `/api/v1/calendar` | signed in |

@@ -102,9 +102,11 @@ services:
   # DEV ONLY mail server for Desk (profile desk). Unlike Mailpit it keeps
   # real mailboxes Desk can read over IMAP. Mail sent to any address over
   # SMTP is delivered; the mailboxes below can log in (login = full address,
-  # password = the part before the @). Desk reaches it at greenmail:3143
-  # (IMAP, plain) and greenmail:3025 (SMTP); Desk's replies still go out
-  # through Mailpit so they can be inspected there.
+  # password = the part before the @). support@ and info@ are the durable
+  # dev mailboxes (seed with scripts/seed-desk-mailboxes.ps1);
+  # registration@ is left for smoke-desk.ps1. Desk reaches GreenMail at
+  # greenmail:3143 (IMAP, plain) and greenmail:3025 (SMTP); Desk's replies
+  # still go out through Mailpit so they can be inspected there.
   greenmail:
     image: greenmail/standalone:2.1.15
     container_name: conservices-greenmail
@@ -128,7 +130,7 @@ services:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all
         -Dgreenmail.hostname=0.0.0.0
-        -Dgreenmail.users=support:support@conservices.test,registration:registration@conservices.test
+        -Dgreenmail.users=support:support@conservices.test,registration:registration@conservices.test,info:info@conservices.test
         -Dgreenmail.users.login=email
         -Dgreenmail.verbose
     ports:
@@ -227,6 +229,9 @@ services:
           - desk.conservices.test
           - tasks.conservices.test
           - wiki.conservices.test
+          - stats.conservices.test
+          - intercom.conservices.test
+          - feedback.conservices.test
           - mail.conservices.test
           - s3.conservices.test
           - db.conservices.test
@@ -305,14 +310,18 @@ services:
       # Same value on every module; at least 32 characters. Override with
       # STASH_HR_SERVICE_TOKEN. Empty: only signed-in staff can read it.
       HR_SERVICE_TOKEN: ${STASH_HR_SERVICE_TOKEN:-dev-only-hr-service-token-change-me-0000000000}
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       ACCESS_CONFIG_PATH: /etc/stash/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3000,https://stash.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
       PUBLIC_LOSTFOUND_CLAIM_ENABLED: "true"
       JOBS_ENABLED: "true"
       # Optional Lost & Found Telegram bot (dev: your own test bot from
-      # @BotFather); also turn it on in Stash's Settings.
-      TELEGRAM_BOT_TOKEN: ${STASH_TELEGRAM_BOT_TOKEN:-}
+      # @BotFather); also turn it on in Stash's Settings. Falls back to the
+      # shared TELEGRAM_BOT_TOKEN so the Compose catch-all works with one bot.
+      TELEGRAM_BOT_TOKEN: ${STASH_TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
       # Overdue emails: in Stash's Settings use host mailpit, port 1025,
       # security "none"; mailpit needs no password (UI on localhost:8025).
       SMTP_PASSWORD: ${STASH_SMTP_PASSWORD:-}
@@ -386,6 +395,10 @@ services:
         condition: service_completed_successfully
     environment:
       APP_ENV: development
+      # Dev-only Telegram catch-all (APP_ENV=development). Empty in prod.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
       APP_BASE_URL: https://hr.conservices.test
       # Pasted Den pairing URLs point at the host; reach Den inside the network.
       DEN_INTERNAL_URL: http://den-backend:8080
@@ -421,6 +434,8 @@ services:
       SMTP_PORT: "1025"
       SMTP_FROM: no-reply@conservices.local
       SMTP_FROM_NAME: Con Services
+      # Public host for volunteer sign links (emails + copy URL).
+      SIGNING_PUBLIC_URL: https://sign-hr.conservices.test
       # Each module serves GET /api/role-catalog; HR aggregates them.
       ROLE_CATALOG_SOURCES: >-
         stash=http://stash-backend:8080/api/role-catalog,
@@ -446,11 +461,12 @@ services:
       # DEV ONLY. Sent when HR reads another module's role catalog.
       # Same value on every module below; at least 32 characters.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       # IdP groups for HR's roles (the defaults, spelled out).
       HR_ADMIN_GROUPS: hr-admin
       HR_VIEWER_GROUPS: hr-viewer
       HR_LEAD_GROUPS: hr-lead
-      CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test
+      CORS_ALLOWED_ORIGINS: http://localhost:3003,https://hr.conservices.test,https://sign-hr.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
     volumes:
       - conservices-caddy-ca:/caddy-ca:ro
@@ -458,6 +474,17 @@ services:
       - "127.0.0.1:8110:8080"
     extra_hosts:
       - "localhost:host-gateway"
+
+  hr-sign-frontend:
+    build:
+      context: ./hr/sign-frontend
+      dockerfile: Dockerfile
+    container_name: conservices-hr-sign-frontend
+    restart: unless-stopped
+    depends_on:
+      - hr-backend
+    ports:
+      - "127.0.0.1:3013:8080"
 
   hr-frontend:
     build:
@@ -471,6 +498,8 @@ services:
       # Origins the browser may call besides HR (nginx CSP). Address search
       # is proxied through the backend, so Photon is not listed here.
       KEYCLOAK_ORIGIN: https://auth.conservices.test
+      # Forms page previews the chosen PDF in an iframe via a blob: URL.
+      EXTRA_FRAME_SRC: "blob:"
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/hr.json:/etc/conservices/config.json:ro
@@ -541,6 +570,7 @@ services:
       OIDC_AUDIENCE: finance-api
       # DEV ONLY. The token HR sends to read this module's role catalog.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       # Keycloak groups of the four Finance roles (realm-conservices.json).
       FINANCE_ADMIN_GROUPS: finance_admin
       FINANCE_APPROVER_GROUPS: finance_approver
@@ -665,6 +695,11 @@ services:
       # DEV ONLY: shared SMTP password for paired modules. Mailpit accepts
       # mail without a login, so this stays empty. Not stored in Postgres.
       DEN_SMTP_PASSWORD: ""
+      # Register Stats on first start if missing. Local scaffold: everyone can
+      # see it on the portal (no role catalog yet). Pairing is still done in DB
+      # for this scaffold (AUTH_MODE=dev, no denlink).
+      DEN_PREREGISTER_MODULES: >-
+        [{"slug":"stats","display_name":"Stats","base_url":"http://127.0.0.1:3011","internal_url":"http://stats-backend:8080","environment":"production"},{"slug":"intercom","display_name":"Intercom","base_url":"http://127.0.0.1:3012","internal_url":"http://intercom-backend:8080","environment":"production"},{"slug":"feedback","display_name":"Feedback","base_url":"http://127.0.0.1:3014","internal_url":"http://feedback-backend:8080","environment":"production"}]
       # Module databases + backups (docs/operations/databases-and-backups.md).
       # Empty URL = off.
       OPERATOR_URL: http://den-operator:8080
@@ -824,6 +859,7 @@ services:
       # DEV ONLY (public value): lets HR read GET /api/role-catalog; HR must
       # send the same value once it adopts the role catalog contract.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       # Standalone default; Den's "events_public_schedule" setting wins once paired.
       PUBLIC_SCHEDULE_ENABLED: "true"
       # The public schedule API requires a key. This is the builtin
@@ -833,6 +869,9 @@ services:
       PUBLIC_API_BUILTIN_KEY: rsk_programme_dev_key
       # Empty = announcements are dry runs (recorded, not posted).
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Dev-only catch-all (APP_ENV=development). Empty in prod.
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
       ACCESS_CONFIG_PATH: /etc/rally/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3002,https://events.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -962,6 +1001,7 @@ services:
       OIDC_GROUP_MATCH: full
       # DEV ONLY. The token HR sends to read this module's role catalog.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       ACCESS_CONFIG_PATH: /etc/learn/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3005,https://learn.conservices.test,https://den.conservices.test,http://localhost:3001
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -994,6 +1034,9 @@ services:
       LEARN_FEEDBACK_PEPPER: learn-feedback-dev-pepper
       # Empty = Telegram notifications disabled.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Dev-only catch-all (APP_ENV=development). Empty in prod. Email still uses Mailpit.
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
     volumes:
       - ./learn/infra/access-config.toml:/etc/learn/access-config.toml:ro
       - conservices-caddy-ca:/caddy-ca:ro
@@ -1089,6 +1132,7 @@ services:
       OIDC_AUDIENCE: desk-api
       # DEV ONLY. The token HR sends to read this module's role catalog.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       ACCESS_CONFIG_PATH: /etc/desk/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3008,https://desk.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -1181,6 +1225,10 @@ services:
         condition: service_completed_successfully
     environment:
       APP_ENV: development
+      # Dev-only Telegram catch-all (APP_ENV=development). Empty in prod.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
       APP_BASE_URL: https://tasks.conservices.test
       # Links in notification emails.
       TASKS_PUBLIC_URL: https://tasks.conservices.test
@@ -1208,6 +1256,7 @@ services:
       # DEV ONLY: HR reads GET /api/role-catalog with this token (role
       # catalog contract). Same value as HR_SERVICE_TOKEN on hr-backend.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       # Attachments (TASK-7)
       S3_ENDPOINT: http://s3:9000
       S3_BUCKET: tasks-data-dev
@@ -1313,6 +1362,7 @@ services:
       # DEV ONLY. The token HR sends to read this module's role catalog.
       # Same value on every module; at least 32 characters.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       ACCESS_CONFIG_PATH: /etc/tasks/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3010
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -1428,6 +1478,7 @@ services:
       # DEV ONLY. The token HR sends to read this module's role catalog.
       # Same value on every module; at least 32 characters.
       HR_SERVICE_TOKEN: dev-only-hr-service-token-change-me-0000000000
+      STATS_PULL_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
       ACCESS_CONFIG_PATH: /etc/wiki/access-config.toml
       CORS_ALLOWED_ORIGINS: http://localhost:3007,https://wiki.conservices.test
       TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -1481,6 +1532,147 @@ services:
       retries: 10
     ports:
       - "127.0.0.1:3007:8080"
+
+  # ── Stats — profile: docker compose --profile stats up --build ────────────
+  # Development-only 1.1 scaffold. It pulls module-owned aggregate values;
+  # it does not collect cluster metrics or person-level data. Den lists it
+  # when DEN_PREREGISTER_MODULES includes stats (or after a one-shot register).
+  stats-backend:
+    profiles: ["stats"]
+    build:
+      context: ./stats
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-stats-backend
+    restart: unless-stopped
+    environment:
+      AUTH_MODE: dev
+      HTTP_ADDR: ":8080"
+      APP_BASE_URL: https://stats.conservices.test
+      STATS_POLL_INTERVAL: ${STATS_POLL_INTERVAL:-2m}
+      STATS_PULL_TIMEOUT: ${STATS_PULL_TIMEOUT:-10s}
+      STATS_SOURCES: ${STATS_SOURCES:-hr=http://hr-backend:8080/api/internal/stats,events=http://events-backend:8080/api/internal/stats,tasks=http://tasks-backend:8080/api/internal/stats,desk=http://desk-backend:8080/api/internal/stats,wiki=http://wiki-backend:8080/api/internal/stats,stash=http://stash-backend:8080/api/internal/stats,learn=http://learn-backend:8080/api/internal/stats,finance=http://finance-backend:8080/api/internal/stats}
+      # DEV ONLY. Production will use secret-manager-backed credentials.
+      STATS_SERVICE_TOKEN: ${STATS_SERVICE_TOKEN:-change-me-dev-only-stats-pull-token-32}
+    ports:
+      - "127.0.0.1:8170:8080"
+
+  stats-frontend:
+    profiles: ["stats"]
+    build:
+      context: ./stats
+      dockerfile: infra/Dockerfile.frontend
+    container_name: conservices-stats-frontend
+    restart: unless-stopped
+    depends_on:
+      - stats-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:3011:8080"
+
+  # ── Intercom — profile: docker compose --profile intercom up --build ──────────
+  # Staff Telegram bridge (/board, /idea, reply-back). Owns getUpdates for
+  # TELEGRAM_BOT_TOKEN / INTERCOM_TELEGRAM_BOT_TOKEN — do not enable Stash L&F
+  # polling on the same bot token at the same time.
+  intercom-backend:
+    profiles: ["intercom"]
+    build:
+      context: ./intercom
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-intercom-backend
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://intercom:intercom@postgres:5432/intercom?sslmode=disable
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      INTERCOM_TELEGRAM_BOT_TOKEN: ${INTERCOM_TELEGRAM_BOT_TOKEN:-}
+      INTERCOM_BOARD_CHAT_ID: ${INTERCOM_BOARD_CHAT_ID:-}
+      INTERCOM_BOARD_THREAD_ID: ${INTERCOM_BOARD_THREAD_ID:-}
+      INTERCOM_IDEAS_THREAD_ID: ${INTERCOM_IDEAS_THREAD_ID:-}
+      # Local fallbacks used by Intercom when INTERCOM_BOARD_* are empty.
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
+      TASKS_INTERNAL_URL: http://tasks-backend:8080
+      TASKS_SERVICE_TOKEN: ${TASKS_SERVICE_TOKEN:-tasks-service-dev-token}
+      FEEDBACK_INTERNAL_URL: http://feedback-backend:8080
+      FEEDBACK_SERVICE_TOKEN: ${FEEDBACK_SERVICE_TOKEN:-feedback-dev-token}
+    ports:
+      - "127.0.0.1:8171:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      feedback-backend:
+        condition: service_started
+
+  intercom-frontend:
+    profiles: ["intercom"]
+    build:
+      context: ./intercom
+      dockerfile: infra/Dockerfile.frontend
+    container_name: conservices-intercom-frontend
+    restart: unless-stopped
+    depends_on:
+      - intercom-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:3012:8080"
+
+  # ── Feedback — also started with --profile intercom (DM flow via Intercom poller)
+  feedback-backend:
+    profiles: ["intercom", "feedback"]
+    build:
+      context: ./feedback
+      dockerfile: infra/Dockerfile.backend
+      args:
+        VERSION: dev
+    container_name: conservices-feedback-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://feedback:feedback@postgres:5432/feedback?sslmode=disable
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      FEEDBACK_TELEGRAM_BOT_TOKEN: ${FEEDBACK_TELEGRAM_BOT_TOKEN:-}
+      FEEDBACK_SERVICE_TOKEN: ${FEEDBACK_SERVICE_TOKEN:-feedback-dev-token}
+      FEEDBACK_DEPARTMENTS: ${FEEDBACK_DEPARTMENTS:-Board,Ops,HR,Tech,Front of House}
+      FEEDBACK_BOARD_CHAT_ID: ${FEEDBACK_BOARD_CHAT_ID:-}
+      FEEDBACK_BOARD_THREAD_ID: ${FEEDBACK_BOARD_THREAD_ID:-}
+      INTERCOM_BOARD_CHAT_ID: ${INTERCOM_BOARD_CHAT_ID:-}
+      INTERCOM_BOARD_THREAD_ID: ${INTERCOM_BOARD_THREAD_ID:-}
+      TELEGRAM_DEV_CATCHALL_CHAT_ID: ${TELEGRAM_DEV_CATCHALL_CHAT_ID:-}
+      TELEGRAM_DEV_CATCHALL_THREAD_ID: ${TELEGRAM_DEV_CATCHALL_THREAD_ID:-}
+    ports:
+      - "127.0.0.1:8172:8080"
+
+  feedback-frontend:
+    profiles: ["intercom", "feedback"]
+    build:
+      context: ./feedback
+      dockerfile: infra/Dockerfile.frontend
+    container_name: conservices-feedback-frontend
+    restart: unless-stopped
+    depends_on:
+      - feedback-backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:3014:8080"
 
 volumes:
   conservices-postgres-data:

@@ -6,8 +6,8 @@
 # Moves the mailbox to the trash and purges it afterwards.
 #
 # The mailbox must not exist in Desk yet. GreenMail only lets its configured
-# users log in (support@ and registration@conservices.test); registration@
-# is used so the dev mailbox support@ is left alone.
+# users log in (support@, info@, registration@conservices.test). registration@
+# is used so the durable seeded Support and Info mailboxes are left alone.
 #
 # Usage: scripts/smoke-desk.ps1                                   # :3008
 #        scripts/smoke-desk.ps1 -Base http://localhost:8150       # backend directly

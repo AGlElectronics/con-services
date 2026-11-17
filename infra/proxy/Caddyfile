@@ -44,6 +44,12 @@ hr.conservices.test {
 	reverse_proxy hr-frontend:8080
 }
 
+# Volunteer signing host (opaque token links emailed from HR).
+sign-hr.conservices.test {
+	import hsts
+	reverse_proxy hr-sign-frontend:8080
+}
+
 stash.conservices.test {
 	import hsts
 	reverse_proxy stash-frontend:8080
@@ -77,6 +83,21 @@ tasks.conservices.test {
 wiki.conservices.test {
 	import hsts
 	reverse_proxy wiki-frontend:8080
+}
+
+stats.conservices.test {
+	import hsts
+	reverse_proxy stats-frontend:8080
+}
+
+intercom.conservices.test {
+	import hsts
+	reverse_proxy intercom-frontend:8080
+}
+
+feedback.conservices.test {
+	import hsts
+	reverse_proxy feedback-frontend:8080
 }
 
 # Public event submission site (attendees). Production host is configuration,
