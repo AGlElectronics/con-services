@@ -477,8 +477,9 @@ services:
 
   hr-sign-frontend:
     build:
-      context: ./hr/sign-frontend
-      dockerfile: Dockerfile
+      # Module root — same context as CI (sign-frontend/Dockerfile COPY paths).
+      context: ./hr
+      dockerfile: sign-frontend/Dockerfile
     container_name: conservices-hr-sign-frontend
     restart: unless-stopped
     depends_on:

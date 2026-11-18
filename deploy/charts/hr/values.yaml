@@ -13,21 +13,21 @@ image:
   backend:
     repository: ghcr.io/aglelectronics/hr-backend
     # MAJOR.MINOR.PATCH-BUILD. Never "latest". Use the same tag for all three.
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
   frontend:
     repository: ghcr.io/aglelectronics/hr-frontend
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
   # Volunteer signing UI (sign-hr). Same release tag as the other three.
   sign:
     repository: ghcr.io/aglelectronics/hr-sign
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
   # One-shot migrator (/migrate). Runs as an initContainer of the backend.
   migrate:
     repository: ghcr.io/aglelectronics/hr-migrate
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
 
 # Existing Secret (from your secret manager). Keys HR reads from it:

@@ -236,10 +236,10 @@ open: volunteers also get 503 until HR is paired. Check with
 | GET | `/api/onboardings/{id}` | `people.read` | [Onboarding](#get-apionboardingsid) |
 | PUT | `/api/onboardings/{id}/details` | `onboarding.manage` | [Onboarding](#put-apionboardingsiddetails) |
 | POST | `/api/onboardings/{id}/cancel` | `onboarding.manage` | [Onboarding](#post-apionboardingsidcancel) |
-| POST | `/api/onboardings/{id}/submit-for-signing` | `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff--onboarding-documents) |
-| GET, POST, DELETE | `/api/onboardings/{id}/documents…` | `people.read` / `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff--onboarding-documents) |
-| GET, POST, PUT, DELETE | `/api/document-templates…` | `people.read` / `settings.manage` | [Onboarding forms](onboarding-forms.md#staff--forms-library-settingsmanage-to-write-peopleread-to-read) |
-| GET, POST | `/api/public/signing/{token}…` | public (rate-limited) | [Onboarding forms](onboarding-forms.md#public--volunteer-sign-hr-token-in-path-no-staff-oidc) |
+| POST | `/api/onboardings/{id}/submit-for-signing` | `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff-onboarding-documents) |
+| GET, POST, DELETE | `/api/onboardings/{id}/documents…` | `people.read` / `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff-onboarding-documents) |
+| GET, POST, PUT, DELETE | `/api/document-templates…` | `people.read` / `settings.manage` | [Onboarding forms](onboarding-forms.md#staff-forms-library) |
+| GET, POST | `/api/public/signing/{token}…` | public (rate-limited) | [Onboarding forms](onboarding-forms.md#public-volunteer-sign-hr) |
 | GET | `/api/internal/stats` | `STATS_PULL_TOKEN` | Stats aggregate pull (empty token disables) |
 | POST | `/api/onboardings/{id}/complete` | `access.manage` | [Provisioning](#complete-an-onboarding-provisioning) |
 | GET | `/api/jobs/{id}` | `people.read` | [Jobs](#get-apijobsid) |

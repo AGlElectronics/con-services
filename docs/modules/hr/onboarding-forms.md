@@ -138,7 +138,9 @@ Use your HR base URL (`$HR`) and a staff bearer token as in
 `$SIGNING` = `SIGNING_PUBLIC_URL` (or the staff origin if you call the
 backend directly in development).
 
-### Staff — Forms library (`settings.manage` to write; `people.read` to read)
+### Staff — Forms library {#staff-forms-library}
+
+Staff need `settings.manage` to write forms and `people.read` to read them.
 
 | Method | Path | Who | Notes |
 | --- | --- | --- | --- |
@@ -167,7 +169,7 @@ curl -sS -X POST "$HR/api/document-templates/inspect" \
 }
 ```
 
-### Staff — Onboarding documents
+### Staff — Onboarding documents {#staff-onboarding-documents}
 
 | Method | Path | Who | Notes |
 | --- | --- | --- | --- |
@@ -222,7 +224,9 @@ curl -sS -X POST "$HR/api/onboardings/$DRAFT_ID/submit-for-signing" \
 }
 ```
 
-### Public — volunteer sign-hr (token in path; no staff OIDC)
+### Public — volunteer sign-hr {#public-volunteer-sign-hr}
+
+Token in the path; no staff OIDC.
 
 | Method | Path | Who | Notes |
 | --- | --- | --- | --- |

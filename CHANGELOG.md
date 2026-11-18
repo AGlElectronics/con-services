@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
+  match chart `appVersion` `1.1.0` (CI chart-version check).
+- Docs links to onboarding-forms staff/public API sections use stable heading
+  anchors; `shared-go` workflow no longer uses `ls | grep` (actionlint).
+- Compose `hr-sign-frontend` builds with context `./hr` (same as CI) so
+  `sign-frontend/Dockerfile` COPY paths resolve.
 - Compose default `STATS_SERVICE_TOKEN` / `STATS_PULL_TOKEN` is now ≥32
   characters (`change-me-dev-only-stats-pull-token-32`) so module backends
   that validate the pull token start in local Compose.
