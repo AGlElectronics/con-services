@@ -14,7 +14,8 @@ a database; `AUTH_MODE=dev` is the only accepted mode.
 2. Open <http://localhost:3011> (or <https://stats.conservices.test> when
    the local proxy is up). The local Compose default polls every module’s
    `GET /api/internal/stats` (shared `STATS_SERVICE_TOKEN` /
-   `STATS_PULL_TOKEN`). Override with `STATS_SOURCES` in `.env` if needed.
+   `STATS_PULL_TOKEN`, at least 32 characters when set). Override with
+   `STATS_SOURCES` in `.env` if needed.
 
    Local Den registers Stats via `DEN_PREREGISTER_MODULES`. For the
    scaffold to appear on the portal today it is listed as **paired** with
@@ -39,7 +40,7 @@ a database; `AUTH_MODE=dev` is the only accepted mode.
 
    ```dotenv
    STATS_SOURCES=desk=http://desk-backend:8080/api/internal/stats
-   STATS_SERVICE_TOKEN=change-me-dev-only
+   STATS_SERVICE_TOKEN=change-me-dev-only-stats-pull-token-32
    STATS_POLL_INTERVAL=2m
    ```
 

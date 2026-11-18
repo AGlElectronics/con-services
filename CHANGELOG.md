@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Docs: every module that exposes Stats `GET /api/internal/stats` lists
+  `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
+  Stats setup examples use a ≥32-character development token.
+
 ### Fixed
 
 - HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
