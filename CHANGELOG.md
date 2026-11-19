@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- Scaffold frontends (stats, intercom, feedback) use `nginx/nginx-unprivileged:1.30.7-alpine` for nginx CVE fixes.
+
 - Docs: every module that exposes Stats `GET /api/internal/stats` lists
   `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
   Stats setup examples use a ≥32-character development token.
