@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AGlElectronics/intercom/backend/internal/probe"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,19 +25,28 @@ import (
 var version = "dev"
 
 type config struct {
-	HTTPAddr       string
-	DatabaseURL    string
-	BotToken       string
-	BoardChatID    int64
-	BoardThreadID  *int64
-	IdeasThreadID  *int64
-	TasksURL       string
-	TasksToken     string
-	FeedbackURL    string
-	FeedbackToken  string
+	HTTPAddr      string
+	DatabaseURL   string
+	BotToken      string
+	BoardChatID   int64
+	BoardThreadID *int64
+	IdeasThreadID *int64
+	TasksURL      string
+	TasksToken    string
+	FeedbackURL   string
+	FeedbackToken string
 }
 
 func main() {
+	// `server healthcheck` probes the running server's /livez
+	// (Docker HEALTHCHECK / Compose; the image has no curl).
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		addr := os.Getenv("HTTP_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		probe.Run(addr)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := loadConfig()
 	if err != nil {

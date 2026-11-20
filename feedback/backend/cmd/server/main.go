@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AGlElectronics/feedback/backend/internal/probe"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,6 +33,15 @@ type config struct {
 }
 
 func main() {
+	// `server healthcheck` probes the running server's /livez
+	// (Docker HEALTHCHECK / Compose; the image has no curl).
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		addr := os.Getenv("HTTP_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		probe.Run(addr)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := loadConfig()
 	if err != nil {

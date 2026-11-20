@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
   Stats setup examples use a ≥32-character development token.
 
+- Image policy docs: frontend base is `nginx/nginx-unprivileged:1.30.7-alpine`;
+  every image declares a Dockerfile `HEALTHCHECK` (distroless backends use
+  `<binary> healthcheck` → `/livez`; migrators use `HEALTHCHECK NONE`).
+
 ### Fixed
 
 - HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
