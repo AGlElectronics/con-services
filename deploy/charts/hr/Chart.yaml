@@ -5,8 +5,8 @@ description: >-
   account provisioning in Keycloak). Rendered and linted in CI (helm lint,
   helm template, kustomize); first production install pending.
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
+version: 1.1.0
+appVersion: "1.1.0"
 annotations:
   # The Den MAJOR this chart is built for; always equals the chart's MAJOR.
   conservices.io/den-major: "1"

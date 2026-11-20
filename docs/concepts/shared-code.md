@@ -40,6 +40,7 @@ and the drift check make sure they do not.
 | `denlink` | Pairs the module with Den, stores the module credential **encrypted**, pulls Den's bundle every minute, serves the brand and the Den connection endpoints, and reports a **revoked** credential. | `DEN_MODE`, `DEN_INTERNAL_URL`, `DEN_ALLOWED_HOSTS`, `DEN_LINK_ENCRYPTION_KEY`, `DEN_LINK_ENCRYPTION_KEY_PREVIOUS`, `APP_ENV` |
 | `authbase` | The `AUTH_MODE`/`APP_ENV` start-up guard, CORS headers (dev headers only in dev mode), a JSON body decoder with a size limit, a rate limiter, the client address behind trusted proxies, security headers for API responses, and the person's identity key. | `AUTH_MODE`, `APP_ENV`, `TRUSTED_PROXY_CIDRS` |
 | `gworkspace` | A Google Workspace client: accounts and groups (Admin SDK Directory) and mailboxes (Gmail API), through a service account with domain-wide delegation. Comes with an in-memory fake for tests. | `GOOGLE_WORKSPACE_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_ADMIN_EMAIL`, `GOOGLE_WORKSPACE_DOMAIN` |
+| `tgcatchall` | Compose / local-dev sink: one Telegram chat (optional forum topic) receives every mirrored notice, prefixed with who it was for. Only when `APP_ENV=development`. | `APP_ENV`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_DEV_CATCHALL_CHAT_ID`, `TELEGRAM_DEV_CATCHALL_THREAD_ID`, `TELEGRAM_API_URL` |
 
 `shared/go` is one Go module, `github.com/AGlElectronics/con-services/shared/go`,
 so you can test all packages together:

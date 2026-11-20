@@ -410,15 +410,49 @@ Never for real data. From the root of the `con-services` repository:
 docker compose --profile desk up --build -d
 ```
 
-This also starts **GreenMail**, a test mail server: the mailboxes
-`support@conservices.test` (password `support`) and
-`registration@conservices.test` (password `registration`) at IMAP
-`greenmail:3143`. Replies go out through **Mailpit** (`mailpit:1025`),
-where you can read them in a browser. Attachments go to the dev S3 bucket
-`desk-data-dev`. Open <https://desk.conservices.test>
-(or <http://localhost:3008>). For a mailbox, use IMAP host `greenmail`,
-port `3143`, security **None (dev only)**; the stack allows the private
-addresses of `greenmail` and `mailpit` with `DESK_ALLOWED_MAIL_HOSTS`.
+This also starts **GreenMail**, a test mail server. Mail never leaves your
+machine. The accounts below can log in over IMAP (login = full address,
+password = the local part before `@`):
+
+| Address | Password | Role in development |
+| --- | --- | --- |
+| `support@conservices.test` | `support` | Durable mailbox; seed it into Desk |
+| `info@conservices.test` | `info` | Durable mailbox; seed it into Desk |
+| `registration@conservices.test` | `registration` | Left free for `smoke-desk.ps1` |
+
+IMAP is `greenmail:3143`. Replies go out through **Mailpit**
+(`mailpit:1025`), where you can read them in a browser
+(<https://mail.conservices.test> or <http://localhost:8025>). Attachments
+go to the dev S3 bucket `desk-data-dev`. Open
+<https://desk.conservices.test> (or <http://localhost:3008>). For a
+mailbox, use IMAP host `greenmail`, port `3143`, security
+**None (dev only)**; the stack allows the private addresses of
+`greenmail` and `mailpit` with `DESK_ALLOWED_MAIL_HOSTS`.
+
+### Fake mailboxes and test mail
+
+1. Create the durable Desk mailboxes (idempotent; skips ones that already
+   exist):
+
+    ```powershell
+    powershell -File scripts/seed-desk-mailboxes.ps1
+    ```
+
+    Sign in as `admin` / `adminadmin` (or `alice` / `alicealice`, who has
+    the support and info manager groups) and open Desk: **Support** and
+    **Info** appear in the sidebar.
+
+2. Inject a fake customer email into GreenMail (still no real mail):
+
+    ```powershell
+    powershell -File scripts/send-desk-test-mail.ps1
+    powershell -File scripts/send-desk-test-mail.ps1 -To info@conservices.test -Fetch
+    ```
+
+    Without `-Fetch`, Desk picks the message up on the next poll
+    (`FETCH_INTERVAL`, default one minute). With `-Fetch`, the script asks
+    Desk to poll that mailbox right away. The script prints a marker you
+    can search for in the inbox.
 
 On its own, with development sign-in:
 
@@ -433,7 +467,14 @@ docker compose -f infra/docker-compose.yml up --build
 | frontend | 3008 |
 | PostgreSQL (standalone stack only) | 5440 |
 | S3, SeaweedFS (standalone stack only; dev key `desk` / `deskdev`) | 9040 |
-| GreenMail SMTP / IMAP (standalone stack: `support@desk.test`) | 3025 / 3143 |
+| GreenMail SMTP / IMAP (standalone: `support@` / `info@` / `registration@desk.test`) | 3025 / 3143 |
+
+Standalone seed and send (domain `desk.test`, API on `:8150`):
+
+```powershell
+powershell -File scripts/seed-desk-mailboxes.ps1 -Base http://localhost:8150 -Domain desk.test
+powershell -File scripts/send-desk-test-mail.ps1 -Base http://localhost:8150 -To support@desk.test -Fetch
+```
 
 **Try the Google flow without Google:** set `GOOGLE_WORKSPACE_DOMAIN=desk.test`,
 `GOOGLE_SHARED_MAILBOX=desk@desk.test` and `GOOGLE_FAKE=true` in the
@@ -446,15 +487,15 @@ them. No real mail arrives. `GOOGLE_FAKE` is refused outside
 from the root of the repository:
 
 ```powershell
-pwsh scripts/smoke-desk.ps1
+powershell -File scripts/smoke-desk.ps1
 ```
 
 It signs in as `admin` and `bob`, creates a throwaway IMAP mailbox for
-`registration@conservices.test` on GreenMail, sends a customer mail into it,
-waits for the conversation, undoes one reply and sends another (visible in
-Mailpit), adds a note, checks that `bob` gets `404`, and tries the
-conversation trash. Afterwards it moves the mailbox to the trash and purges
-it. A good run ends with:
+`registration@conservices.test` on GreenMail (not the seeded Support/Info
+boxes), sends a customer mail into it, waits for the conversation, undoes
+one reply and sends another (visible in Mailpit), adds a note, checks that
+`bob` gets `404`, and tries the conversation trash. Afterwards it moves
+the mailbox to the trash and purges it. A good run ends with:
 
 ```text
 SMOKE OK (8 steps)

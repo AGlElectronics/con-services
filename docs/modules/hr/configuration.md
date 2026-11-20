@@ -136,6 +136,7 @@ know. A standalone HR uses only that list.
 | `OFFBOARD_HOOKS` | none | no | **Secret** | Comma-separated `url|token` entries called when someone is offboarded, for example `https://wiki-backend.conservices-wiki.svc.cluster.local:8080/api/internal/offboarded|<WIKI_SERVICE_TOKEN>`. Failures become warnings. Secret because it contains tokens. Payload: [Offboarding hook](api.md#offboarding-hook). |
 | `DEPARTMENT_HOOKS` | none | no | **Secret** | Same format, called when a department is created, renamed or archived, for example `https://tasks-backend.conservices-tasks.svc.cluster.local:8080/api/internal/departments|<TASKS_SERVICE_TOKEN>`. |
 | `HR_DIRECTORY_TOKEN` | none (endpoint off) | no | **Secret** | Bearer token other modules (the Wiki) send to [`GET /api/internal/directory/groups`](api.md#get-apiinternaldirectorygroups). At least 16 characters. Set the same value as the Wiki's `HR_DIRECTORY_TOKEN`. |
+| `STATS_PULL_TOKEN` | none (endpoint off) | no | **Secret** | Bearer token Stats sends to [`GET /api/internal/stats`](api.md). At least 32 characters when set (`openssl rand -hex 32`). Empty disables the endpoint. |
 | `OUTBOUND_ALLOWED_HOSTS` | none | no | ConfigMap | Hosts or CIDRs the address lookup may reach although they are internal (for example a self-hosted Photon: `photon.internal,10.20.0.0/16`). Every private address is refused otherwise. |
 
 ## Google Workspace
@@ -174,11 +175,13 @@ sending. Password-setup emails are sent by Keycloak, not by these settings.
 | `SMTP_PASSWORD` | none | no | **Secret** | Password, used only when Den sets no mail server. |
 | `SMTP_FROM` | none | no | ConfigMap | Sender address. |
 | `SMTP_FROM_NAME` | none | no | ConfigMap | Sender name. |
+| `SIGNING_PUBLIC_URL` | `https://sign-hr.conservices.test` | no | ConfigMap | Public HTTPS origin volunteers open for forms (no trailing slash). Production example: `https://sign-hr.example.org`. See [Onboarding forms](onboarding-forms.md). |
 
 ## Object storage
 
-HR stores no files yet. These are read so a later feature needs no
-configuration change. Leave them all empty, or set the first four together.
+Form PDF versions are stored here when S3 is configured. Leave them all
+empty only if you do not use onboarding forms; otherwise set the first
+four together (Compose wires SeaweedFS for local dev).
 
 | Name | Default | Required | Where | What it does |
 | --- | --- | --- | --- | --- |

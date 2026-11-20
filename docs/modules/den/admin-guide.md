@@ -35,11 +35,19 @@ bottom it shows:
 - the **welcome** line, the **convention name** and the **tagline**, all
   taken from the branding [copy](#copy-wording);
 - an **Admin console** button, for admins only;
-- **To-dos** collected from the services (see below);
+- a reserved **Intercom** slot for unread staff notices. Intercom is not built
+  yet, so it stays hidden unless a module with the slug `intercom` is paired and
+  usable, and then only links to Intercom;
+- **To-dos** collected from the services (see below), for people who can use
+  **Tasks**, with an **Open Tasks** button;
+- **Quick links**: each person's optional personal Con Services links (synced
+  across devices via Den), above the service cards. Members add a label and a
+  URL under Den's address or an enabled module's address; anything else is
+  refused;
 - **Your services**: a card for each module that is *enabled*, *paired* and
   has an *address*. Unpaired modules, or modules without an address, are not
   shown to members;
-- **Quick links** to the same services, and the legal footer if you set one.
+- the legal footer, if you set one.
 
 The theme switch (system, light or dark) in the top bar is saved in Den and
 shared with every paired module.
@@ -47,7 +55,10 @@ shared with every paired module.
 ### Portal to-dos
 
 The portal shows things the signed-in person should do in the services they
-can use, in one list, sorted by due date and then severity. Den's backend
+can use, in one list. The portal shows the four most urgent (danger, then
+warning, then info; earlier due dates first), only to people who can use the
+**Tasks** module, and an **Open Tasks** button next to the heading goes to
+Tasks for the rest. Den's backend
 asks each module itself (the browser only talks to Den, and the person's
 token never leaves Den): it calls `GET <module address>/api/portal/todos`
 with the module's pairing credential and the person's issuer and subject

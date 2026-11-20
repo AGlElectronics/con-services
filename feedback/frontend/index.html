@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Con Services · Feedback</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,650&family=Outfit:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="beam"></div>
+      <div class="orb"></div>
+      <div class="grain"></div>
+    </div>
+
+    <header class="hero">
+      <p class="brand">Con Services</p>
+      <h1 class="headline">Feedback</h1>
+      <p class="lede">
+        Private Telegram notes for departments and the board — positive or rough,
+        named or anonymous.
+      </p>
+      <p id="status" class="pulse" role="status">Listening…</p>
+    </header>
+
+    <section class="figures" aria-label="Counts">
+      <div class="figure">
+        <span id="count-total" class="figure-value">—</span>
+        <span class="figure-label">Received</span>
+      </div>
+      <div class="figure pos">
+        <span id="count-pos" class="figure-value">—</span>
+        <span class="figure-label">Positive</span>
+      </div>
+      <div class="figure neg">
+        <span id="count-neg" class="figure-value">—</span>
+        <span class="figure-label">Negative</span>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Filters">
+      <div class="seg" role="group" aria-label="Polarity">
+        <button type="button" class="seg-btn is-on" data-polarity="">All</button>
+        <button type="button" class="seg-btn" data-polarity="positive">Positive</button>
+        <button type="button" class="seg-btn" data-polarity="negative">Negative</button>
+      </div>
+      <label class="dept-filter">
+        <span>Department</span>
+        <select id="dept"></select>
+      </label>
+    </section>
+
+    <section class="inbox" aria-labelledby="inbox-heading">
+      <h2 id="inbox-heading">Inbox</h2>
+      <div id="list" class="cards"></div>
+    </section>
+
+    <footer class="foot">
+      <p>Staff DM the bot with <code>/feedback</code>. Board notify is optional per note.</p>
+    </footer>
+  </body>
+</html>

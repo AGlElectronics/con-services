@@ -13,9 +13,11 @@ machine-to-machine endpoint is the
 [directory](#get-apiinternaldirectorygroups) other modules read with a
 service token.
 
-This page lists all **86 endpoints**, taken from
+This page lists HR’s HTTP endpoints, taken from
 [`backend/internal/http/router.go`](https://github.com/AGlElectronics/hr/blob/main/backend/internal/http/router.go)
-and the handlers and services behind it. What all modules share (error
+and the handlers and services behind it. Onboarding forms and the public
+sign-hr routes are summarised below and documented in full on
+[Onboarding forms](onboarding-forms.md). What all modules share (error
 shape, request IDs, health probes, how tokens are checked) is on
 [API conventions](../../concepts/api-conventions.md); how sign-in works is
 on [Authentication](../../concepts/authentication.md).
@@ -234,6 +236,11 @@ open: volunteers also get 503 until HR is paired. Check with
 | GET | `/api/onboardings/{id}` | `people.read` | [Onboarding](#get-apionboardingsid) |
 | PUT | `/api/onboardings/{id}/details` | `onboarding.manage` | [Onboarding](#put-apionboardingsiddetails) |
 | POST | `/api/onboardings/{id}/cancel` | `onboarding.manage` | [Onboarding](#post-apionboardingsidcancel) |
+| POST | `/api/onboardings/{id}/submit-for-signing` | `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff-onboarding-documents) |
+| GET, POST, DELETE | `/api/onboardings/{id}/documents…` | `people.read` / `onboarding.manage` | [Onboarding forms](onboarding-forms.md#staff-onboarding-documents) |
+| GET, POST, PUT, DELETE | `/api/document-templates…` | `people.read` / `settings.manage` | [Onboarding forms](onboarding-forms.md#staff-forms-library) |
+| GET, POST | `/api/public/signing/{token}…` | public (rate-limited) | [Onboarding forms](onboarding-forms.md#public-volunteer-sign-hr) |
+| GET | `/api/internal/stats` | `STATS_PULL_TOKEN` | Stats aggregate pull (empty token disables) |
 | POST | `/api/onboardings/{id}/complete` | `access.manage` | [Provisioning](#complete-an-onboarding-provisioning) |
 | GET | `/api/jobs/{id}` | `people.read` | [Jobs](#get-apijobsid) |
 | GET, POST | `/api/drafts` | `people.read` / `onboarding.manage` | [Drafts](#employment-drafts-low-level) |
@@ -1496,9 +1503,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 ```
 
 **200** with the onboarding view (`"state": "rejected"`, person
-`"status": "applicant"`). Errors: **409**
-`only an onboarding that is still a draft can be cancelled (it is active)`,
-**403**, **404**.
+`"status": "applicant"`). Cancel also invalidates open sign-hr sessions.
+Errors: **409** when the onboarding is not still `draft` or
+`pending_approval`, **403**, **404**.
 
 ### Complete an onboarding (provisioning)
 
@@ -1507,9 +1514,15 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 Check the onboarding and queue its provisioning. No body. **Access:**
 `access.manage` (leads: their departments). Nobody completes their own.
 
-HR first checks that the draft is a `draft`, has a department, the profile
-is complete and the person is not banned, then moves it to `provisioning`
-and answers **202 Accepted** straight away. A background job then:
+With attached onboarding forms, the draft must already be
+`pending_approval` and every attached form `signed` or `waived` (see
+[Onboarding forms](onboarding-forms.md)). Onboardings with no forms may
+still Complete from `draft`.
+
+HR first checks that the draft is waiting (`draft` or `pending_approval`),
+has a department, the profile is complete and the person is not banned,
+then moves it to `provisioning` and answers **202 Accepted** straight
+away. A background job then:
 
 1. splits the planned roles into those granted now and those waiting for
    training (see [role requirements](#catalogs-and-training-requirements));

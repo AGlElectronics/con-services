@@ -26,6 +26,7 @@ profile and are always available. Each module's services sit in a
 | PostgreSQL 16 | `localhost:5432` |
 | S3 storage (SeaweedFS, service `s3`) | <https://s3.conservices.test>, direct `http://localhost:9000` (S3 API only, no web console) |
 | Mailpit | <https://mail.conservices.test>, direct <http://localhost:8025> |
+| GreenMail (Desk profile only; fake IMAP/SMTP) | SMTP `localhost:3025`, IMAP `localhost:3143`, API `localhost:8096` |
 | Adminer | <https://db.conservices.test>, direct <http://localhost:8095> |
 
 ### How the stack protects your computer
@@ -153,6 +154,8 @@ den                 main       2 0     0
     | `COMPOSE_PROFILES` | none | Profiles started without `--profile`, for example `den,events`. |
     | `DEN_MODE` | `standalone` | `required`: module APIs wait until paired with Den. |
     | `TELEGRAM_BOT_TOKEN` | empty | Bot token for Rally announcements and Learn notifications. Empty: Rally records dry runs, Learn sends nothing to Telegram. A real token is a secret; `.env` is never committed. |
+    | `TELEGRAM_DEV_CATCHALL_CHAT_ID` | empty | **Dev only** (`APP_ENV=development`). When set with the bot token, non-email notices also post to this one chat (or forum topic with `TELEGRAM_DEV_CATCHALL_THREAD_ID`), prefixed with who they were for: Tasks Inbox (assigns, …), Rally announcements, Learn Telegram, Stash Lost & Found. **Email stays on Mailpit only** — it is not mirrored to Telegram. Never set in production. |
+    | `TELEGRAM_DEV_CATCHALL_THREAD_ID` | empty | Optional forum topic id for the catch-all (from a `t.me/c/…/599` link). |
 
 3. Build and start Den with what it depends on:
 
@@ -204,6 +207,8 @@ den                 main       2 0     0
 | Start again | `docker compose --profile den start` |
 | Remove containers, keep data | `docker compose --profile den down` |
 | Start completely fresh (**deletes data**) | `docker compose --profile den down -v` |
+| Desk: seed Support + Info fake mailboxes | `docker compose --profile desk up -d` then `powershell -File scripts/seed-desk-mailboxes.ps1` |
+| Desk: inject a fake customer email | `powershell -File scripts/send-desk-test-mail.ps1` (add `-Fetch` to poll now) |
 
 Den's migrations run in the one-off `den-migrate` service on every `up`.
 After `down -v` the proxy creates a new certificate, so trust it again.

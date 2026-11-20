@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Con Services · Stats</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="grain"></div>
+    </div>
+
+    <header class="hero">
+      <p class="brand">Con Services</p>
+      <h1 class="headline">The pulse of your suite</h1>
+      <p class="lede">
+        Aggregate operational numbers each module owns — pulled on a short interval, shown as one snapshot.
+      </p>
+      <p id="updated" class="pulse" role="status">Listening…</p>
+    </header>
+
+    <section class="figures" aria-label="Snapshot figures">
+      <div class="figure">
+        <span id="reporting" class="figure-value" data-animate>—</span>
+        <span class="figure-label">Modules reporting</span>
+      </div>
+      <div class="figure">
+        <span id="metrics" class="figure-value" data-animate>—</span>
+        <span class="figure-label">Metrics in view</span>
+      </div>
+      <div class="figure">
+        <span id="count-total" class="figure-value" data-animate>—</span>
+        <span class="figure-label">Sum of counts</span>
+      </div>
+      <div class="figure figure-attention">
+        <span id="stale" class="figure-value" data-animate>—</span>
+        <span class="figure-label">Need attention</span>
+      </div>
+    </section>
+
+    <section class="board" aria-labelledby="board-title">
+      <div class="board-head">
+        <div>
+          <p class="kicker">Module aggregates</p>
+          <h2 id="board-title">Current snapshot</h2>
+        </div>
+        <p id="poll-hint" class="board-meta"></p>
+      </div>
+
+      <div id="source-list" class="source-list"></div>
+
+      <div id="empty" class="empty" hidden>
+        <p class="empty-brand">Stats</p>
+        <h3>No metric sources yet</h3>
+        <p>
+          Point Stats at module aggregate endpoints with
+          <code>STATS_SOURCES</code>, then restart the backend. Empty is expected
+          for a fresh local scaffold.
+        </p>
+      </div>
+
+      <div id="load-error" class="empty empty-error" hidden>
+        <h3>Could not reach the dashboard API</h3>
+        <p id="load-error-detail"></p>
+      </div>
+    </section>
+  </body>
+</html>

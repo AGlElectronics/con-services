@@ -201,6 +201,7 @@ In dev mode (`AUTH_MODE=dev`) skip the token and send a header instead:
 | GET | `/api/role-catalog` | anyone | [Health](#get-apirole-catalog) |
 | GET | `/api/v1/me` | signed in | [You](#you) |
 | GET, PUT | `/api/v1/me/preferences` | signed in | [You](#you) |
+| GET, PUT | `/api/v1/me/quick-links` | signed in | [You](#you) |
 | GET | `/api/v1/dashboard` | member | [You](#get-apiv1dashboard) |
 | GET | `/api/v1/portal/todos` | member | [You](#get-apiv1portaltodos) |
 | GET, POST | `/api/v1/modules` | admin | [Modules](#modules) |
@@ -410,6 +411,50 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json
 Returns the saved preferences, as `GET`. Errors: `422` with
 `details.theme = "must be system, light or dark"`.
 
+### `GET /api/v1/me/quick-links`
+
+Your personal Quick links for the portal home. **Auth:** signed in.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/me/quick-links
+```
+
+```json
+{
+  "links": [
+    {
+      "id": "0b6e2c4d-8f1a-4b3c-9d7e-5a6b7c8d9e0f",
+      "label": "HR onboarding",
+      "url": "https://hr.conservices.test/onboarding"
+    }
+  ],
+  "updated_at": "2026-11-17T12:00:00Z"
+}
+```
+
+Nothing saved yet: `{"links":[],"updated_at":null}`.
+
+### `PUT /api/v1/me/quick-links`
+
+Replace your personal Quick links. They appear **above** the service cards on
+the portal (personal shortcuts only). **Auth:** signed in.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `links` | array | yes | At most 20 items. Empty array clears them. |
+| `links[].id` | string (UUID) | no | Generated when omitted. |
+| `links[].label` | string | yes | 1–80 characters. |
+| `links[].url` | string | yes | Absolute URL under Den (`APP_BASE_URL`) or an **enabled** module `base_url`. HTTPS in production; HTTP allowed in development. No credentials or fragment. |
+
+```sh
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"links":[{"label":"HR onboarding","url":"https://hr.conservices.test/onboarding"}]}' \
+  $DEN/api/v1/me/quick-links
+```
+
+Returns the saved list, as `GET`. Errors: `422` with `details.links` when a
+URL is outside Con Services, the list is too long, or a field is invalid.
+
 ### `GET /api/v1/dashboard`
 
 Everything the portal home needs. **Auth:** member.
@@ -519,7 +564,8 @@ curl -H "Authorization: Bearer $TOKEN" $DEN/api/v1/portal/todos
 ```
 
 - Items are sorted by `due_at` (missing dates last), then severity
-  (`danger`, `warning`, `info`). Items without `id`, `title` or an
+  (`danger`, `warning`, `info`). The portal home re-ranks them by severity
+  first and shows only the top four. Items without `id`, `title` or an
   `http(s)` `url` are dropped, an unknown `severity` becomes `info`, an
   unreadable `due_at` becomes `null`; at most 50 items per module.
 - `modules[].status`: `ok`, `unsupported` (the module answered 404 or 501),

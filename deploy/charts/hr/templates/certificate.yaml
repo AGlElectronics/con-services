@@ -2,4 +2,8 @@
 {{ include "hr.certificate" (dict "root" . "name" "hr-backend") }}
 ---
 {{ include "hr.certificate" (dict "root" . "name" "hr-frontend") }}
+{{- if (.Values.sign | default dict).enabled }}
+---
+{{ include "hr.certificate" (dict "root" . "name" "hr-sign") }}
+{{- end }}
 {{- end }}

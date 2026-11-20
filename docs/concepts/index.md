@@ -34,5 +34,5 @@ used across these docs.
 
 Design that is decided but not built yet lives under
 [Proposals](../proposals/index.md). The first one is
-[Staff communications](../proposals/staff-communications.md) (Herald notices
+[Staff communications](../proposals/staff-communications.md) (Intercom notices
 and meeting cards; chat and calls stay external).

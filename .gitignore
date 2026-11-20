@@ -38,3 +38,8 @@ Thumbs.db
 /con-services-gitops/
 
 __pycache__/
+
+*.exe
+
+# Local one-off lint/trivy dumps (never commit)
+_ci-local/

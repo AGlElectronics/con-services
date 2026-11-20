@@ -11,6 +11,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Scaffold frontends (stats, intercom, feedback) use `nginx/nginx-unprivileged:1.30.7-alpine` for nginx CVE fixes.
+
+- Docs: every module that exposes Stats `GET /api/internal/stats` lists
+  `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
+  Stats setup examples use a ≥32-character development token.
+
+- Image policy docs: frontend base is `nginx/nginx-unprivileged:1.30.7-alpine`;
+  every image declares a Dockerfile `HEALTHCHECK` (distroless backends use
+  `<binary> healthcheck` → `/livez`; migrators use `HEALTHCHECK NONE`).
+
+### Fixed
+
+- HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
+  match chart `appVersion` `1.1.0` (CI chart-version check).
+- Docs links to onboarding-forms staff/public API sections use stable heading
+  anchors; `shared-go` workflow no longer uses `ls | grep` (actionlint).
+- Compose `hr-sign-frontend` builds with context `./hr` (same as CI) so
+  `sign-frontend/Dockerfile` COPY paths resolve.
+- Compose default `STATS_SERVICE_TOKEN` / `STATS_PULL_TOKEN` is now ≥32
+  characters (`change-me-dev-only-stats-pull-token-32`) so module backends
+  that validate the pull token start in local Compose.
+
+### Added
+
+- Desk development mail: GreenMail also has `info@conservices.test`
+  (password `info`). `scripts/seed-desk-mailboxes.ps1` creates durable Desk
+  IMAP mailboxes for Support and Info; `scripts/send-desk-test-mail.ps1`
+  injects a fake customer email over localhost SMTP (optional `-Fetch`).
+  The Keycloak realm adds `desk-info-*` and `desk-registration-*` groups;
+  alice is a manager of support and info. `registration@` stays free for
+  `smoke-desk.ps1`. See [Desk setup, Development on Docker](docs/modules/desk/setup.md#option-4-development-on-docker).
+- Intercom 1.1 development scaffold (renamed from Herald): Compose profile
+  `intercom`, Postgres `intercom` database, dashboard on port 3012 /
+  `https://intercom.conservices.test`, backend API on port 8171, Den
+  `DEN_PREREGISTER_MODULES` entry. Telegram `/board` (group → board chat
+  with reply-back) and `/idea` → Tasks **Intercom** / **Ideas**; module docs
+  under `docs/modules/intercom/`. Only one `getUpdates` poller may use a
+  given bot token — keep Stash L&F Telegram off on the same token while
+  Intercom runs.
+- Feedback 1.1 development scaffold: Compose profile `feedback` (also with
+  `intercom`), `https://feedback.conservices.test` / port 3014, API 8172.
+  Private Telegram `/feedback` conversation (polarity, anonymity defaults,
+  department incl. Board, optional board notify) via Intercom’s poller;
+  inbox UI under `docs/modules/feedback/`.
+- Compose **Telegram catch-all** (dev only): with `TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_DEV_CATCHALL_CHAT_ID` and optional
+  `TELEGRAM_DEV_CATCHALL_THREAD_ID`, modules post non-email notices to one
+  test chat/topic (Tasks Inbox, Rally, Learn Telegram, Stash), prefixed with
+  the intended recipient. **Email stays on Mailpit only.** Disabled outside
+  `APP_ENV=development`. Shared package `tgcatchall`.
+- Compose `hr-sign-frontend` nginx re-resolves `hr-backend` via Docker DNS
+  so signing links keep working after the backend container is recreated.
+- Stats 1.1 development scaffold: root Compose profile `stats`, local dashboard
+  on port 3011 / `https://stats.conservices.test`, backend API on port 8170,
+  Den `DEN_PREREGISTER_MODULES` entry, module documentation and the version 1
+  internal aggregate metrics pull contract. The scaffold excludes cluster
+  metrics, person-level data and public signage consumers.
+
+### Changed
+
+- Compose `hr-frontend` sets `EXTRA_FRAME_SRC=blob:` so the Forms page can
+  preview an uploaded PDF in an iframe (CSP `frame-src`).
+- HR Helm chart `1.1.0`: volunteer `hr-sign` Deployment/Service/HTTPRoute,
+  `SIGNING_PUBLIC_URL`, NetworkPolicies (sign → backend; gateway → sign).
+  Docs: onboarding forms API tables, HR index images/`S3_*`, configuration
+  `STATS_PULL_TOKEN`, secrets inventory, network-policy flows for sign-hr.
+  Chart release still follows the HR app tag (`hr/v1.1.0` when cut).
+
+### Fixed
+
+- Keycloak 26.8.2 Admin REST API audience check: `apply-mvp.sh` assigns the
+  built-in `kc-admin-api` client scope to `hr-provisioner`, `den-keycloak`
+  and `learn-provisioner`. Without it, department group sync, onboarding
+  account setup and Den realm branding all failed with 401.
+
+
+### Changed
+
+- Den docs: personal Quick links API (`GET`/`PUT /api/v1/me/quick-links`) and
+  portal to-dos showing at most four urgent items (see Den's own changelog).
+- Rally docs: public signage now/next endpoints on the published schedule
+  (see Rally's own changelog).
+
 ## [1.0.0] - 2026-11-12
 
 First release, `v1.0.0`. Den and every module (HR, Rally, Stash, Finance,

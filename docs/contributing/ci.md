@@ -105,7 +105,7 @@ built image directly (no Docker daemon needed):
 | Image | Base | Shell-less | Non-root | Why the exception |
 | --- | --- | --- | --- | --- |
 | `*-backend`, `*-migrate` | `gcr.io/distroless/static-debian12:nonroot` | Yes | Yes (`nonroot`, UID 65532) | none |
-| `*-frontend`, `rally-submit` | `nginxinc/nginx-unprivileged:1.30.6-alpine` (plus `apk upgrade`) | No | Yes (`nginx`, UID 101) | Shell only: nginx images ship one, and the image's entrypoint scripts need it. nginx listens on port 8080, because a non-root process cannot bind ports below 1024. |
+| `*-frontend`, `rally-submit`, `hr-sign` | `nginx/nginx-unprivileged:1.30.7-alpine` (plus `apk upgrade`) | No | Yes (`nginx`, UID 101) | Shell only: nginx images ship one, and the image's entrypoint scripts need it. nginx listens on port 8080, because a non-root process cannot bind ports below 1024. |
 | `den-operator` | `alpine:3.24.4` with `postgresql16-client` and `age` | No | Yes (`postgres`, UID 70) | Shell only: the PostgreSQL client tools (`pg_dump`, `pg_dumpall`, `psql`, `pg_restore`) need Alpine's libraries, and Alpine ships a shell. The operator runs `pg_dump`/`pg_dumpall` for backups; `psql`, `pg_restore` and `age` are there for restores from inside the pod. |
 
 The exceptions are declared per image in the module's `ci.yml` (no
@@ -113,9 +113,20 @@ The exceptions are declared per image in the module's `ci.yml` (no
 (`"allow-root"` is `false` or absent everywhere). Adding an exception needs
 a reason in this table.
 
+Every Dockerfile also declares a `HEALTHCHECK` (Trivy DS-0026). Frontends
+probe `http://127.0.0.1:8080/` with `wget`. Distroless backends and the Den
+operator have no curl or wget, so the binary itself answers
+`<binary> healthcheck` by calling its own `/livez`. One-shot migrators use
+`HEALTHCHECK NONE`. Kubernetes still uses its own liveness and readiness
+probes; the image instruction is for Docker / Compose and the image policy
+scan.
+
 The frontend and operator Dockerfiles run `apk upgrade --no-cache` (the
 operator gets current packages from `apk add`), so a rebuild picks up
-Alpine security fixes published after the base image was built. When the
+Alpine security fixes published after the base image was built. Distroless
+backends pick up Debian package fixes when Google publishes a newer
+`static-debian12:nonroot` digest — rebuild the image (no Dockerfile edit)
+when Code Scanning shows `tzdata` or `ca-certificates` notes. When the
 image scan fails on an Alpine package, rebuild first; bump the pinned base
 tag when a newer one is out.
 
