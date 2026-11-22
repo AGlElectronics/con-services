@@ -130,6 +130,7 @@ The backend always runs **one replica**; [why](setup.md#why-the-backend-runs-one
   trash and the Den connection.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint, with examples.
+- [Personal data](../../operations/personal-data.md#tasks): what Tasks stores, about whom and why.
 
 The plan and the decisions behind it:
 [docs/plan.md](https://github.com/AGlElectronics/tasks/blob/main/docs/plan.md).

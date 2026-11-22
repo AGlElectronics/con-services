@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Personal data inventory: [Personal data](docs/operations/personal-data.md)
+  lists, for each module, which part stores which personal data, about whom,
+  and why.
 - Desk development mail: GreenMail also has `info@conservices.test`
   (password `info`). `scripts/seed-desk-mailboxes.ps1` creates durable Desk
   IMAP mailboxes for Support and Info; `scripts/send-desk-test-mail.ps1`

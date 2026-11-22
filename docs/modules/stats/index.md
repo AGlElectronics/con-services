@@ -17,5 +17,6 @@ data, or provide a public signage feed.
   `count`.
 - Expose health checks and one dashboard endpoint.
 
-See [Setup](setup.md), [Configuration](configuration.md) and the
-[API and internal pull contract](api.md).
+See [Setup](setup.md), [Configuration](configuration.md), the
+[API and internal pull contract](api.md) and
+[Personal data](../../operations/personal-data.md#stats).

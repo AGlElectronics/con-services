@@ -27,4 +27,5 @@ people to open a private chat.
 - Web compose form / OIDC / denlink.
 - Audit unlock for anonymous notes.
 
-See [Setup](setup.md), [Configuration](configuration.md) and the [API](api.md).
+See [Setup](setup.md), [Configuration](configuration.md), the [API](api.md)
+and [Personal data](../../operations/personal-data.md#feedback).

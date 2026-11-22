@@ -140,6 +140,7 @@ In every posture the backend runs **one replica**; [why](setup.md#why-the-backen
   offboarding and the Den connection.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint, with examples.
+- [Personal data](../../operations/personal-data.md#wiki): what Wiki stores, about whom and why.
 
 Design decisions: [ADR 0001, live editing](https://github.com/AGlElectronics/wiki/blob/main/docs/adr/0001-yjs-relay-in-go.md)
 and [ADR 0002, databases](https://github.com/AGlElectronics/wiki/blob/main/docs/adr/0002-databases-as-pages.md).

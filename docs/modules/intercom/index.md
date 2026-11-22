@@ -30,5 +30,5 @@ Only **one** service may call Telegram `getUpdates` for a given bot
 token. While Intercom owns the staff bot, keep Stash Lost & Found Telegram
 off for that same token (or use a second bot for Stash).
 
-See [Setup](setup.md), [Configuration](configuration.md) and the
-[API](api.md).
+See [Setup](setup.md), [Configuration](configuration.md), the
+[API](api.md) and [Personal data](../../operations/personal-data.md#intercom).

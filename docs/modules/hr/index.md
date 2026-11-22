@@ -102,6 +102,7 @@ restrict who can read its database and backups.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.
 - [Personal data](personal-data.md): what HR stores, who sees it, retention.
+  The same list for every module is on [Personal data](../../operations/personal-data.md).
 - [Google Workspace](google-workspace.md): accounts in your Workspace domain, once a service-account key is configured.
 
 Design decisions: HR's [ADRs](https://github.com/AGlElectronics/hr/tree/main/docs/adr)

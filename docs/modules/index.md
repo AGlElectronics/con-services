@@ -34,6 +34,8 @@ also have an admin guide.
 - **A Den connection** page for pairing with Den.
 - **Isolation**: its own database login, bucket, secrets and network
   policy. See [Design principles](../concepts/design-principles.md).
+- **Its own personal data.** What each module stores, about whom and why, is
+  on [Personal data](../operations/personal-data.md).
 
 ## Running a module
 

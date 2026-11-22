@@ -110,5 +110,6 @@ The images are published with every Rally release, starting with
 - [Admin guide](admin-guide.md): roles, calls for papers, review, schedule, live day.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.
+- [Personal data](../../operations/personal-data.md#rally): what Rally stores, about whom and why.
 
 Design decisions: Rally's [ADRs](https://github.com/AGlElectronics/rally/tree/main/docs/adr).

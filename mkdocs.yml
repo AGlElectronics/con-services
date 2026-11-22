@@ -217,6 +217,7 @@ nav:
       - Databases, backups and restore: operations/databases-and-backups.md
       - Disaster recovery: operations/disaster-recovery.md
       - Logs, health and monitoring: operations/observability.md
+      - Personal data: operations/personal-data.md
       - Production and security: operations/production.md
       - Full stack on Docker: operations/docker-production.md
   - Contributing:
