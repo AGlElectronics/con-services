@@ -21,6 +21,7 @@ also have an admin guide.
 | Wiki | Knowledge base with live editing. | [Wiki](wiki/index.md) | [API](wiki/api.md) | [AGlElectronics/wiki](https://github.com/AGlElectronics/wiki) |
 | Desk | Helpdesk on shared mailboxes. | [Desk](desk/index.md) | [API](desk/api.md) | [AGlElectronics/desk](https://github.com/AGlElectronics/desk) |
 | Tasks | Task boards for the crew. | [Tasks](tasks/index.md) | [API](tasks/api.md) | [AGlElectronics/tasks](https://github.com/AGlElectronics/tasks) |
+| Stats | Aggregate operational dashboard for module-owned metrics. | [Stats](stats/index.md) | [API](stats/api.md) | [AGlElectronics/stats](https://github.com/AGlElectronics/stats) |
 
 ## What every module has in common
 
@@ -33,6 +34,8 @@ also have an admin guide.
 - **A Den connection** page for pairing with Den.
 - **Isolation**: its own database login, bucket, secrets and network
   policy. See [Design principles](../concepts/design-principles.md).
+- **Its own personal data.** What each module stores, about whom and why, is
+  on [Personal data](../operations/personal-data.md).
 
 ## Running a module
 

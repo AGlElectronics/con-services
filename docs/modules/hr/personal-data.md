@@ -5,7 +5,8 @@ personal data than any other module. This page says what it stores, who
 can see it, where it goes and when HR deletes it. It is a description of
 the software, not legal advice: check the retention periods with whoever
 is responsible for data protection in your organisation (in the EU, under
-the GDPR).
+the GDPR). The same inventory for every module is on
+[Personal data](../../operations/personal-data.md).
 
 ## What HR stores
 

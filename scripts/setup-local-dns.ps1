@@ -14,7 +14,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   return
 }
 
-$names = 'auth', 'den', 'hr', 'stash', 'events', 'learn', 'finance', 'desk', 'tasks', 'wiki', 'submit', 'mail', 's3', 'db' | ForEach-Object { "$_.conservices.test" }
+$names = 'auth', 'den', 'hr', 'sign-hr', 'stash', 'events', 'learn', 'finance', 'desk', 'tasks', 'wiki', 'submit', 'mail', 's3', 'db', 'stats' | ForEach-Object { "$_.conservices.test" }
 $hostsFile = "$env:WINDIR\System32\drivers\etc\hosts"
 $begin = '# >>> conservices local DNS'
 $end = '# <<< conservices local DNS'

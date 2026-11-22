@@ -27,8 +27,10 @@ up. If not, start with [How the platform starts](../../getting-started/how-the-p
 !!! warning "First version, not yet tested on a cluster"
     The chart `deploy/charts/hr` (released with HR as `hr/vX.Y.Z`) has not
     been installed on a real cluster yet. It ships empty image tags: set
-    the tags of `hr-backend`, `hr-migrate` and `hr-frontend` to the release
-    you install, for example `1.0.0-1` (see [Images](index.md#images)).
+    the tags of `hr-backend`, `hr-migrate`, `hr-frontend` and `hr-sign` to
+    the release you install, for example `1.0.0-1` (see [Images](index.md#images)).
+    From 1.1, set `sign.host` / `config.SIGNING_PUBLIC_URL` to your public
+    volunteer signing origin ([Onboarding forms](onboarding-forms.md)).
 
 ### 1. Register HR in Den and create its database
 
@@ -455,7 +457,7 @@ in `not_after`.
 | `networkPolicy.data.s3.external.fqdns` / `.cidrs` / `.port` | `[]` / `[]` / `443` | Egress to an external S3 such as Hetzner Object Storage (`https://<location>.your-objectstorage.com`): host names with Cilium, address ranges otherwise; see [External S3](../../operations/helm.md#external-s3-hetzner-object-storage). |
 | `networkPolicy.moduleEgressNamespaces` | every module namespace (`conservices-stash`, `-learn`, `-wiki`, `-tasks`, `-desk`, `-finance`, `-rally`) | Module backends HR may call on 8080 (role catalogs, Learn holdings, hooks). |
 | `networkPolicy.allowFromNamespaces` | `[conservices-wiki]` | Module backends allowed to call HR's backend (the Wiki's group directory). |
-| `frontend.securityHeaders.keycloakOrigin` (and `denOrigin`, `s3Origin`, `extraConnectSrc`) | `https://auth.conservices.test`, empty, empty, empty | Origins the browser may call besides HR, passed as env to the web app. The nginx snippet is filled when the container starts; the chart never writes a filled-in copy. Address search is proxied, so Photon is not an origin. |
+| `frontend.securityHeaders.keycloakOrigin` (and `denOrigin`, `s3Origin`, `extraConnectSrc`, `extraFrameSrc`) | `https://auth.conservices.test`, empty, empty, empty, `blob:` | Origins / frame sources the browser may use besides HR, passed as env to the web app. `extraFrameSrc: blob:` lets the Forms page preview an uploaded PDF in an iframe. The nginx snippet is filled when the container starts; the chart never writes a filled-in copy. Address search is proxied, so Photon is not an origin. |
 | `networkPolicy.addressLookup.enabled` / `.fqdns` | `true` / `[photon.komoot.io]` | Egress from the backend to Photon for address suggestions. |
 | `googleWorkspace.enabled`, `googleWorkspace.existingSecret` | `false`, `hr-google-workspace` | Mounts the Google service-account key (key `credentials.json`) at `/etc/conservices-google` and sets `GOOGLE_WORKSPACE_CREDENTIALS_FILE`. The connector is then available in Settings. See [Google Workspace](google-workspace.md). |
 | `networkPolicy.googleApis.fqdns` / `.cidrs` / `.port` | `[admin.googleapis.com, oauth2.googleapis.com]` / `[]` / `443` | Egress to Google's APIs, only with `googleWorkspace.enabled`: host names with Cilium (`CiliumNetworkPolicy` `hr-google-apis`), address ranges otherwise. |

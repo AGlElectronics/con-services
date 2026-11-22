@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Con Services · Intercom</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="grain"></div>
+    </div>
+
+    <header class="hero">
+      <p class="brand">Con Services</p>
+      <h1 class="headline">Intercom</h1>
+      <p class="lede">
+        Staff Telegram bridge: <code>/board</code> to the board chat,
+        <code>/idea</code> into Tasks → Intercom → Ideas, reply-back when the board answers.
+      </p>
+      <p id="status" class="pulse" role="status">Connecting…</p>
+    </header>
+
+    <section class="panel" aria-labelledby="board-heading">
+      <h2 id="board-heading">Recent board questions</h2>
+      <ul id="relays" class="list"></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="ideas-heading">
+      <h2 id="ideas-heading">Recent ideas</h2>
+      <ul id="ideas" class="list"></ul>
+    </section>
+  </body>
+</html>

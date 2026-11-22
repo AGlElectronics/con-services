@@ -126,6 +126,7 @@ nav:
           - modules/hr/index.md
           - Setup: modules/hr/setup.md
           - Admin guide: modules/hr/admin-guide.md
+          - Onboarding forms: modules/hr/onboarding-forms.md
           - Configuration: modules/hr/configuration.md
           - API reference: modules/hr/api.md
           - Personal data: modules/hr/personal-data.md
@@ -179,6 +180,21 @@ nav:
           - Admin guide: modules/tasks/admin-guide.md
           - Configuration: modules/tasks/configuration.md
           - API reference: modules/tasks/api.md
+      - Stats:
+          - modules/stats/index.md
+          - Setup: modules/stats/setup.md
+          - Configuration: modules/stats/configuration.md
+          - API and pull contract: modules/stats/api.md
+      - Intercom:
+          - modules/intercom/index.md
+          - Setup: modules/intercom/setup.md
+          - Configuration: modules/intercom/configuration.md
+          - API: modules/intercom/api.md
+      - Feedback:
+          - modules/feedback/index.md
+          - Setup: modules/feedback/setup.md
+          - Configuration: modules/feedback/configuration.md
+          - API: modules/feedback/api.md
   - Deploy with Argo CD:
       - deploy/index.md
       - Prerequisites: deploy/prerequisites.md
@@ -201,6 +217,7 @@ nav:
       - Databases, backups and restore: operations/databases-and-backups.md
       - Disaster recovery: operations/disaster-recovery.md
       - Logs, health and monitoring: operations/observability.md
+      - Personal data: operations/personal-data.md
       - Production and security: operations/production.md
       - Full stack on Docker: operations/docker-production.md
   - Contributing:

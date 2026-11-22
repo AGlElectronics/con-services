@@ -35,8 +35,9 @@ Roles and pages: [Admin guide](admin-guide.md#roles).
 - **Own chart.** [`deploy/charts/hr`](https://github.com/AGlElectronics/con-services/tree/main/deploy/charts/hr)
   (first version; see [Setup](setup.md)). There are no Kustomize manifests
   for HR.
-- **Own data.** Its own PostgreSQL database (`hr`, created by Den). HR
-  stores **no files** yet; the storage settings are read but optional.
+- **Own data.** Its own PostgreSQL database (`hr`, created by Den). Form
+  PDF versions for [onboarding forms](onboarding-forms.md) live in HR’s
+  own object-storage bucket (`S3_*`).
 - **Talks only over HTTP.** HR calls more of the platform than any other
   module, and each call needs a NetworkPolicy rule on both sides:
 
@@ -83,10 +84,12 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
 | --- | --- | --- |
 | `ghcr.io/aglelectronics/hr-backend:<tag>` | `infra/Dockerfile.backend` | API server `/server`, port 8080. |
 | `ghcr.io/aglelectronics/hr-migrate:<tag>` | `infra/Dockerfile.migrate` | One-shot migrator `/migrate`; needs only `DATABASE_URL`. |
-| `ghcr.io/aglelectronics/hr-frontend:<tag>` | `infra/Dockerfile.frontend` | Web app on nginx (non-root as UID 101, port 8080; the chart mounts its own config). |
+| `ghcr.io/aglelectronics/hr-frontend:<tag>` | `infra/Dockerfile.frontend` | Staff web app on nginx (non-root as UID 101, port 8080; the chart mounts its own config). |
+| `ghcr.io/aglelectronics/hr-sign:<tag>` | `sign-frontend/Dockerfile` | Volunteer signing UI (sign-hr); proxies only public signing and brand APIs. |
 
-Use the same tag for all three ([Versions and upgrades](../../operations/versioning.md)).
-The images are published with every HR release, starting with `1.0.0-1`.
+Use the same tag for all four ([Versions and upgrades](../../operations/versioning.md)).
+The images are published with every HR release, starting with `1.0.0-1`
+(sign from the 1.1 line onward).
 
 HR holds personal data (addresses, dates of birth, emergency contacts):
 restrict who can read its database and backups.
@@ -95,9 +98,11 @@ restrict who can read its database and backups.
 
 - [Setup](setup.md): install HR in each posture.
 - [Admin guide](admin-guide.md): roles, onboarding, review queue, imports, offboarding, departments, settings.
+- [Onboarding forms](onboarding-forms.md): versioned PDFs, send for signing, sign-hr, Approve.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint.
 - [Personal data](personal-data.md): what HR stores, who sees it, retention.
+  The same list for every module is on [Personal data](../../operations/personal-data.md).
 - [Google Workspace](google-workspace.md): accounts in your Workspace domain, once a service-account key is configured.
 
 Design decisions: HR's [ADRs](https://github.com/AGlElectronics/hr/tree/main/docs/adr)

@@ -54,7 +54,7 @@ After changing the Secret: `kubectl rollout restart -n conservices-tasks deploy/
 | `S3_SECRET_ACCESS_KEY` | none | with S3 | **yes** | Secret for the key. |
 | `S3_REGION` | `us-east-1` | no | no | Region of the bucket. |
 | `S3_USE_PATH_STYLE` | `true` | no | no | `true` for the local S3 server (SeaweedFS) and most self-hosted S3. |
-| `TASKS_PUBLIC_URL` | none | no | no | The web app's address, for example `https://tasks.example.org`; links in notification emails point there. Empty: emails name the task key without a link. |
+| `TASKS_PUBLIC_URL` | none (falls back to `APP_BASE_URL`) | no | no | The web app's address, for example `https://tasks.example.org`; links in notification emails and Den portal to-dos point there. When empty, Tasks uses `APP_BASE_URL` so Den still gets clickable to-dos. |
 | `SMTP_HOST` | none | no | no | Mail server for [email notifications](#email) when Den sends none. Empty: no email unless Den provides SMTP. |
 | `SMTP_PORT` | `587` (`465` with `tls`) | no | no | Port of the mail server. |
 | `SMTP_USERNAME` | none | no | **yes** | Login, if the server needs one. |

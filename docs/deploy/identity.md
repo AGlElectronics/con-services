@@ -88,7 +88,11 @@ grant
 ([How groups are matched](../concepts/authentication.md#how-groups-are-matched)).
 `rally-submit` has no `groups` mapper. The confidential clients
 (`den-keycloak`, `hr-provisioner`, `learn-provisioner`) have no audience
-mapper.
+mapper. From Keycloak 26.8.2 they need the built-in `kc-admin-api` client
+scope as a **default** scope so their service-account tokens pass the
+Admin REST API audience check; `infra/keycloak/apply-mvp.sh` assigns it.
+Without that scope, HR department sync and onboarding account setup, and
+Den's realm branding sync, all answer `401 Unauthorized`.
 
 `bootstrap/scripts/keycloak-realm.py` writes both into every realm it
 generates. A realm Keycloak has already imported keeps the mappers it

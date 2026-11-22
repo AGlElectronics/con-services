@@ -54,6 +54,12 @@
     { "name": "desk-support-viewer", "path": "/desk-support-viewer" },
     { "name": "desk-support-manager", "path": "/desk-support-manager" },
     { "name": "desk-support-delete", "path": "/desk-support-delete" },
+    { "name": "desk-info-viewer", "path": "/desk-info-viewer" },
+    { "name": "desk-info-manager", "path": "/desk-info-manager" },
+    { "name": "desk-info-delete", "path": "/desk-info-delete" },
+    { "name": "desk-registration-viewer", "path": "/desk-registration-viewer" },
+    { "name": "desk-registration-manager", "path": "/desk-registration-manager" },
+    { "name": "desk-registration-delete", "path": "/desk-registration-delete" },
     { "name": "tasks-admin", "path": "/tasks-admin" },
     { "name": "tasks-creator", "path": "/tasks-creator" },
     { "name": "wiki-admin", "path": "/wiki-admin" },
@@ -83,7 +89,7 @@
       "credentials": [
         { "type": "password", "value": "alicealice", "temporary": false }
       ],
-      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-support-manager", "/tasks-creator", "/wiki-editor", "/finance_approver"],
+      "groups": ["/stash-admin", "/events-admin", "/den-admin", "/den-member", "/learn-trainer", "/desk-support-manager", "/desk-info-manager", "/tasks-creator", "/wiki-editor", "/finance_approver"],
       "realmRoles": ["member"]
     },
     {

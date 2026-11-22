@@ -13,16 +13,21 @@ image:
   backend:
     repository: ghcr.io/aglelectronics/hr-backend
     # MAJOR.MINOR.PATCH-BUILD. Never "latest". Use the same tag for all three.
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
   frontend:
     repository: ghcr.io/aglelectronics/hr-frontend
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
+    pullPolicy: IfNotPresent
+  # Volunteer signing UI (sign-hr). Same release tag as the other three.
+  sign:
+    repository: ghcr.io/aglelectronics/hr-sign
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
   # One-shot migrator (/migrate). Runs as an initContainer of the backend.
   migrate:
     repository: ghcr.io/aglelectronics/hr-migrate
-    tag: "1.0.0-1"
+    tag: "1.1.0-1"
     pullPolicy: IfNotPresent
 
 # Existing Secret (from your secret manager). Keys HR reads from it:
@@ -40,7 +45,9 @@ image:
 #                                     and access groups with it (>= 16 chars)
 #   SMTP_PASSWORD                     optional; used only when Den sets no
 #                                     mail server (otherwise HR fetches it)
-#   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY  optional (HR stores no files yet)
+#   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY  form PDF versions (onboarding forms)
+#   STATS_PULL_TOKEN                        optional; Stats GET /api/internal/stats
+#                                           (>= 32 characters when set)
 # This chart never creates Secrets.
 existingSecret: hr-secrets
 
@@ -63,6 +70,9 @@ config:
   # accounts (brokered or existing convention IdP). off: records only.
   IDP_PROVISIONER_MODE: manage
   CORS_ALLOWED_ORIGINS: https://hr.conservices.test
+  # Public HTTPS origin volunteers open for onboarding forms (no trailing slash).
+  # Must match sign.host / the public DNS for hr-sign.
+  SIGNING_PUBLIC_URL: https://sign-hr.conservices.test
   # Proxies whose X-Forwarded-For is believed when working out the client IP
   # (Gateway, nginx). Add a proxy that sits outside these ranges.
   TRUSTED_PROXY_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
@@ -187,14 +197,30 @@ frontend:
   # security-headers snippet when the container starts. Scheme + host, no
   # path. Address search is proxied through HR, so Photon is not listed:
   # connect-src 'self' already allows it. Set extraConnectSrc only if the
-  # browser itself calls another host. extraFrameSrc stays empty: HR
-  # does not frame sandboxed HTML (Desk sets about:srcdoc).
+  # browser itself calls another host. extraFrameSrc is blob: so the Forms
+  # page can preview an uploaded PDF in an iframe (blob: URL).
   securityHeaders:
     keycloakOrigin: https://auth.conservices.test
     denOrigin: ""
     s3Origin: ""
     extraConnectSrc: ""
-    extraFrameSrc: ""
+    extraFrameSrc: "blob:"
+
+# Volunteer signing host (sign-hr). Proxies only /api/public/signing/ and
+# /api/brand to hr-backend. Set config.SIGNING_PUBLIC_URL to the same public
+# origin. Docs: onboarding forms.
+sign:
+  enabled: true
+  replicas: 2
+  port: 8080
+  terminationGracePeriodSeconds: 30
+  preStopSleepSeconds: 5
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+  host: sign-hr.conservices.test
+  # Plain Ingress for sign-hr when ingress.enabled (staff host uses ingress.host).
+  ingressHost: sign-hr.conservices.test
 
 # Gateway API (recommended). Renders an HTTPRoute for the web app and, with
 # internalTLS.enabled, a BackendTLSPolicy so the gateway talks HTTPS to the

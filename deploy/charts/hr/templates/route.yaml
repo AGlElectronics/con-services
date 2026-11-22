@@ -4,4 +4,12 @@
 ---
 {{ include "hr.backendTLSPolicy" (dict "root" . "service" "hr-frontend") }}
 {{- end }}
+{{- if (.Values.sign | default dict).enabled }}
+---
+{{ include "hr.httpRoute" (dict "root" . "name" "hr-sign" "host" .Values.sign.host "service" "hr-sign") }}
+{{- if .Values.internalTLS.enabled }}
+---
+{{ include "hr.backendTLSPolicy" (dict "root" . "service" "hr-sign") }}
+{{- end }}
+{{- end }}
 {{- end }}

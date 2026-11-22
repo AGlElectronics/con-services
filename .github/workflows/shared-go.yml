@@ -63,7 +63,14 @@ jobs:
           scratch="$RUNNER_TEMP/scratch/backend"
           mkdir -p "$scratch"
           printf 'module example.org/scratch/backend\n\ngo %s\n' "$(awk '$1 == "go" { print $2 }' shared/go/go.mod)" > "$scratch/go.mod"
-          bash scripts/sync-shared.sh --backend-dir "$scratch" --packages "$(ls shared/go | grep -v '\.' | paste -sd, -)"
+          packages=()
+          for dir in shared/go/*/; do
+            [ -d "$dir" ] || continue
+            packages+=("$(basename "$dir")")
+          done
+          IFS=,
+          bash scripts/sync-shared.sh --backend-dir "$scratch" --packages "${packages[*]}"
+          unset IFS
           bash scripts/sync-shared.sh --backend-dir "$scratch" --check
           cd "$scratch"
           go mod tidy

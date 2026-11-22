@@ -232,7 +232,10 @@ The Den pairing endpoints use their own codes (`pairing_failed`,
 | GET, POST | `/api/v1/public-api-keys` | `schedule.publish` | [API keys](#public-schedule-api-keys) |
 | DELETE | `/api/v1/public-api-keys/{key}` | `schedule.publish` | [API keys](#public-schedule-api-keys) |
 | GET | `/api/public/v1/calls`, `/calls/{cfp}` | public | [Submission site](#submission-site-api) |
-| GET | `/api/public/v1/schedules`, `/schedules/{edition}`, `/schedules/{edition}/calendar.ics` | API key | [Public schedule](#public-schedule-api) |
+| GET | `/api/public/v1/schedules`, `/schedules/{edition}`, `/schedules/{edition}/calendar.ics`, `/schedules/{edition}/signage`, `/schedules/{edition}/rooms/{room}/signage` | API key | [Public schedule](#public-schedule-api) |
+| GET, POST | `/api/v1/editions/{edition}/tags` | programme staff / `schedule.edit` | [Tags](#staff-approved-tags) |
+| POST, DELETE | `/api/v1/tags/{tag}/approve`, `/reject`, `/tags/{tag}` | `tag.approve` | [Tags](#staff-approved-tags) |
+| GET | `/api/v1/schedule-items/{item}/revisions`, `/revisions/{revision}` | programme staff | [Item revisions](#per-item-revision-history) |
 | GET | `/api/public/v1/me`, `/api/public/v1/submissions` | attendee | [Submission site](#submission-site-api) |
 | POST | `/api/public/v1/calls/{cfp}/submissions` | attendee | [Submission site](#submission-site-api) |
 | GET, PATCH | `/api/public/v1/submissions/{submission}` | attendee | [Submission site](#submission-site-api) |
@@ -1173,6 +1176,55 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application
 
 ---
 
+## Staff-approved tags
+
+Organisation-scoped tags. Anyone with `schedule.edit` may **propose**;
+staff with `tag.approve` **approve** or **reject** once. Autocomplete
+(`?q=`) returns approved tags. Attach approved tags to schedule items with
+`tag_ids` on create/patch.
+
+### `GET /api/v1/editions/{edition}/tags`
+
+Optional `status` (`proposed`, `approved`, `rejected`) and `q` (prefix).
+When `q` is set and `status` is empty, only approved tags are returned.
+**Access:** programme staff.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$RALLY/api/v1/editions/$EDITION/tags?q=fur&status=approved"
+```
+
+### `POST /api/v1/editions/{edition}/tags`
+
+Propose a tag. Body: `{"name":"Fursuit lounge"}`. **Access:** `schedule.edit`.
+**201** (or **200**-shaped body of an existing tag with the same name).
+
+### `POST /api/v1/tags/{tag}/approve` / `…/reject`
+
+Optional `{"note":"…"}`. **Access:** `tag.approve`.
+
+### `DELETE /api/v1/tags/{tag}`
+
+**Access:** `tag.approve`. **204**; **409** if still attached to items.
+
+## Per-item revision history
+
+Separate from [publish versions](#publishing-and-versions). Every create,
+update, delete, live-day change and restore of a schedule item leaves a row.
+
+### `GET /api/v1/schedule-items/{item}/revisions`
+
+Newest first. **Access:** programme staff. Works even after the item was deleted.
+
+### `GET /api/v1/schedule-items/{item}/revisions/{revision}`
+
+One revision with `before` / `after` JSON snapshots.
+
+Schedule settings also carry a **preview window**
+(`preview_opens_at`, `preview_closes_at`, `preview_public_url`) and a
+computed `preview_open` flag. Put `preview_public_url` in a Den quick link
+when the draft should be shareable read-only during that window.
+
 ## Publishing and versions
 
 ### `POST /api/v1/editions/{edition}/schedule/publish`
@@ -1303,19 +1355,36 @@ every result has `"dry_run": true` and nothing is posted. **409**
 
 | Endpoint | Access | Notes |
 | --- | --- | --- |
-| `GET /api/v1/editions/{edition}/telegram-chats` | programme staff | `{"items":[{"id","edition_id","name","chat_id","enabled","created_at"}]}` |
+| `GET /api/v1/editions/{edition}/telegram-chats` | programme staff | `{"items":[{"id","edition_id","name","chat_id","message_thread_id","enabled","created_at"}]}` |
 | `POST /api/v1/editions/{edition}/telegram-chats` | `schedule.publish` | **201** |
 | `PUT /api/v1/telegram-chats/{chat}` | `schedule.publish` | Full replace. |
 | `DELETE /api/v1/telegram-chats/{chat}` | `schedule.publish` | **204** |
 
 Body: `name` (required), `chat_id` (required: a number such as
-`-1001234567890` or `@channelname`, no spaces, unique per edition),
-`enabled` (bool).
+`-1001234567890` or `@channelname`, no spaces), `message_thread_id`
+(optional positive integer: a **forum topic** id; omit or `null` for the
+whole chat / General), `enabled` (bool). The pair
+`(chat_id, message_thread_id)` is unique per edition, so the same group
+can be listed once per topic.
+
+A topic link such as `https://t.me/c/3787521365/599` means chat id
+`-1003787521365` and `message_thread_id` `599`.
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   $RALLY/api/v1/editions/00000000-0000-0000-0000-000000000030/telegram-chats \
   -d '{"name":"Attendees channel","chat_id":"@examplecon_live","enabled":true}'
+```
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  $RALLY/api/v1/editions/00000000-0000-0000-0000-000000000030/telegram-chats \
+  -d '{"name":"Crew topic","chat_id":"-1003787521365","message_thread_id":599,"enabled":true}'
+```
+
+```json
+{"id":"…","edition_id":"00000000-0000-0000-0000-000000000030","name":"Crew topic",
+ "chat_id":"-1003787521365","message_thread_id":599,"enabled":true,"created_at":"…"}
 ```
 
 ---
@@ -1472,6 +1541,84 @@ SUMMARY:Soldering for beginners
 …
 END:VCALENDAR
 ```
+
+### `GET /api/public/v1/schedules/{edition}/signage`
+
+Now/next view of the **published** programme for digital signage screens.
+Same auth and public-schedule switch as the full schedule. Served only over
+**HTTPS** at the edge (TLS terminates at the gateway). Staff-only items are
+omitted. **Access:** public API key.
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `next` | `3` | Upcoming items per room (1–10). |
+| `at` | now | RFC3339 timestamp for testing; omit in production. |
+
+```sh
+curl -s -H "Authorization: Bearer rsk_change-me" \
+  "$RALLY/api/public/v1/schedules/next/signage"
+```
+
+```json
+{
+  "edition": {
+    "id": "00000000-0000-0000-0000-000000000030",
+    "slug": "next",
+    "title": "Example Con 2027",
+    "timezone": "Europe/Berlin"
+  },
+  "version": 4,
+  "published_at": "2026-11-10T18:00:00Z",
+  "as_of": "2026-11-17T12:00:00Z",
+  "rooms": [
+    {
+      "id": "00000000-0000-0000-0000-000000000040",
+      "name": "Main hall",
+      "capacity": 200,
+      "current": {
+        "id": "00000000-0000-0000-0000-000000000050",
+        "title": "Opening ceremony",
+        "starts_at": "2026-11-17T11:30:00Z",
+        "ends_at": "2026-11-17T12:30:00Z",
+        "room_id": "00000000-0000-0000-0000-000000000040",
+        "room": "Main hall",
+        "status": "scheduled",
+        "people": ["Alex"]
+      },
+      "next": [
+        {
+          "id": "00000000-0000-0000-0000-000000000051",
+          "title": "Soldering for beginners",
+          "starts_at": "2026-11-17T13:00:00Z",
+          "ends_at": "2026-11-17T14:00:00Z",
+          "room_id": "00000000-0000-0000-0000-000000000040",
+          "room": "Main hall",
+          "status": "scheduled",
+          "people": ["Sam"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+`Cache-Control: private, max-age=15` with an ETag that includes a 15-second
+time bucket (so screens pick up the next slot promptly). Errors: same as the
+full schedule (`404` when unpublished or switched off, `401` without a key),
+plus `422` when `next` or `at` is invalid.
+
+### `GET /api/public/v1/schedules/{edition}/rooms/{room}/signage`
+
+The same now/next shape for **one** room. `{room}` is the room id or exact
+room name.
+
+```sh
+curl -s -H "Authorization: Bearer rsk_change-me" \
+  "$RALLY/api/public/v1/schedules/next/rooms/Main%20hall/signage"
+```
+
+Returns one `SignageRoom` object (`id`, `name`, `capacity`, `current`,
+`next`).
 
 !!! warning "Keys in URLs"
     A `?key=` value ends up in proxy logs and browser history. Give
