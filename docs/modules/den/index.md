@@ -91,6 +91,7 @@ Den is published as three images, all with the same tag for a release (see
   administrator's point of view.
 - [Configuration](configuration.md): every environment variable Den reads.
 - [API reference](api.md): every HTTP endpoint, with examples.
+- [Personal data](../../operations/personal-data.md#den): what Den stores, about whom and why.
 
 New to Den? Try it with [Run Den on Kubernetes](../../getting-started/den-quickstart.md),
 a local trial cluster. For production, Den is installed with the other

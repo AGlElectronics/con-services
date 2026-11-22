@@ -130,5 +130,6 @@ Tags have the form `MAJOR.MINOR.PATCH-BUILD`, for example `1.0.0-1`; see
 - [Volunteer and front-desk guide](volunteer-guide.md): scanning, labels, signing gear out and back in, packing lists, Lost & Found.
 - [Configuration](configuration.md): every environment variable, the access config file, settings Den manages.
 - [API reference](api.md): every HTTP endpoint.
+- [Personal data](../../operations/personal-data.md#stash): what Stash stores, about whom and why.
 
 Design decisions: Stash's [ADRs](https://github.com/AGlElectronics/stash/tree/main/docs/adr).

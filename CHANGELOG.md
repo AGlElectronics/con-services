@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Personal data inventory: [Personal data](docs/operations/personal-data.md)
+  lists, for each module, which part stores which personal data, about whom,
+  and why.
+
 ## [1.0.0] - 2026-11-12
 
 First release, `v1.0.0`. Den and every module (HR, Rally, Stash, Finance,

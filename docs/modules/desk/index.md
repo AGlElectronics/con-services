@@ -135,3 +135,4 @@ The backend always runs **one replica**: it fetches the mailboxes itself.
 - [Configuration](configuration.md): every environment variable.
 - [API reference](api.md): every HTTP endpoint, with permissions, bodies,
   errors and `curl` examples.
+- [Personal data](../../operations/personal-data.md#desk): what Desk stores, about whom and why.

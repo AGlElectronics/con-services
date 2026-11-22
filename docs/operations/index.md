@@ -21,6 +21,7 @@ Den comes first, then each module.
 | Set up backups and restore a database | [Databases, backups and restore](databases-and-backups.md) |
 | Recover from a lost server, cluster or key | [Disaster recovery](disaster-recovery.md) |
 | Read logs, check health, set up alerts | [Logs, health and monitoring](observability.md) |
+| See what personal data each module stores, and why | [Personal data](personal-data.md) |
 | Prepare for real users (Gateway address, managed S3, hardening) | [Production and security](production.md) |
 | Run on one server without Kubernetes | [Full stack on Docker](docker-production.md) |
 | Fix a problem | [Troubleshooting](../getting-started/troubleshooting.md), and the Troubleshooting section at the end of every page here |
@@ -46,6 +47,8 @@ Den comes first, then each module.
   loss, and how to rehearse them.
 - [Logs, health and monitoring](observability.md): health endpoints, log
   format, what to scrape and which alerts to set.
+- [Personal data](personal-data.md): for each module, which part stores
+  which personal data, about whom, and why.
 - [Production and security](production.md): the production shape (the
   Gateway and its address, Cilium, managed S3), the go-live procedure and
   a checklist.

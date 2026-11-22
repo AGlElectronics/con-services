@@ -128,3 +128,4 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
   closing months, step by step.
 - [API reference](api.md): all 48 HTTP endpoints, with permissions, bodies,
   errors and `curl` examples.
+- [Personal data](../../operations/personal-data.md#finance): what Finance stores, about whom and why.

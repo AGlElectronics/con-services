@@ -144,6 +144,7 @@ A local Kubernetes cluster (the [quickstart](../../getting-started/den-quickstar
   sessions, media, qualifications, paths, group sync, reports, and the
   HR and portal contracts), with permissions, bodies, errors and `curl`
   examples.
+- [Personal data](../../operations/personal-data.md#learn): what Learn stores, about whom and why.
 
 The domain rules (who may do what, how completion and qualifications work)
 are in [docs/domain.md](https://github.com/AGlElectronics/learn/blob/main/docs/domain.md).
