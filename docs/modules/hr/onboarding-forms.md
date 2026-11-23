@@ -48,12 +48,9 @@ trailing slash), for example `https://sign-hr.example.org`.
 
 5. **Volunteer opens sign-hr**  
    No staff login. The page follows Den branding (`GET /api/brand`) and
-   shows the form name, version, and a **filled** PDF: AcroForm fields
-   are set from the volunteer’s person record using the **field → HR
-   attribute** mappings published on that form version. Preview and
-   **Download filled PDF** use the same filled bytes. **Sign** is a
-   **stub button** (stand-in for a future e-sign provider API). Clicking
-   it marks that document `signed`.
+   shows the form name and version. **Continue to sign** opens that
+   submission’s page on DocuSeal. DocuSeal tells HR, by webhook, when the
+   person has signed. HR does not mark the document signed from the button.
 
 6. **HR notification**  
    When every attached form is `signed` or `waived`, HR admins receive an
@@ -108,7 +105,14 @@ The Documents UI and the sign-hr page show names like `NDA · v3`.
 
 | Name | Default | Notes |
 | --- | --- | --- |
-| `SIGNING_PUBLIC_URL` | `https://sign-hr.conservices.test` | Public volunteer origin (HTTPS in production); no trailing slash; used in emails |
+| `SIGNING_PUBLIC_URL` | `https://sign-hr.conservices.test` | Public volunteer origin (HTTPS in production); no trailing slash; used in emails. Live example: `https://sign-hr.taire.gay` |
+| `DOCUSEAL_API_URL` | empty | DocuSeal HR calls. Compose: `http://docuseal:3000`. Cloud Pro: `https://api.docuseal.com` or `https://api.docuseal.eu` |
+| `DOCUSEAL_PUBLIC_URL` | empty | Origin the browser opens for the framed builder and the signing page. Compose: `https://docuseal.conservices.test`. Self-hosted Pro also uses this host for the embedded builder |
+| `DOCUSEAL_API_TOKEN` | empty | **Secret.** API token from DocuSeal → Settings → API. Created after the first login |
+| `DOCUSEAL_ADMIN_EMAIL` | empty | Email of the DocuSeal user who owns the API token. Required for the embedded builder outside development |
+| `DOCUSEAL_EMBED` | empty | `true` for self-hosted Pro. `false` to keep the framed page. Empty embeds only when the API URL is Cloud Pro |
+| `DOCUSEAL_WEBHOOK_SECRET` | empty | **Secret.** Checked on the completion webhook |
+| `DOCUSEAL_BACKUP_KEY` | empty | **Secret.** Base64 of 32 bytes. Encrypts the backup copy of the signed PDF and audit log |
 | `SMTP_*` / Den `smtp.*` | — | Required to send sign links |
 | `S3_*` | — | Required to store form PDFs |
 | `onboarding_auto_delete_days` | `30` | HR setting; overridden by Den when set |
@@ -151,6 +155,7 @@ Staff need `settings.manage` to write forms and `people.read` to read them.
 | `PUT` | `/api/document-templates/{id}` | `settings.manage` (global) | Rename / metadata |
 | `DELETE` | `/api/document-templates/{id}` | `settings.manage` (global) | Delete if unused |
 | `GET` | `/api/document-templates/{id}/versions` | `people.read` | Version history |
+| `GET` | `/api/document-templates/{id}/docuseal` | `people.read` | Builder status. `embed` is present on Pro |
 | `POST` | `/api/document-templates/{id}/versions` | `settings.manage` (global) | Multipart: `file`, optional `fields` JSON, `change_note` |
 
 ```bash
@@ -166,6 +171,26 @@ curl -sS -X POST "$HR/api/document-templates/inspect" \
     { "name": "DateOfBirth", "type": "text" },
     { "name": "Agree", "type": "checkbox" }
   ]
+}
+```
+
+```bash
+curl -sS "$HR/api/document-templates/$TEMPLATE_ID/docuseal" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+On the local open-source DocuSeal, `embed` is absent and `public_url` is the framed site. On Cloud Pro in Virginia, `host` is omitted (the builder's default). On `docuseal.eu`, `host` is `docuseal.eu`. The token is a short-lived JWT signed with the API token. It is not the API token.
+
+```json
+{
+  "configured": true,
+  "public_url": "https://docuseal.eu",
+  "builder_url": "https://docuseal.eu/templates/12/edit",
+  "eidas": false,
+  "embed": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example.signature",
+    "host": "docuseal.eu"
+  }
 }
 ```
 
@@ -255,8 +280,69 @@ open; **429** rate limited.
 | Cannot Approve | Attached forms still not `signed` or `waived`, or draft never reached `pending_approval` |
 | Draft vanished | Auto-delete days elapsed while still `draft` |
 
-## Out of scope (this version)
+## DocuSeal
 
-A real e-sign provider (DocuSeal, Documenso, QTSP, …) is **not** integrated.
-The **Sign** button marks the session signed for workflow only; treat it as
-a stub until a provider is connected.
+A form is a DocuSeal template. **Forms** is a full-height workspace: the
+library stays on the left, and the builder fills the rest of the page.
+
+The local Compose DocuSeal is a **development** copy. It is the open-source
+image, so it has no embedded-builder license and it can only produce **SES**.
+HR frames that site edge to edge. Its own pages stay DocuSeal's, including
+the logo and the purple buttons. Set `DOCUSEAL_ADMIN_EMAIL` only when you
+move to Pro.
+
+The standard deployment is **DocuSeal Pro**. HR then mounts DocuSeal's
+embedded form builder in that same workspace and themes it to HR (light and
+dark, indigo actions, Inter). Send and Sign yourself are hidden, because HR
+sends the form. Saving in the builder stores the template id, so staff do
+not copy it by hand. Staff still sign in to HR with the same SSO as the
+other modules. The builder JWT is minted by HR. It names
+`DOCUSEAL_ADMIN_EMAIL` (the DocuSeal user who owns the API token) and the
+staff member's email, and it expires after 12 hours.
+
+Cloud Pro turns the embed on by itself. A DocuSeal you run needs
+`DOCUSEAL_EMBED=true` and a Pro license, plus that origin on the HR
+frontend's `EXTRA_CONNECT_SRC` and `EXTRA_FRAME_SRC`. Virginia loads
+`https://cdn.docuseal.com/js/builder.js`. Ireland loads
+`https://cdn.docuseal.eu/js/builder.js`, and that file then loads the rest
+from `https://docuseal.eu`. Both origins belong in `script-src`
+(`EXTRA_SCRIPT_SRC`). The page preview is an image. Ireland serves it from
+`https://docuseal-eu.s3.eu-west-1.amazonaws.com`, so `img-src` allows that
+host too (`EXTRA_IMG_SRC`). AES and QES exist only on the Pro service at `docuseal.eu`.
+
+**Publish** stores the DocuSeal template id and the signature level.
+The PDF itself stays in DocuSeal.
+
+HR calls one API. `DOCUSEAL_API_URL` is the DocuSeal we run (`http://docuseal:3000`
+in Compose), `https://api.docuseal.com` (Cloud Pro, Virginia), or
+`https://api.docuseal.eu` (Cloud Pro, Ireland). Cloud Basic cannot be used:
+it has no production API and no webhooks, and it sends only 10 signature
+emails a month.
+
+| Level | What it is | When Send works |
+| --- | --- | --- |
+| SES | The volunteer signs and DocuSeal seals the PDF with its server certificate. On the free image that certificate is created at first start (self-signed) unless you upload your own. This is the signature US law (ESIGN and, in most states, UETA) treats as an electronic signature. | Local DocuSeal, or Cloud Pro on `docuseal.com` or `docuseal.eu` |
+| AES | The signer is identified by a provider, and the signing key is under the signer’s control. DocuSeal sells this only on `docuseal.eu`, at **$2** per signature. The PDF and the signer’s identity leave the cluster. The form builder does not create an AES. | Only when `DOCUSEAL_API_URL` is on `docuseal.eu` |
+| QES | A qualified signature. In the EU it has the same effect as a handwritten signature. Unsupported on a DocuSeal you run. Prices on `docuseal.eu`: **$0.20** with the signer’s own certificate or ID card, **$2** via a provider, **$4** one-shot. | Only when `DOCUSEAL_API_URL` is on `docuseal.eu` |
+
+Cloud Pro is **$20** per dashboard user per month (**$200** per year) plus
+**$0.20** per document completed through the API. A volunteer is not a user.
+One submission with several files and signers counts as one completion.
+
+The webhook is `POST /api/public/docuseal/webhook?secret=<DOCUSEAL_WEBHOOK_SECRET>`
+on the HR backend. In Compose, set that URL in DocuSeal to
+`http://hr-backend:8080/api/public/docuseal/webhook?secret=dev-only-docuseal-webhook-secret`.
+On completion HR marks the document signed and writes an encrypted backup of
+the signed PDF and the audit log into HR’s bucket. Staff still open
+DocuSeal’s copy. The backup is not shown in the app.
+
+The live volunteer host for this installation is `https://sign-hr.taire.gay`.
+Local Compose stays on `https://sign-hr.conservices.test`. The Google
+Workspace key for `taire.gay` belongs in OpenBao at
+`modules/hr/google-workspace` (`credentials.json`). It is not part of the
+DocuSeal sandbox and it is not stored in git.
+
+## Older PDF versions
+
+Versions published before DocuSeal still have an AcroForm PDF in HR’s bucket.
+Those keep the local **Sign** button. New versions do not.

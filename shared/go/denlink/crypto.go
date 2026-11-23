@@ -1,5 +1,22 @@
 package denlink
 
+// crypto implements the encryption and decryption of Den credentials.
+// It is separate from inbound.go because it is tested by den_link_test.go.
+// The ciphertext is stored in den_link.credential, and it is encrypted
+// with AES-256-GCM. The key is stored in DEN_LINK_ENCRYPTION_KEY and,
+// during a rotation, in DEN_LINK_ENCRYPTION_KEY_PREVIOUS. New values are
+// always sealed with the current key.
+//
+// The ciphertext is stored in den_link.credential, and it is encrypted
+// with AES-256-GCM. The key is stored in DEN_LINK_ENCRYPTION_KEY and,
+// during a rotation, in DEN_LINK_ENCRYPTION_KEY_PREVIOUS. New values are
+// always sealed with the current key.
+//
+// The ciphertext is stored in den_link.credential, and it is encrypted
+// with AES-256-GCM. The key is stored in DEN_LINK_ENCRYPTION_KEY and,
+// during a rotation, in DEN_LINK_ENCRYPTION_KEY_PREVIOUS. New values are
+// always sealed with the current key.
+//
 import (
 	"crypto/aes"
 	"crypto/cipher"

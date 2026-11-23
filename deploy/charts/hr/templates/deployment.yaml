@@ -205,6 +205,10 @@ spec:
               value: {{ .Values.frontend.securityHeaders.s3Origin | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ .Values.frontend.securityHeaders.extraConnectSrc | quote }}
+            - name: EXTRA_SCRIPT_SRC
+              value: {{ .Values.frontend.securityHeaders.extraScriptSrc | default "" | quote }}
+            - name: EXTRA_IMG_SRC
+              value: {{ .Values.frontend.securityHeaders.extraImgSrc | default "" | quote }}
             - name: EXTRA_FRAME_SRC
               value: {{ .Values.frontend.securityHeaders.extraFrameSrc | default "" | quote }}
           ports:

@@ -50,6 +50,14 @@ sign-hr.conservices.test {
 	reverse_proxy hr-sign-frontend:8080
 }
 
+# Local DocuSeal. DEV ONLY, SES only. The HR forms page frames this host.
+# X-Frame-Options from DocuSeal would block that frame, so it is removed here.
+docuseal.conservices.test {
+	import hsts
+	header -X-Frame-Options
+	reverse_proxy docuseal:3000
+}
+
 stash.conservices.test {
 	import hsts
 	reverse_proxy stash-frontend:8080

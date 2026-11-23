@@ -279,7 +279,9 @@ too, with a link to where they are explained.
 
 **JIT provisioning (just-in-time)**
 :   Creating a local user record the first time someone with a valid token
-    calls a backend, instead of importing users in advance.
+    calls a backend, instead of importing users in advance. The record is
+    keyed by the token's issuer and subject (in Keycloak, a UUID). Name and
+    email are labels and are replaced when they change.
 
 **JWT (JSON Web Token)**
 :   The format of Keycloak's tokens: three base64 parts (header, claims,

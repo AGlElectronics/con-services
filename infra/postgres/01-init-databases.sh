@@ -17,6 +17,9 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'hr') THEN
     CREATE ROLE hr LOGIN PASSWORD 'hr';
   END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'docuseal') THEN
+    CREATE ROLE docuseal LOGIN PASSWORD 'docuseal';
+  END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'learn') THEN
     CREATE ROLE learn LOGIN PASSWORD 'learn';
   END IF;
@@ -42,13 +45,14 @@ END
 \$\$;
 EOSQL
 
-for db in stash den events hr learn finance desk tasks wiki intercom feedback keycloak; do
+for db in stash den events hr learn finance desk tasks wiki intercom feedback keycloak docuseal; do
   owner="postgres"
   case "$db" in
     stash) owner=stash ;;
     den) owner=den ;;
     events) owner=events ;;
     hr) owner=hr ;;
+    docuseal) owner=docuseal ;;
     learn) owner=learn ;;
     finance) owner=finance ;;
     desk) owner=desk ;;
@@ -67,4 +71,4 @@ for db in stash den events hr learn finance desk tasks wiki intercom feedback ke
     -c "GRANT CONNECT, TEMPORARY ON DATABASE ${db} TO ${owner};"
 done
 
-echo "Databases ready: stash den events hr learn finance desk tasks wiki intercom feedback keycloak"
+echo "Databases ready: stash den events hr learn finance desk tasks wiki intercom feedback keycloak docuseal"

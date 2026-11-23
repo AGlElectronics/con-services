@@ -307,15 +307,16 @@ Den then reads these claims from the token:
 
 | Claim | Used for |
 | --- | --- |
-| `sub` | Together with the issuer, the person's permanent identity. |
-| `email` | The local user's email. |
-| `name`, `preferred_username`, `nickname` | The display name (the first one that is set; otherwise the email, otherwise `sub`). |
+| `sub` | Together with the issuer, the person's permanent identity. In Keycloak this is a UUID. Modules match a person on this pair only. |
+| `email` | The local user's email, kept as a label and replaced when the token brings a new one. |
+| `name`, `preferred_username`, `nickname` | The display name (the first one that is set; otherwise the email, otherwise `sub`). A label, replaced the same way. Name and email can change and are never the key. |
 | `groups` | Group membership, used for roles. The claim name is `OIDC_GROUPS_CLAIM` once a backend uses the shared rule. |
 | `roles` | Today merged into the groups list, so either claim works. With the [shared rule](#how-groups-are-matched) it is **not** read: only the claim named by `OIDC_GROUPS_CLAIM` counts. |
 
 The first time someone calls Den, Den creates a local user for them
 (*just-in-time provisioning*), keyed by issuer and subject. On later calls it
-updates their name, email and last sign-in time.
+replaces their name and email from the token and updates the last sign-in
+time. The same rule is what every module uses for its own user row.
 
 In the local realm, every web app's client has a **group membership mapper**
 that puts the person's groups into the `groups` claim of the ID token, the

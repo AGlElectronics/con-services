@@ -1,0 +1,48 @@
+# Module and GitOps checkouts are listed in .gitignore so this repository
+# never commits them. Cursor skips gitignored paths. These lines put the
+# checkouts back so Agent and Tab can read the code. Keep this list in sync
+# with scripts/workspace.ps1 and .gitignore.
+#
+# A directory has to be un-ignored before anything inside it can be. The
+# /** lines cover the files once the directory itself is visible.
+
+!/den/
+!/den/**
+!/hr/
+!/hr/**
+!/Rally/
+!/Rally/**
+!/stash/
+!/stash/**
+!/finance/
+!/finance/**
+!/wiki/
+!/wiki/**
+!/desk/
+!/desk/**
+!/learn/
+!/learn/**
+!/tasks/
+!/tasks/**
+!/con-services-gitops/
+!/con-services-gitops/**
+
+# .cursor/ is gitignored. Project rules should stay visible.
+!.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# Secrets stay hidden, including inside the checkouts above.
+**/.env
+**/.env.*
+!**/.env.example
+**/credentials.json
+**/*.pem
+**/*.key
+**/id_rsa
+**/id_rsa.pub
+
+# Generated output. node_modules is already on Cursor's default ignore list.
+**/dist/
+/site/

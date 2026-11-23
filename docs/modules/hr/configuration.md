@@ -175,7 +175,14 @@ sending. Password-setup emails are sent by Keycloak, not by these settings.
 | `SMTP_PASSWORD` | none | no | **Secret** | Password, used only when Den sets no mail server. |
 | `SMTP_FROM` | none | no | ConfigMap | Sender address. |
 | `SMTP_FROM_NAME` | none | no | ConfigMap | Sender name. |
-| `SIGNING_PUBLIC_URL` | `https://sign-hr.conservices.test` | no | ConfigMap | Public HTTPS origin volunteers open for forms (no trailing slash). Production example: `https://sign-hr.example.org`. See [Onboarding forms](onboarding-forms.md). |
+| `SIGNING_PUBLIC_URL` | `https://sign-hr.conservices.test` | no | ConfigMap | Public HTTPS origin volunteers open for forms (no trailing slash). Live example: `https://sign-hr.taire.gay`. See [Onboarding forms](onboarding-forms.md). |
+| `DOCUSEAL_API_URL` | empty | no | ConfigMap | DocuSeal HR calls. Compose uses `http://docuseal:3000`. Cloud Pro uses `https://api.docuseal.com` or `https://api.docuseal.eu`. Cloud Basic cannot. |
+| `DOCUSEAL_PUBLIC_URL` | empty | with `DOCUSEAL_EMBED=true` outside development | ConfigMap | Browser origin for the framed builder and the signing page. Compose: `https://docuseal.conservices.test`. Self-hosted Pro also uses this host for the embedded builder. |
+| `DOCUSEAL_API_TOKEN` | empty | with the API URL outside development | Secret | Token from DocuSeal → Settings → API. |
+| `DOCUSEAL_ADMIN_EMAIL` | empty | with the embedded builder outside development | ConfigMap | Email of the DocuSeal user who owns `DOCUSEAL_API_TOKEN`. The embedded builder JWT names this user. Not a secret. |
+| `DOCUSEAL_EMBED` | empty | no | ConfigMap | `true` uses the embedded builder on a self-hosted Pro. `false` always frames the DocuSeal site. Empty uses the embedded builder only when `DOCUSEAL_API_URL` is Cloud Pro. |
+| `DOCUSEAL_WEBHOOK_SECRET` | empty | with the API URL outside development | Secret | Checked on `POST /api/public/docuseal/webhook` (query `secret` or header `X-Docuseal-Webhook-Secret`). |
+| `DOCUSEAL_BACKUP_KEY` | empty | with the API URL outside development | Secret | Base64 of 32 bytes (`openssl rand -base64 32`). Encrypts the backup of the signed PDF and audit log. Not the Den link key. |
 
 ## Object storage
 

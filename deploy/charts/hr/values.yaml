@@ -197,14 +197,19 @@ frontend:
   # security-headers snippet when the container starts. Scheme + host, no
   # path. Address search is proxied through HR, so Photon is not listed:
   # connect-src 'self' already allows it. Set extraConnectSrc only if the
-  # browser itself calls another host. extraFrameSrc is blob: so the Forms
-  # page can preview an uploaded PDF in an iframe (blob: URL).
+  # browser itself calls another host. extraScriptSrc and the DocuSeal
+  # origins let the Pro form builder load inside Forms. Page previews are
+  # images from that DocuSeal (extraImgSrc). Add a self-hosted DocuSeal
+  # origin to extraConnectSrc, extraImgSrc, and extraFrameSrc when
+  # DOCUSEAL_EMBED=true. extraFrameSrc keeps blob: for a PDF preview.
   securityHeaders:
     keycloakOrigin: https://auth.conservices.test
     denOrigin: ""
     s3Origin: ""
-    extraConnectSrc: ""
-    extraFrameSrc: "blob:"
+    extraConnectSrc: "https://cdn.docuseal.com https://docuseal.com https://docuseal.eu"
+    extraScriptSrc: "https://cdn.docuseal.com https://docuseal.com https://cdn.docuseal.eu https://docuseal.eu"
+    extraImgSrc: "https://docuseal.com https://docuseal.eu https://docuseal-eu.s3.eu-west-1.amazonaws.com"
+    extraFrameSrc: "blob: https://docuseal.com https://docuseal.eu"
 
 # Volunteer signing host (sign-hr). Proxies only /api/public/signing/ and
 # /api/brand to hr-backend. Set config.SIGNING_PUBLIC_URL to the same public

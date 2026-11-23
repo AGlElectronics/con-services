@@ -61,7 +61,7 @@ services:
       - mini
       - -dir=/data
       - -s3.port=9000
-      - -bucket=stash-data-dev,den-data-dev,events-data-dev,hr-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev,desk-data-dev,conservices-backups
+      - -bucket=stash-data-dev,den-data-dev,events-data-dev,hr-data-dev,finance-data-dev,learn-data-dev,wiki-data-dev,tasks-data-dev,desk-data-dev,docuseal-data-dev,conservices-backups
       - -master.telemetry=false
       - -admin.ui=false
       - -webdav=false
@@ -360,6 +360,52 @@ services:
     ports:
       - "127.0.0.1:3000:8080"
 
+  # Local DocuSeal sandbox. The database is created on an existing Postgres
+  # volume as well as on a fresh one (initdb only runs once).
+  docuseal-db-init:
+    image: postgres:16.15-alpine
+    container_name: conservices-docuseal-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: postgres
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        psql -h postgres -U postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'docuseal') THEN CREATE ROLE docuseal LOGIN PASSWORD 'docuseal'; END IF; END \$\$;"
+        psql -h postgres -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='docuseal'" | grep -q 1 || psql -h postgres -U postgres -c "CREATE DATABASE docuseal OWNER docuseal"
+
+  # DEV ONLY. Form builder and signing page at https://docuseal.conservices.test.
+  # Pin the image. Never "latest".
+  docuseal:
+    image: docuseal/docuseal:3.3.8
+    container_name: conservices-docuseal
+    restart: unless-stopped
+    depends_on:
+      docuseal-db-init:
+        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://docuseal:docuseal@postgres:5432/docuseal
+      # Dev-only. Recreating this locks DocuSeal sessions.
+      SECRET_KEY_BASE: dev-only-docuseal-secret-key-base-change-me-00000000000000000000000000000000
+      AWS_ACCESS_KEY_ID: conservices
+      AWS_SECRET_ACCESS_KEY: conservicesdev
+      S3_ATTACHMENTS_BUCKET: docuseal-data-dev
+      S3_ENDPOINT: http://s3:9000
+      AWS_REGION: us-east-1
+      ACTIVE_STORAGE_PUBLIC: "false"
+      # Signs the first local user in so the HR page can frame the builder.
+      # Production uses DocuSeal Pro and the platform SSO instead.
+      DEV_AUTO_SIGN_IN: "true"
+    volumes:
+      - ./infra/docuseal/dev_auto_sign_in.rb:/app/config/initializers/dev_auto_sign_in.rb:ro
+    ports:
+      - "127.0.0.1:3020:3000"
+
   # ── HR (OIDC + Keycloak user provisioning against shared realm) ───────────
   hr-migrate:
     build:
@@ -393,6 +439,8 @@ services:
         condition: service_healthy
       proxy-ca:
         condition: service_completed_successfully
+      docuseal:
+        condition: service_started
     environment:
       APP_ENV: development
       # Dev-only Telegram catch-all (APP_ENV=development). Empty in prod.
@@ -436,6 +484,21 @@ services:
       SMTP_FROM_NAME: Con Services
       # Public host for volunteer sign links (emails + copy URL).
       SIGNING_PUBLIC_URL: https://sign-hr.conservices.test
+      # Local sandbox unless .env points HR at Cloud (EU testing key:
+      # https://api.docuseal.eu and https://docuseal.eu). Recreate
+      # hr-backend after changing .env.
+      DOCUSEAL_API_URL: ${DOCUSEAL_API_URL:-http://docuseal:3000}
+      DOCUSEAL_PUBLIC_URL: ${DOCUSEAL_PUBLIC_URL:-https://docuseal.conservices.test}
+      # Email of the DocuSeal user that owns DOCUSEAL_API_TOKEN. Required for
+      # the embedded Pro builder. Empty keeps the local open-source frame.
+      DOCUSEAL_ADMIN_EMAIL: ${DOCUSEAL_ADMIN_EMAIL:-}
+      # true: self-hosted Pro embed. false: always frame the DocuSeal site.
+      # Empty: embed only when DOCUSEAL_API_URL is Cloud Pro.
+      DOCUSEAL_EMBED: ${DOCUSEAL_EMBED:-}
+      DOCUSEAL_API_TOKEN: ${DOCUSEAL_API_TOKEN:-}
+      DOCUSEAL_WEBHOOK_SECRET: dev-only-docuseal-webhook-secret
+      # base64 of the 32-byte dev key "dev-only-docuseal-backup-key-000"
+      DOCUSEAL_BACKUP_KEY: ZGV2LW9ubHktZG9jdXNlYWwtYmFja3VwLWtleS0wMDA=
       # Each module serves GET /api/role-catalog; HR aggregates them.
       ROLE_CATALOG_SOURCES: >-
         stash=http://stash-backend:8080/api/role-catalog,
@@ -499,8 +562,13 @@ services:
       # Origins the browser may call besides HR (nginx CSP). Address search
       # is proxied through the backend, so Photon is not listed here.
       KEYCLOAK_ORIGIN: https://auth.conservices.test
-      # Forms page previews the chosen PDF in an iframe via a blob: URL.
-      EXTRA_FRAME_SRC: "blob:"
+      # The forms page frames the local DocuSeal builder. blob: remains for
+      # any leftover PDF preview. The Pro builder also loads builder.js and
+      # may frame docuseal.com or docuseal.eu.
+      EXTRA_SCRIPT_SRC: "https://cdn.docuseal.com https://docuseal.com https://cdn.docuseal.eu https://docuseal.eu"
+      EXTRA_IMG_SRC: "https://docuseal.com https://docuseal.eu https://docuseal-eu.s3.eu-west-1.amazonaws.com"
+      EXTRA_CONNECT_SRC: "https://cdn.docuseal.com https://docuseal.com https://docuseal.eu https://docuseal.conservices.test"
+      EXTRA_FRAME_SRC: "blob: https://docuseal.conservices.test https://docuseal.com https://docuseal.eu"
     volumes:
       # Web app settings (/config.json): sign-in address and client id.
       - ./infra/frontend-config/hr.json:/etc/conservices/config.json:ro

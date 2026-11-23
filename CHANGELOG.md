@@ -11,32 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Security
+### Changed
 
-- Scaffold frontends (stats, intercom, feedback) use `nginx/nginx-unprivileged:1.30.7-alpine` for nginx CVE fixes.
-
-- Docs: every module that exposes Stats `GET /api/internal/stats` lists
-  `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
-  Stats setup examples use a ≥32-character development token.
-
-- Image policy docs: frontend base is `nginx/nginx-unprivileged:1.30.7-alpine`;
-  every image declares a Dockerfile `HEALTHCHECK` (distroless backends use
-  `<binary> healthcheck` → `/livez`; migrators use `HEALTHCHECK NONE`).
-
-### Fixed
-
-- HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
-  match chart `appVersion` `1.1.0` (CI chart-version check).
-- Docs links to onboarding-forms staff/public API sections use stable heading
-  anchors; `shared-go` workflow no longer uses `ls | grep` (actionlint).
-- Compose `hr-sign-frontend` builds with context `./hr` (same as CI) so
-  `sign-frontend/Dockerfile` COPY paths resolve.
-- Compose default `STATS_SERVICE_TOKEN` / `STATS_PULL_TOKEN` is now ≥32
-  characters (`change-me-dev-only-stats-pull-token-32`) so module backends
-  that validate the pull token start in local Compose.
+- The HR frontend in Compose allows the DocuSeal Pro builder script
+  (`EXTRA_SCRIPT_SRC` includes `cdn.docuseal.com`, `docuseal.com`,
+  `cdn.docuseal.eu`, and `docuseal.eu`), allows page-preview images from
+  `docuseal.com`, `docuseal.eu`, and
+  `docuseal-eu.s3.eu-west-1.amazonaws.com` (`EXTRA_IMG_SRC`), and frames `docuseal.com`,
+  `docuseal.eu`, and `docuseal.conservices.test`. `DOCUSEAL_ADMIN_EMAIL` and
+  `DOCUSEAL_EMBED` are passed through to HR. Empty leaves the local
+  open-source DocuSeal framed in the Forms workspace.
 
 ### Added
 
+- Local Compose runs DocuSeal `3.3.8` at `https://docuseal.conservices.test`
+  (database `docuseal` on the dev Postgres, files in the `docuseal-data-dev`
+  bucket). HR uses it as the signing sandbox. A Cloud Pro token can replace
+  the URL later. Cloud Basic has no API or webhooks, so it cannot.
 - Personal data inventory: [Personal data](docs/operations/personal-data.md)
   lists, for each module, which part stores which personal data, about whom,
   and why.
@@ -76,6 +67,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Den docs: personal Quick links API (`GET`/`PUT /api/v1/me/quick-links`) and
+  portal to-dos showing at most four urgent items (see Den's own changelog).
+- Rally docs: public signage now/next endpoints on the published schedule
+  (see Rally's own changelog).
+- Personal data and sign-in docs: a module matches a person by the identity
+  provider subject (a UUID) and the issuer. Name and email are labels and
+  are replaced from the token when they change.
 - Compose `hr-frontend` sets `EXTRA_FRAME_SRC=blob:` so the Forms page can
   preview an uploaded PDF in an iframe (CSP `frame-src`).
 - HR Helm chart `1.1.0`: volunteer `hr-sign` Deployment/Service/HTTPRoute,
@@ -90,14 +88,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   built-in `kc-admin-api` client scope to `hr-provisioner`, `den-keycloak`
   and `learn-provisioner`. Without it, department group sync, onboarding
   account setup and Den realm branding all failed with 401.
+- HR chart image tags in `deploy/charts/hr/values.yaml` are `1.1.0-1` so they
+  match chart `appVersion` `1.1.0` (CI chart-version check).
+- Docs links to onboarding-forms staff/public API sections use stable heading
+  anchors; `shared-go` workflow no longer uses `ls | grep` (actionlint).
+- Compose `hr-sign-frontend` builds with context `./hr` (same as CI) so
+  `sign-frontend/Dockerfile` COPY paths resolve.
+- Compose default `STATS_SERVICE_TOKEN` / `STATS_PULL_TOKEN` is now ≥32
+  characters (`change-me-dev-only-stats-pull-token-32`) so module backends
+  that validate the pull token start in local Compose.
 
+### Security
 
-### Changed
-
-- Den docs: personal Quick links API (`GET`/`PUT /api/v1/me/quick-links`) and
-  portal to-dos showing at most four urgent items (see Den's own changelog).
-- Rally docs: public signage now/next endpoints on the published schedule
-  (see Rally's own changelog).
+- Scaffold frontends (stats, intercom, feedback) use `nginx/nginx-unprivileged:1.30.7-alpine` for nginx CVE fixes.
+- Docs: every module that exposes Stats `GET /api/internal/stats` lists
+  `STATS_PULL_TOKEN` (optional, ≥32 characters) in the secrets inventory;
+  Stats setup examples use a ≥32-character development token.
+- Image policy docs: frontend base is `nginx/nginx-unprivileged:1.30.7-alpine`;
+  every image declares a Dockerfile `HEALTHCHECK` (distroless backends use
+  `<binary> healthcheck` → `/livez`; migrators use `HEALTHCHECK NONE`).
 
 ## [1.0.0] - 2026-11-12
 

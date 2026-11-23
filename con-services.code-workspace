@@ -1,0 +1,173 @@
+{
+    "folders": [
+        {
+            "name": "con-services",
+            "path": "."
+        },
+        {
+            "name": "den",
+            "path": "den"
+        },
+        {
+            "name": "hr",
+            "path": "hr"
+        },
+        {
+            "name": "Rally",
+            "path": "Rally"
+        },
+        {
+            "name": "stash",
+            "path": "stash"
+        },
+        {
+            "name": "finance",
+            "path": "finance"
+        },
+        {
+            "name": "wiki",
+            "path": "wiki"
+        },
+        {
+            "name": "desk",
+            "path": "desk"
+        },
+        {
+            "name": "learn",
+            "path": "learn"
+        },
+        {
+            "name": "tasks",
+            "path": "tasks"
+        },
+        {
+            "name": "con-services-gitops",
+            "path": "con-services-gitops"
+        }
+    ],
+    "settings": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 2,
+        "files.trimTrailingWhitespace": true,
+        "[markdown]": {
+            "editor.wordWrap": "on"
+        },
+        "[yaml]": {
+            "editor.insertSpaces": true,
+            "editor.tabSize": 2
+        },
+        "[go]": {
+            "editor.insertSpaces": false,
+            "editor.tabSize": 4
+        },
+        "files.exclude": {
+            "den": true,
+            "hr": true,
+            "Rally": true,
+            "stash": true,
+            "finance": true,
+            "wiki": true,
+            "desk": true,
+            "learn": true,
+            "tasks": true,
+            "con-services-gitops": true
+        },
+        "files.watcherExclude": {
+            "**/.git/objects/**": true,
+            "**/.git/subtree-cache/**": true,
+            "**/node_modules/**": true,
+            "**/dist/**": true,
+            "**/site/**": true
+        },
+        "search.exclude": {
+            "**/node_modules": true,
+            "**/dist": true,
+            "**/site": true
+        },
+        "gopls": {
+            "build.directoryFilters": [
+                "-**/node_modules",
+                "-site",
+                "-**/dist"
+            ]
+        },
+        "scm.alwaysShowRepositories": true,
+        "scm.alwaysShowProviders": true,
+        "scm.repositories.visible": 25,
+        "scm.defaultViewMode": "tree",
+        "scm.diffDecorations": "all",
+        "scm.countBadge": "all",
+        "scm.providerCountBadge": "auto",
+        "git.autofetch": true,
+        "git.autofetchPeriod": 180,
+        "git.fetchOnPull": true,
+        "git.pruneOnFetch": true,
+        "git.enableSmartCommit": true,
+        "git.suggestSmartCommit": false,
+        "git.confirmSync": false,
+        "git.confirmForcePush": true,
+        "git.postCommitCommand": "sync",
+        "git.rememberPostCommitCommand": true,
+        "git.allowForcePush": false,
+        "git.openRepositoryInParentFolders": "always"
+    },
+    "extensions": {
+        "recommendations": [
+            "GitLab.gitlab-workflow",
+            "golang.go",
+            "dbaeumer.vscode-eslint",
+            "bradlc.vscode-tailwindcss",
+            "redhat.vscode-yaml",
+            "ms-azuretools.vscode-containers"
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Workspace status",
+                "type": "shell",
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "shared",
+                    "focus": true
+                },
+                "options": {
+                    "cwd": "${workspaceFolder:con-services}"
+                },
+                "windows": {
+                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/workspace.ps1 status"
+                },
+                "linux": {
+                    "command": "bash ./scripts/workspace.sh status"
+                },
+                "osx": {
+                    "command": "bash ./scripts/workspace.sh status"
+                }
+            },
+            {
+                "label": "Pull all workspace repos",
+                "type": "shell",
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "shared",
+                    "focus": true
+                },
+                "options": {
+                    "cwd": "${workspaceFolder:con-services}"
+                },
+                "windows": {
+                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/workspace.ps1 pull"
+                },
+                "linux": {
+                    "command": "bash ./scripts/workspace.sh pull"
+                },
+                "osx": {
+                    "command": "bash ./scripts/workspace.sh pull"
+                }
+            }
+        ]
+    }
+}

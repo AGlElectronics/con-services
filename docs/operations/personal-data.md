@@ -15,15 +15,27 @@ someone types into it, including a name or a phone number the form did not
 ask for.
 
 Passwords stay in the identity provider
-([Keycloak](../deploy/identity.md)). A module copies the name and email from
-the sign-in token the first time that person opens it.
+([Keycloak](../deploy/identity.md)). A module recognises a person by the
+token's **subject**, which in Keycloak is a UUID, together with the
+**issuer** (the realm). That pair is the only key. Name and email are
+labels: the module copies them so it can show the person and write to
+them, and replaces them from the token on the next sign-in, because either
+can change. A new name or a new email does not open a second account.
+
+Two features still *find* an account by a verified email, and then store
+the subject. HR's `link` mode does this when it did not create the account
+([Account provisioning](../modules/hr/configuration.md#account-provisioning-keycloak)).
+Rally does this when a proposal owner adds a co-presenter by email and
+exactly one attendee has that verified address. A Tasks spreadsheet import
+can assign a task by the email or display name of someone who has already
+signed in. Signing in itself always uses the subject.
 
 ## Sign-in (Keycloak)
 
 | Part | What it is for | What is stored | Who | Why it is kept |
 | --- | --- | --- | --- | --- |
-| Staff account | Sign-in for the crew, realm `conservices` | Username, name, email, groups, password | Crew | So they can sign in, and so modules can tell who they are |
-| Attendee account | Sign-in for Rally's submission site, realm `attendees` | Username, name, email, password | Attendees | A public account. Email verification and password reset use that email. The account cannot act as staff |
+| Staff account | Sign-in for the crew, realm `conservices` | Username, name, email, groups, password, and the subject UUID | Crew | So they can sign in. Modules recognise the account by the subject |
+| Attendee account | Sign-in for Rally's submission site, realm `attendees` | Username, name, email, password, and the subject UUID | Attendees | A public account in its own realm, so the same subject is a different person from a staff account. Email verification and password reset use the email |
 
 HR writes the login name, names and email into the staff realm when it
 creates an account, plus any attributes named in `KEYCLOAK_USER_ATTRIBUTES`.
@@ -36,7 +48,7 @@ copy of every module database. The business records stay in the modules.
 
 | Part | What it is for | What is stored | Who | Why it is kept |
 | --- | --- | --- | --- | --- |
-| Local user | The portal after sign-in | Display name, email, identity-provider issuer and subject, last sign-in, light or dark theme | Crew | Created on the first visit and updated on later ones, so the portal and the audit log can name them |
+| Local user | The portal after sign-in | Display name, email, identity-provider issuer and subject, last sign-in, light or dark theme | Crew | The row is keyed by issuer and subject. Name and email are the label, refreshed on each sign-in, so the portal and the audit log can name them |
 | Audit log | Changes in the admin console | Who did it, and when | Crew | Accountability. Credentials and tokens are left out of the log |
 | Backups | Nightly encrypted copy of the suite | Whatever each module stores | Everyone those databases hold | Recovery. Treat the backup store the way you treat the databases. See [Databases, backups and restore](databases-and-backups.md) |
 
